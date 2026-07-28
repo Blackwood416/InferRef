@@ -12,6 +12,7 @@ from storing one copy of every weight per invocation.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,14 +54,32 @@ def normalise_policy(policy: str) -> str:
 def logical_bytes(tensor: torch.Tensor) -> bytes:
     """Return the tensor's logical values in canonical contiguous order.
 
-    Goes through ``view(torch.uint8)`` rather than ``.numpy()`` because that is
-    the only path that works for every dtype — notably ``bfloat16``, which
-    ``Tensor.numpy()`` rejects outright.
+    Reads the bytes directly from the tensor's memory rather than going through
+    ``Tensor.numpy()``. Two reasons:
+
+    * ``Tensor.numpy()`` crosses PyTorch's NumPy ABI bridge, which fails
+      outright when the installed NumPy major version does not match the one
+      PyTorch was compiled against — ``RuntimeError: Numpy is not available``.
+      Pairing an older PyTorch with NumPy 2.x is a normal thing for a user to
+      end up with, and it would otherwise silently cost them every payload.
+    * The tracer has no other reason to depend on NumPy. Byte extraction is the
+      writer's job; parsing those bytes is the reader's, and only the reader
+      needs NumPy.
+
+    ``contiguous()`` guarantees row-major packing from ``data_ptr()``, which
+    already accounts for any storage offset, so ``numel * itemsize`` bytes from
+    there are exactly this tensor's logical values.
     """
-    flat = tensor.detach().contiguous()
+    flat = tensor.detach()
     if flat.device.type != "cpu":
         flat = flat.cpu()
-    return flat.view(torch.uint8).numpy().tobytes()
+    flat = flat.contiguous()
+
+    nbytes = flat.numel() * flat.element_size()
+    if nbytes == 0:
+        return b""
+    # from_address does not own the memory, so copy while `flat` is alive.
+    return bytes((ctypes.c_char * nbytes).from_address(flat.data_ptr()))
 
 
 @dataclass
@@ -74,6 +93,23 @@ class TensorCapture:
 
     _payload_by_key: dict[tuple, str] = field(default_factory=dict)
     _bytes_written: int = 0
+    #: First failure per exception kind, and how many times it happened.
+    _failures: dict[str, tuple[str, int]] = field(default_factory=dict)
+
+    def _record_failure(self, exc: Exception) -> None:
+        kind = type(exc).__name__
+        message, count = self._failures.get(kind, (str(exc), 0))
+        self._failures[kind] = (message, count + 1)
+
+    @property
+    def failures(self) -> list[str]:
+        """Human-readable warnings for every capture failure kind seen."""
+        return [
+            f"tensor capture failed for {count} tensor(s) with {kind}: {message}; "
+            "those values were downgraded to metadata and their testcases "
+            "cannot be reproduced"
+            for kind, (message, count) in sorted(self._failures.items())
+        ]
 
     @property
     def tensors_dir(self) -> Path:
@@ -96,9 +132,13 @@ class TensorCapture:
 
         try:
             raw = logical_bytes(tensor)
-        except Exception:
+        except Exception as exc:
             # A tensor we cannot materialise (meta device, sparse, ...) still
             # deserves its metadata rather than aborting the trace (SPEC §59).
+            # But record why: degrading `--capture-tensors all` to metadata
+            # silently would hand back a trace that looks fine and yields
+            # testcases that cannot run.
+            self._record_failure(exc)
             return CaptureInfo(mode="metadata")
 
         digest = hashlib.new(HASH_ALGORITHM, raw).hexdigest()

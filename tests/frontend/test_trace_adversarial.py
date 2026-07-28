@@ -152,22 +152,26 @@ def test_lineage_is_not_rewritten_by_an_alias_only_operator(trace_dir: Path) -> 
 
     package = _trace(run, trace_dir)
     graph = package.graph
-    detach, add = graph.ops_in_execution_order()[:2]
-    assert detach.canonical_name == "aten.detach.default"
-    assert add.canonical_name == "aten.add.Tensor"
 
-    detach_input = graph.op_input_value_ids(detach)[0]
-    detach_output = graph.op_output_value_ids(detach)[0]
+    # How many aten.detach calls one `.detach()` dispatches is a PyTorch
+    # implementation detail that has changed across versions, so locate the
+    # operators by name rather than by position.
+    detaches = _find(package, "aten.detach.default")
+    assert detaches
+    add = next(op for op in graph.ops_in_execution_order() if op.op == "add")
+
+    x_value = graph.op_input_value_ids(detaches[0])[0]
     add_input = graph.op_input_value_ids(add)[0]
+    detach_outputs = {
+        vid for d in detaches for vid in graph.op_output_value_ids(d)
+    }
 
-    assert add_input == detach_input, "add should consume x, not detach's output"
-    assert add_input != detach_output
-    # detach's output is still its own value with its own object identity.
-    assert (
-        graph.value(detach_output).runtime_object_id
-        != graph.value(detach_input).runtime_object_id
-    )
-    assert graph.value(detach_output).storage_id == graph.value(detach_input).storage_id
+    assert add_input == x_value, "add should consume x, not a detach output"
+    assert add_input not in detach_outputs
+    # Each detach output is its own value with its own object identity.
+    for vid in detach_outputs:
+        assert graph.value(vid).runtime_object_id != graph.value(x_value).runtime_object_id
+        assert graph.value(vid).storage_id == graph.value(x_value).storage_id
 
 
 def test_distinct_objects_over_one_storage_are_distinct_values(trace_dir: Path) -> None:
@@ -181,15 +185,16 @@ def test_distinct_objects_over_one_storage_are_distinct_values(trace_dir: Path) 
 
     package = _trace(run, trace_dir)
     detaches = _find(package, "aten.detach.default")
-    assert len(detaches) == 2
+    assert len(detaches) >= 2
 
-    first = package.graph.value(package.graph.op_output_value_ids(detaches[0])[0])
-    second = package.graph.value(package.graph.op_output_value_ids(detaches[1])[0])
-
-    assert first.id != second.id
-    assert first.runtime_object_id != second.runtime_object_id
-    assert first.storage_id == second.storage_id
-    assert first.storage_version == second.storage_version
+    outputs = [
+        package.graph.value(package.graph.op_output_value_ids(d)[0]) for d in detaches
+    ]
+    # Every detach output is a distinct value over the one shared storage.
+    assert len({v.id for v in outputs}) == len(outputs)
+    assert len({v.runtime_object_id for v in outputs}) == len(outputs)
+    assert len({v.storage_id for v in outputs}) == 1
+    assert len({v.storage_version for v in outputs}) == 1
 
 
 def test_distinct_values_share_one_payload(trace_dir: Path) -> None:
@@ -320,6 +325,88 @@ def test_tied_weight_names_survive_a_roundtrip(trace_dir: Path) -> None:
     tied = [v for v in reloaded.graph.values if v.qualified_names]
     assert tied
     assert set(tied[0].qualified_names) == {"embed.weight", "lm_head.weight"}
+
+
+# -- tensor capture --------------------------------------------------------
+
+
+def test_capture_uses_no_numpy_bridge(trace_dir: Path) -> None:
+    """Byte extraction must not go through ``Tensor.numpy()``.
+
+    That call crosses PyTorch's NumPy ABI bridge and fails outright when the
+    installed NumPy major version differs from the one PyTorch was built
+    against, which would silently cost every payload in the trace.
+    """
+    from inferref.frontend.pytorch import capture
+
+    x = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+    called = False
+
+    original = torch.Tensor.numpy
+
+    def tripwire(self, *args, **kwargs):  # pragma: no cover - must not run
+        nonlocal called
+        called = True
+        return original(self, *args, **kwargs)
+
+    torch.Tensor.numpy = tripwire
+    try:
+        raw = capture.logical_bytes(x)
+    finally:
+        torch.Tensor.numpy = original
+
+    assert not called, "logical_bytes must not call Tensor.numpy()"
+    assert len(raw) == 24
+
+
+@pytest.mark.parametrize(
+    "tensor",
+    [
+        torch.arange(6, dtype=torch.float32).reshape(2, 3),
+        torch.arange(6, dtype=torch.float32).reshape(2, 3).transpose(0, 1),
+        torch.arange(10, dtype=torch.float32)[3:7],
+        torch.arange(10, dtype=torch.float32)[::2],
+        torch.tensor([1.5, 2.5, -0.75], dtype=torch.bfloat16),
+        torch.tensor([True, False, True]),
+        torch.zeros(0, dtype=torch.float32),
+        torch.tensor(2.5),
+    ],
+    ids=["contiguous", "transposed", "offset", "strided", "bfloat16", "bool", "empty", "scalar"],
+)
+def test_logical_bytes_length(tensor: torch.Tensor) -> None:
+    """Views, offsets and odd dtypes all yield exactly numel x itemsize bytes."""
+    from inferref.frontend.pytorch import capture
+
+    raw = capture.logical_bytes(tensor)
+    assert len(raw) == tensor.numel() * tensor.element_size()
+
+
+def test_capture_failure_is_reported_not_swallowed(
+    trace_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trace whose payloads failed must say so (SPEC §59).
+
+    Degrading `--capture-tensors all` to metadata silently would hand back a
+    trace that looks complete and yields testcases that cannot run.
+    """
+    from inferref.frontend.pytorch import capture
+
+    def boom(tensor):
+        raise RuntimeError("simulated capture failure")
+
+    monkeypatch.setattr(capture, "logical_bytes", boom)
+
+    x = torch.randn(2, 3)
+    package = _trace(
+        lambda s: s.mark_output("y", x * 2), trace_dir, capture_tensors="all"
+    )
+
+    warnings = package.manifest.determinism.warnings
+    assert any("tensor capture failed" in w for w in warnings), warnings
+    assert any("simulated capture failure" in w for w in warnings)
+    assert any("cannot be reproduced" in w for w in warnings)
+    # And every value really did fall back to metadata.
+    assert all(v.capture.mode == "metadata" for v in package.graph.values)
 
 
 # -- validity --------------------------------------------------------------

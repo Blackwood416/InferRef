@@ -256,6 +256,9 @@ class TraceSession:
             warnings.append(
                 f"{self._mode.skipped_ops} operators were skipped by the scope filter"
             )
+        # A capture failure means the trace looks complete but its testcases
+        # will not run, so it must be visible in the manifest.
+        warnings.extend(self._capture.failures)
         packages = {"torch": torch.__version__, "numpy": _numpy_version()}
         transformers = _transformers_version()
         if transformers:

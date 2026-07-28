@@ -18,6 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 2.1 is the verified floor, not a guess: CI runs the full suite against it.
+# The tracer depends on private APIs (TorchDispatchMode, StorageWeakRef) and on
+# `named_parameters(remove_duplicate=...)`, so the floor is asserted by test.
 torch = ["torch>=2.1"]
 hf = ["torch>=2.1", "transformers>=4.40"]
 dev = ["pytest>=7.0"]

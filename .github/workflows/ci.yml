@@ -56,21 +56,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ["3.12"]
-        torch: [min, current]
+        # Spelled out rather than generated: the supported Python range differs
+        # per torch version, so a cross product would schedule jobs that cannot
+        # install. torch 2.1 ships cp38-cp311 wheels only.
         include:
-          # Widen Python coverage on the cheaper runner only.
-          - os: ubuntu-latest
-            python: "3.10"
-            torch: min
-          - os: ubuntu-latest
-            python: "3.13"
-            torch: current
+          - { os: ubuntu-latest,  python: "3.10", torch: min }
+          - { os: windows-latest, python: "3.10", torch: min }
+          - { os: ubuntu-latest,  python: "3.12", torch: current }
+          - { os: windows-latest, python: "3.12", torch: current }
+          - { os: ubuntu-latest,  python: "3.13", torch: current }
           # Early warning for upstream breakage; never blocks a merge.
-          - os: ubuntu-latest
-            python: "3.12"
-            torch: nightly
+          - { os: ubuntu-latest,  python: "3.12", torch: nightly }
     steps:
       - uses: actions/checkout@v4
 
