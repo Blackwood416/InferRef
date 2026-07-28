@@ -119,6 +119,9 @@ class TraceSession:
         role, qualified_name = self._params.classify(tensor)
         record.role = role
         record.qualified_name = qualified_name
+        # Non-empty only for tied weights, where one storage carries several
+        # names (a shared embedding / lm_head, say).
+        record.qualified_names = self._params.aliases_of(tensor)
         record.capture = self._capture.capture(
             tensor, record, is_output=is_output, in_scope=self._modules.in_scope()
         )

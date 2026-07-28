@@ -25,7 +25,7 @@ import inferref
 from inferref.cli.main import main
 from inferref.ir.package import TracePackage
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture

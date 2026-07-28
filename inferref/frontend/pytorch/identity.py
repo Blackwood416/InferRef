@@ -160,13 +160,53 @@ class Identity:
     # -- values -----------------------------------------------------------
 
     def value_key(self, tensor: torch.Tensor, storage_id: int | None) -> tuple:
+        """Identity of one trace value.
+
+        Includes ``runtime_object_id`` so that value identity matches the IR's
+        three-layer model (object / storage / value, IR §13-§15) rather than
+        collapsing distinct runtime tensors that merely happen to share a
+        storage, version and layout.
+
+        Leaving the object out would rewrite lineage. Given::
+
+            y = x.detach()
+            z = x + 1
+
+        ``y`` is a new object over ``x``'s storage at the same version and
+        layout. With an object-free key, interning ``y`` as ``detach``'s output
+        rebinds that key, and the later lookup of ``x`` for ``add`` resolves to
+        ``y`` — recording ``x -> detach -> add`` when what actually ran was
+        ``x -> detach`` and ``x -> add`` independently.
+
+        Payload deduplication is a separate concern and deliberately does *not*
+        use this key; see :meth:`payload_key`.
+        """
         return (
+            self.object_id_of(tensor),
             storage_id,
             self.version_of(storage_id),
             torch_dtype_name(tensor.dtype),
             tuple(tensor.shape),
             tuple(tensor.stride()),
             tensor.storage_offset(),
+        )
+
+    @staticmethod
+    def payload_key(record: TensorValueRecord, content_digest: str) -> tuple:
+        """Identity of one stored tensor payload.
+
+        Object identity is intentionally absent: two distinct runtime tensors
+        holding the same bytes in the same layout are two trace values but only
+        one file on disk (IR §39). The layout fields are part of the key because
+        an ``.irtensor`` header encodes shape/stride/offset, so a tensor and a
+        reshaped view of it cannot share a payload even when their bytes match.
+        """
+        return (
+            content_digest,
+            record.dtype,
+            record.shape,
+            record.stride,
+            record.storage_offset_elements,
         )
 
     def intern(self, tensor: torch.Tensor, memo: dict[tuple, int] | None = None) -> tuple[int, bool]:

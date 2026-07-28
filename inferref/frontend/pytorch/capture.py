@@ -18,6 +18,7 @@ from pathlib import Path
 
 import torch
 
+from inferref.frontend.pytorch.identity import Identity
 from inferref.ir.tensor_value import CaptureInfo, TensorHash, TensorValueRecord
 from inferref.tensor import codec
 
@@ -122,16 +123,11 @@ class TensorCapture:
         return "metadata"
 
     def _write_payload(self, digest: str, record: TensorValueRecord, raw: bytes) -> str:
-        # The dedup key must cover everything the .irtensor header encodes, not
-        # just the bytes: a tensor and a reshaped view of it have identical
-        # canonical payloads but different headers, so they cannot share a file.
-        key = (
-            digest,
-            record.dtype,
-            record.shape,
-            record.stride,
-            record.storage_offset_elements,
-        )
+        # Payload identity is deliberately distinct from *value* identity: two
+        # different runtime tensors holding identical bytes in identical layout
+        # are two trace values sharing one file (IR §39). See
+        # Identity.payload_key for the full rationale.
+        key = Identity.payload_key(record, digest)
         existing = self._payload_by_key.get(key)
         if existing is not None:
             return existing

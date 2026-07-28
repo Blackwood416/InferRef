@@ -58,7 +58,7 @@ def canonical_parts(func: Any) -> tuple[str, str, str]:
 
 
 def mutated_arg_positions(func: Any) -> list[int]:
-    """Positional indices the operator schema declares it writes to (IR §24)."""
+    """Schema argument indices the operator declares it writes to (IR §24)."""
     schema = getattr(func, "_schema", None)
     if schema is None:
         return []
@@ -68,6 +68,54 @@ def mutated_arg_positions(func: Any) -> list[int]:
         if alias is not None and alias.is_write:
             positions.append(index)
     return positions
+
+
+def iter_tensors(value: Any) -> Iterator[torch.Tensor]:
+    """Yield every tensor nested inside a runtime argument."""
+    if isinstance(value, torch.Tensor):
+        yield value
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from iter_tensors(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from iter_tensors(item)
+
+
+def iter_written_tensors(
+    func: Any, args: tuple, kwargs: dict
+) -> Iterator[torch.Tensor]:
+    """Yield every tensor the operator schema declares it writes to (IR §24).
+
+    Binding a declared write to the runtime argument that carries it needs more
+    than an index into ``args``:
+
+    * **Keyword-only writes.** ``aten.add.out`` declares its write on ``out``,
+      which is ``kwarg_only`` and arrives in ``kwargs``; its schema index (3)
+      is past the end of ``args``. ``out=`` variants are common, so binding by
+      position alone silently loses their mutations.
+    * **Container writes.** ``aten._foreach_add_.Scalar`` declares its write on
+      ``self``, typed ``List[Tensor]``. The written tensors are nested inside a
+      list, not the argument itself.
+    * **Positional arguments passed by name.** A non-``kwarg_only`` argument may
+      still be supplied as a keyword.
+
+    Arguments that were left at their default are simply absent and skipped.
+    """
+    schema = getattr(func, "_schema", None)
+    if schema is None:
+        return
+    for index, argument in enumerate(schema.arguments):
+        alias = argument.alias_info
+        if alias is None or not alias.is_write:
+            continue
+        if not argument.kwarg_only and index < len(args):
+            bound = args[index]
+        elif argument.name in kwargs:
+            bound = kwargs[argument.name]
+        else:
+            continue
+        yield from iter_tensors(bound)
 
 
 def _scalar_value(obj: Any) -> Value:
@@ -230,22 +278,19 @@ class InferRefDispatchMode(TorchDispatchMode):
         recorder = self.recorder
         identity = recorder.identity
 
-        # 1. Which positional arguments does the schema say get written?
-        write_positions = mutated_arg_positions(func)
-
-        # 2. Snapshot the *pre-call* state of every argument.
+        # 1. Snapshot the *pre-call* state of every argument.
         positional = tuple(recorder.to_value(a, is_output=False) for a in args)
         keyword = {k: recorder.to_value(v, is_output=False) for k, v in kwargs.items()}
 
+        # 2. Resolve the storages this operator declares it will write to.
+        #    Ordered-set: two writable arguments may alias one storage, and that
+        #    storage must advance exactly one generation for this operator.
         written_storages: list[int] = []
-        for position in write_positions:
-            if position >= len(args):
-                continue
-            target = args[position]
-            if not isinstance(target, torch.Tensor):
-                continue
+        seen_storages: set[int] = set()
+        for target in iter_written_tensors(func, args, kwargs):
             storage_id = identity.storage_id_of(target)
-            if storage_id is not None:
+            if storage_id is not None and storage_id not in seen_storages:
+                seen_storages.add(storage_id)
                 written_storages.append(storage_id)
 
         # 3. Execute for real.

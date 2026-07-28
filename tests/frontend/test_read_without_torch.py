@@ -63,7 +63,7 @@ def _run_without_torch(body: str, trace_dir: Path) -> str:
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
-        cwd=str(Path(__file__).resolve().parents[1]),
+        cwd=str(Path(__file__).resolve().parents[2]),
     )
     assert result.returncode == 0, (
         f"subprocess failed ({result.returncode})\n"
@@ -91,7 +91,7 @@ def test_import_inferref_without_torch(traced_dir: Path) -> None:
         """,
         traced_dir,
     )
-    assert "version 0.1.0" in out
+    assert "version 0.1.1" in out
 
 
 def test_load_trace_without_torch(traced_dir: Path) -> None:

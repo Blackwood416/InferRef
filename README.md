@@ -146,17 +146,26 @@ cpp/build/inferref_compare ref.irtensor actual.irtensor
 
 ## Notes on the tracing implementation
 
-Three findings shaped the frontend and are worth knowing before modifying it:
+Findings that shaped the frontend and constrain how it may be modified:
 
 - **`Tensor._version` cannot detect mutation from inside `__torch_dispatch__`.** The version
   counter is bumped by the autograd layer, which sits *above* the dispatch mode, so it reads
-  identically before and after the operator runs. InferRef instead derives writes from the
-  operator schema (`alias_info.is_write`) and maintains its own storage versions (IR §15).
+  identically before and after the operator runs. Writes are instead derived from the operator
+  schema and InferRef maintains its own storage versions (IR §15).
+- **Schema writes must be bound by name as well as position.** `aten.add.out` declares its write
+  on a `kwarg_only` argument, and `aten._foreach_add_` declares one on a `List[Tensor]`; binding
+  by position into `args` alone loses both. Aliased writes are collected into an ordered set so a
+  storage advances exactly one generation per operator.
 - **`data_ptr` is recycled after a storage is freed.** The storage table is guarded with
   `StorageWeakRef` so two unrelated allocations never alias onto one `storage_id` (IR §14).
 - **Tensor capture re-enters the dispatch mode.** `.contiguous()`/`.view()`/`.cpu()` are
   themselves ATen ops, so capture runs under a re-entrancy guard; `mark_input`/`mark_output`
   use the same guard since they touch tensors outside `__torch_dispatch__`.
+- **Value identity and payload identity are separate.** A trace value is keyed on
+  `runtime_object_id` as well as storage/version/layout, so the graph records what actually ran —
+  without it, `y = x.detach()` would steal `x`'s identity from later consumers and fabricate a
+  serial dependency. Payloads are keyed on content and layout only, so two distinct values still
+  share one `.irtensor` (IR §39).
 
 Payloads are written in canonical logical contiguous order (IR §20). A tensor's recorded `stride`
 describes the *reference* tensor's layout for debugging (SPEC §29) and does not describe the
@@ -166,11 +175,22 @@ Pass `--strict-layout` to enforce it.
 ## Tests
 
 ```bash
-python -m pytest tests/ -q          # 147 tests
+python -m pytest tests -q          # 167 tests
+python -m pytest tests/core -q     # 100 tests, no PyTorch required
 ```
 
-The suite is hermetic — no downloads, no network — and covers all ten Trace IR v0.1 acceptance
-criteria (IR §57), including a negative case for each of the ten validation invariants.
+The suite is hermetic — no downloads, no network — and split along the dependency boundary:
+
+| Suite | Requires torch | Covers |
+| --- | --- | --- |
+| `tests/core` | No | Trace IR, `.irtensor` codec, comparator, validation |
+| `tests/frontend` | Yes | Tracing semantics, testcases, regions, CLI, end-to-end |
+
+`tests/core` is verified to run with `import torch` hard-blocked, which is how Trace IR §57
+criterion 10 is enforced rather than assumed. All ten acceptance criteria are covered.
+
+CI runs the core suite with no torch installed at all, the frontend against several torch
+versions, and the C++ reader on Linux and Windows — see [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## License
 

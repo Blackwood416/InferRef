@@ -135,6 +135,11 @@ class TensorValueRecord(Record):
     #: IR §38 classification.
     role: str = "unknown"
     qualified_name: str | None = None
+    #: Every name bound to this tensor's storage, present only when a storage is
+    #: shared by more than one parameter/buffer — i.e. tied weights. The
+    #: canonical name stays in ``qualified_name``; this is additive so older
+    #: readers are unaffected (IR §46).
+    qualified_names: tuple[str, ...] = ()
 
     capture: CaptureInfo = field(default_factory=CaptureInfo)
 
@@ -159,6 +164,7 @@ class TensorValueRecord(Record):
         "consumers",
         "role",
         "qualified_name",
+        "qualified_names",
         "capture",
     )
 
@@ -200,6 +206,7 @@ class TensorValueRecord(Record):
                 "consumers": list(self.consumers),
                 "role": self.role,
                 "qualified_name": self.qualified_name,
+                "qualified_names": list(self.qualified_names) or None,
                 "capture": self.capture.to_dict(),
             }
         )
@@ -222,6 +229,7 @@ class TensorValueRecord(Record):
             "consumers": tuple(data.get("consumers", ())),
             "role": data.get("role", "unknown"),
             "qualified_name": data.get("qualified_name"),
+            "qualified_names": tuple(data.get("qualified_names") or ()),
             "capture": CaptureInfo.from_dict(data.get("capture")),
             "kind": "tensor",
         }
