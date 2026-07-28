@@ -230,7 +230,7 @@ Pass `--strict-layout` to enforce it.
 ## Tests
 
 ```bash
-python -m pytest tests -q          # 235 tests
+python -m pytest tests -q          # 250 tests
 python -m pytest tests/core -q     # 149 tests, no PyTorch required
 ```
 
@@ -244,8 +244,9 @@ The suite is hermetic — no downloads, no network — and split along the depen
 `tests/core` is verified to run with `import torch` hard-blocked, which is how Trace IR §57
 criterion 10 is enforced rather than assumed. All ten acceptance criteria are covered.
 
-CI runs the core suite with no torch installed at all, the frontend against several torch
-versions, and the C++ reader on Linux and Windows — see [.github/workflows/ci.yml](.github/workflows/ci.yml).
+CI runs the core suite with no torch installed at all, the frontend against torch 2.1 (the
+verified floor), current and nightly, one leg against real `transformers` model code, and the C++
+reader on Linux and Windows — see [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## License
 

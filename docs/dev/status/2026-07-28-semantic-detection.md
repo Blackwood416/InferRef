@@ -3,9 +3,76 @@
 > **Updated:** 2026-07-28
 > **Version:** 0.2.0 (unreleased)
 > **Phase:** SPEC §64 Phase 5 (semantic analysis) delivered ahead of Phase 4
-> **Tests:** 235 passing (149 core / 86 frontend) + C++ self-test passing
+> **Tests:** 250 passing (149 core / 101 frontend) + C++ self-test passing
+> **CI:** green on 14 jobs across Linux + Windows, torch 2.1 / current / nightly
 
 Supersedes [2026-07-28-correctness-hardening.md](2026-07-28-correctness-hardening.md).
+
+---
+
+## 0. CI results — the two flagged risks are closed
+
+Both open risks from the previous report have been resolved by measurement.
+
+### The torch floor is now measured, not claimed
+
+The first CI run failed on both `torch min` legs. Root cause was **not** a PyTorch API
+incompatibility:
+
+`Tensor.numpy()` crosses PyTorch's NumPy ABI bridge, and torch 2.1 is compiled against NumPy 1.x.
+Since `pyproject.toml` declares no upper bound, pip installs NumPy 2.x alongside it and the call
+raises `RuntimeError: Numpy is not available`. Every payload in the trace failed.
+
+The failure was invisible, which was the more serious half: capture caught the exception and
+returned metadata, so `--capture-tensors all` silently produced a trace that looked complete and
+yielded testcases that could not run.
+
+Both are fixed. Byte extraction now reads tensor memory directly through `ctypes` — verified
+byte-for-byte on both torch versions across transposed views, offset and strided slices, bfloat16,
+bool, empty and scalar tensors — which also removes NumPy from the tracer entirely. That is the
+right layering anyway: extracting bytes is the writer's job, parsing them is the reader's. Capture
+failures now surface as manifest warnings naming the exception.
+
+A second, smaller finding: torch 2.1 dispatches `aten.detach` **twice** per `.detach()` call where
+2.13 dispatches once. The tracer was right — two detaches really did dispatch — so the two
+adversarial tests that counted them were made to assert the property that matters instead.
+
+The matrix itself was also wrong: it scheduled py3.12 against torch 2.1, which ships cp38-cp311
+wheels only, so those legs failed at install. It is now spelled out explicitly rather than
+generated as a cross product, because the supported Python range differs per torch version.
+
+**Verified pairings** (all green):
+
+| Leg | Python | torch | numpy |
+| --- | --- | --- | --- |
+| min (ubuntu + windows) | 3.10 | 2.1.2+cpu | 2.2.6 |
+| current (ubuntu ×2, windows) | 3.12 / 3.13 | 2.13.0+cpu | 2.5.1 |
+| nightly (ubuntu) | 3.12 | 2.14.0.dev20260727 | 2.5.1 |
+
+The `min` leg runs torch 2.1.2 against NumPy 2.2.6 — precisely the pairing that broke — so the fix
+is proven by the exact case that failed. `torch>=2.1` is now a measurement.
+
+### Detection validated on real Hugging Face code
+
+The class-name rules (`LlamaRMSNorm` → RMSNorm) were assumptions about naming conventions. Run
+against an actual `transformers` 5.14.1 Llama they hold:
+
+| transformers class | Detected as |
+| --- | --- |
+| `LlamaDecoderLayer` | TransformerBlock |
+| `LlamaAttention` | Attention |
+| `LlamaRMSNorm` | RMSNorm |
+| `LlamaMLP` | MLP |
+| `LlamaRotaryEmbedding` | RoPE |
+| `apply_rotary_pos_emb` (free function) | RoPE, via source stack |
+
+**91.2% semantic coverage** on a model nobody wrote for InferRef, validating cleanly. The 16
+unlabelled operators are top-level plumbing — position-id arithmetic and
+`find_packed_sequence_indices` — not unrecognised kernels, and `analyze` lists them as the work
+list exactly as SPEC §25 intends. A RoPE testcase extracts and is reproducible.
+
+`tests/frontend/test_semantic_hf.py` covers this and skips without the `hf` extra; one CI leg
+installs transformers so it stays covered.
 
 ---
 
@@ -157,7 +224,8 @@ Coverage:
   Payload coverage: 100.0%
 ```
 
-30 regions from 206 operators, all validating cleanly against IR §48.
+30 regions from 206 operators, all validating cleanly against IR §48. On a real
+transformers Llama the same detectors reach 91.2% (see §0).
 
 ---
 
@@ -175,12 +243,13 @@ Carried forward and still open:
 - Tracing overhead is untuned.
 - Only one `TraceSession` at a time; module hooks are global.
 - Parameters interned before the first forward pass are not classified.
-- **CI has still never been executed.** The Linux legs, the `torch==2.1` floor and the nightly leg
-  remain untested.
-
 Closed this round:
 
 - ~~Source-function regions can be non-contiguous~~ — fixed by stack matching.
+- ~~CI has never been executed~~ — green on 14 jobs; see §0.
+- ~~The torch floor is a claim, not a measurement~~ — verified at 2.1.2; see §0.
+- ~~Detection is unvalidated on a real HF model~~ — 91.2% coverage on transformers Llama; see §0.
+- ~~Capture failures degrade silently~~ — they now surface as manifest warnings.
 
 New this round:
 
@@ -189,9 +258,6 @@ New this round:
   and module + source function already covers mini-Llama and HF-style models.
 - **No KV-cache detection.** SPEC §64 Phase 5 lists it, but the example model has no KV cache, so
   there is nothing to validate against. Needs the example extended first.
-- **Detection is unvalidated on a real HF model.** `examples/hf_causal_lm/` exists but the
-  detectors have only been exercised on mini-Llama. Class-name heuristics in particular are
-  guesses about naming conventions until run against Qwen/Llama for real.
 - **`RoPE@rotary` and `RoPE@layers.N.self_attn` are both labelled RoPE** but are different things:
   one builds the cos/sin tables, the other applies them. The vocabulary does not yet distinguish
   them.
@@ -200,16 +266,16 @@ New this round:
 
 ## 7. Suggested next steps
 
-1. **Run the CI.** It has been written but never executed; that is the largest unknown in the repo.
-2. **Validate detection on a real HF model** — the class-name patterns are conventions-based and
-   need contact with Qwen/Llama/Mistral before being trusted.
-3. **Extend the example model with a KV cache**, then add the Phase 5 KV-cache detector. This also
-   gives the mutation-tracking work from 0.1.1 a realistic test.
-4. `torch.export` module-level enrichment: symbolic shapes (SPEC §50) and a cross-check on
+1. **Extend the example model with a KV cache**, then add the Phase 5 KV-cache detector. This also
+   gives the mutation-tracking work from 0.1.1 a realistic test — currently no example exercises a
+   cache write end to end.
+2. **Validate detection on a second architecture** (Qwen, Mistral, MoE). Llama confirms the
+   conventions hold once; a mixture-of-experts model would test them properly.
+3. `torch.export` module-level enrichment: symbolic shapes (SPEC §50) and a cross-check on
    semantic labels. Explicitly not op-level correlation.
-5. `.irtrace` archive + trace sets (SPEC §38, §51), needed before reference traces can be CI
+4. `.irtrace` archive + trace sets (SPEC §38, §51), needed before reference traces can be CI
    artifacts.
-6. Viewer, engine adapter protocol, MCP (0.3).
+5. Viewer, engine adapter protocol, MCP (0.3).
 
 ---
 
@@ -217,7 +283,7 @@ New this round:
 
 ```bash
 uv pip install -e ".[torch,dev]"
-python -m pytest tests -q                       # 235 passed
+python -m pytest tests -q                       # 250 passed
 python -m pytest tests/core -q                  # 149 passed, no torch needed
 
 python examples/mini_llama/run_trace.py --output trace/
