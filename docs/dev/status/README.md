@@ -27,5 +27,6 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-07-28 | [Semantic detection](2026-07-28-semantic-detection.md) | Automatic region detection; operator ids gone from the workflow; 235 tests |
 | 2026-07-28 | [Correctness hardening](2026-07-28-correctness-hardening.md) | Mutation binding + value/payload identity fixed; CI added (unexecuted); 167 tests |
 | 2026-07-27 | [MVP complete](2026-07-27-mvp-complete.md) | SPEC §64 Phases 0-3 done; 148 tests passing; Windows only |

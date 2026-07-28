@@ -356,7 +356,10 @@ def _provenance(package: TracePackage, value: TensorValueRecord) -> dict[str, An
         return {}
     op = graph.op(value.producer)
     source = package.source(op.source_id)
-    region = next((r.name for r in package.regions if op.id in r.node_ids), None)
+    # Regions nest (IR §36), so report the most specific one: "RoPE" tells a
+    # kernel author what this tensor is, "TransformerBlock" does not.
+    containing = [r for r in package.regions if op.id in r.node_ids]
+    region = min(containing, key=lambda r: len(r.node_ids)).name if containing else None
     return {
         "producer": {
             "op_id": op.id,

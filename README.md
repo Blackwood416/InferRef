@@ -36,15 +36,29 @@ python examples/mini_llama/run_trace.py --output trace/
 inferref inspect trace/ --limit 20
 inferref analyze trace/
 
-# 3. Carve out a semantic region and extract a standalone testcase
-inferref region create trace/ --name RotaryEmbedding \
-    --from-op 31 --to-op 48 --semantic RoPE
-inferref testcase extract trace/ --region RotaryEmbedding -o repro/rope \
+# 3. Find the semantic regions, then extract a standalone testcase
+inferref region detect trace/
+inferref testcase extract trace/ --region "RoPE@layers.0.self_attn" -o repro/rope \
     --input-names cos,sin,query,key --output-names q_embed,k_embed
 
 # 4. Run your engine against the testcase, then compare
 python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
 inferref compare repro/rope engine-out/ --first-failure
+```
+
+`region detect` recognises Linear, RMSNorm, RoPE, Attention, SwiGLU and friends from the module
+hierarchy and source functions the trace already records — no operator ids, no static export:
+
+```text
+Detected 30 semantic region(s), created 30:
+
+    14x  Linear
+     5x  RMSNorm
+     3x  RoPE
+     2x  Attention
+     2x  RepeatKV
+     2x  SwiGLU
+     2x  TransformerBlock
 ```
 
 Add `--inject-bug` to the engine step to see first-divergence reporting locate the exact element:
@@ -56,7 +70,7 @@ First divergence:
   Value id:  47
   Producer:  #40 aten.add.Tensor
   Module:    layers.0.self_attn
-  Region:    RotaryEmbedding
+  Region:    RoPE@layers.0.self_attn
   Source:    examples/mini_llama/model.py:77 in apply_rotary_pos_emb
   Shape:     [1, 4, 8, 16]
   DType:     float32
@@ -77,6 +91,45 @@ First mismatching element:
 
 The producer operator, module path, region and source line are recorded into `testcase.json` at
 extraction time, so the report stays actionable even though the engine never saw the model.
+
+## Semantic analysis
+
+Semantic labels are annotation over an authoritative physical trace, never a replacement for it
+(SPEC §17). Detection is therefore explicit — either after the fact:
+
+```bash
+inferref region detect trace/ --dry-run          # see what it would create
+inferref region detect trace/ --min-confidence 1.0   # only certain matches
+inferref region detect trace/ --detector source_function
+```
+
+or during tracing:
+
+```bash
+inferref trace run_model.py -o trace/ --semantic-analysis
+```
+
+Two detectors ship today, scored per IR §32:
+
+| Detector | Evidence | Confidence |
+| --- | --- | --- |
+| `module_type` | `torch.nn.Linear` and other built-ins | 1.00 — deterministic |
+| `module_type` | class names like `Qwen3RMSNorm`, `LlamaAttention` | 0.90 — very strong |
+| `source_function` | `apply_rotary_pos_emb`, `repeat_kv`, … | 0.95 — very strong |
+
+Regions nest and may overlap (IR §36): a `Linear@layers.0.self_attn.q_proj` sits inside
+`Attention@layers.0.self_attn` inside `TransformerBlock@layers.0`. `inspect` shows the chain
+innermost-first, and reports pick the most specific one:
+
+```text
+    #37 aten.neg.default(t43 [1,4,8,8] float32)
+        at examples/mini_llama/model.py:68 in rotate_half
+        semantic: RoPE(0.95) < Attention(0.90) < TransformerBlock(0.90)
+```
+
+Matching uses the whole source stack, so operators from an inlined helper land in their caller's
+region — `rotate_half`'s slice/neg/cat operators belong to RoPE, which is what makes the detected
+region a clean contiguous slice rather than one with holes.
 
 ## Tracing your own model
 
@@ -107,6 +160,7 @@ inferref trace run_model.py --scope model.layers.0 -o trace/ -- --batch 4
 | `inferref compare` | Testcase-vs-engine or trace-vs-trace, `--first-failure` (SPEC §35) |
 | `inferref testcase extract` | Standalone operator or region testcase (SPEC §23) |
 | `inferref testcase dedup` | Group executions into unique signatures (SPEC §24) |
+| `inferref region detect` | Find semantic regions automatically (SPEC §17) |
 | `inferref region create/list/delete` | Reference regions (SPEC §37) |
 | `inferref export` | Whole trace as one JSON document |
 
@@ -139,6 +193,7 @@ cpp/build/inferref_compare ref.irtensor actual.irtensor
 | `inferref/compare/` | numpy | Metrics, tolerance policy, layout diffing, reports |
 | `inferref/testcase/` | numpy | Testcase projection & signature dedup |
 | `inferref/region/` | stdlib | Region boundary derivation (IR §34) |
+| `inferref/semantic/` | stdlib | Semantic detectors (SPEC §17, §56) |
 | `inferref/inspect/` | stdlib | Text views and coverage analysis |
 | `inferref/cli/` | stdlib | argparse CLI; imports torch only for `trace` |
 | `inferref/frontend/pytorch/` | torch | Dispatcher-level runtime tracer |
@@ -175,15 +230,15 @@ Pass `--strict-layout` to enforce it.
 ## Tests
 
 ```bash
-python -m pytest tests -q          # 167 tests
-python -m pytest tests/core -q     # 100 tests, no PyTorch required
+python -m pytest tests -q          # 235 tests
+python -m pytest tests/core -q     # 149 tests, no PyTorch required
 ```
 
 The suite is hermetic — no downloads, no network — and split along the dependency boundary:
 
 | Suite | Requires torch | Covers |
 | --- | --- | --- |
-| `tests/core` | No | Trace IR, `.irtensor` codec, comparator, validation |
+| `tests/core` | No | Trace IR, `.irtensor` codec, comparator, validation, semantic detection |
 | `tests/frontend` | Yes | Tracing semantics, testcases, regions, CLI, end-to-end |
 
 `tests/core` is verified to run with `import torch` hard-blocked, which is how Trace IR §57

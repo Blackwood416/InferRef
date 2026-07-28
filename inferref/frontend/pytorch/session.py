@@ -59,6 +59,9 @@ class TraceSession:
     capture_tensors: str = "metadata"
     source_map: bool = True
     module_map: bool = True
+    #: Run semantic detection after tracing (SPEC §17, §33). Off by default:
+    #: physical tracing must stay usable without it.
+    semantic_analysis: bool = False
     embed_source_text: bool = False
     path_mode: str = "relative"
     max_ops: int | None = None
@@ -157,7 +160,28 @@ class TraceSession:
             self._modules.stop()
         if exc_type is None:
             self.package = self.build()
+            if self.semantic_analysis:
+                self._run_semantic_analysis(self.package)
             self.package.save(self.output)
+
+    def _run_semantic_analysis(self, package: TracePackage) -> None:
+        """Annotate and regionise the trace (SPEC §17).
+
+        Optional by design: semantic analysis is annotation over an
+        authoritative physical trace, and tracing must remain fully usable
+        without it. A detector failure therefore degrades to a manifest warning
+        rather than losing the trace (SPEC §59).
+        """
+        from inferref.semantic import apply_detections, detect
+
+        try:
+            detections = detect(package)
+            apply_detections(package, detections)
+        except Exception as exc:  # pragma: no cover - defensive
+            package.manifest.determinism.warnings += (
+                f"semantic analysis failed ({type(exc).__name__}: {exc}); "
+                "the physical trace is unaffected",
+            )
 
     # -- explicit graph boundary -----------------------------------------
 
@@ -290,6 +314,7 @@ def trace(
     capture_tensors: str = "metadata",
     source_map: bool = True,
     module_map: bool = True,
+    semantic_analysis: bool = False,
     embed_source_text: bool = False,
     path_mode: str = "relative",
     max_ops: int | None = None,
@@ -306,6 +331,7 @@ def trace(
         capture_tensors=capture_tensors,
         source_map=source_map,
         module_map=module_map,
+        semantic_analysis=semantic_analysis,
         embed_source_text=embed_source_text,
         path_mode=path_mode,
         max_ops=max_ops,

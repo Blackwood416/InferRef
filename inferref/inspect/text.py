@@ -172,6 +172,15 @@ def render_trace(
             if source is not None and source.primary is not None:
                 lines.append(f"        at {source.primary}")
 
+        semantic = [a for a in op.annotations if a.type == "semantic"]
+        if semantic:
+            # Innermost label last (see semantic.run), so show it first.
+            labels = " < ".join(
+                f"{a.name}" + ("" if a.confidence >= 1.0 else f"({a.confidence:.2f})")
+                for a in reversed(semantic)
+            )
+            lines.append(f"        semantic: {labels}")
+
         for region in package.regions:
             if op.id in region.node_ids:
                 lines.append(f"        region: {region.name}")

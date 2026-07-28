@@ -14,7 +14,7 @@ FORMAT_VERSION = "0.1"
 TENSOR_FORMAT_VERSION = 1
 
 #: Version of this InferRef implementation.
-INFERREF_VERSION = "0.1.1"
+INFERREF_VERSION = "0.2.0"
 
 #: Format string for a testcase package (IR §54).
 TESTCASE_FORMAT = "inferref-testcase"

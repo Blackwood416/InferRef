@@ -9,7 +9,7 @@
     ├── compare
     ├── validate
     ├── testcase {extract, dedup}
-    ├── region   {list, create, delete}
+    ├── region   {list, create, detect, delete}
     └── export
 
 Built on :mod:`argparse` so that the reader/comparator side installs with numpy
@@ -30,6 +30,8 @@ from typing import Any, Sequence
 
 from inferref.ir.package import TracePackage
 from inferref.ir.version import INFERREF_VERSION
+from inferref.semantic.base import CONFIDENCE_FLOOR
+from inferref.semantic.registry import detector_names
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -69,6 +71,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
         capture_tensors=args.capture_tensors,
         source_map=not args.no_source_map,
         module_map=True,
+        semantic_analysis=args.semantic_analysis,
         embed_source_text=args.embed_source_text,
         path_mode=args.path_mode,
         max_ops=args.max_ops,
@@ -91,6 +94,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
         "modules": len(package.modules),
         "sources": len(package.sources),
         "storages": len(package.storages),
+        "regions": len(package.regions),
     }
     text = (
         f"Wrote trace to {args.output}\n"
@@ -99,6 +103,8 @@ def cmd_trace(args: argparse.Namespace) -> int:
         f"  modules:   {payload['modules']}\n"
         f"  sources:   {payload['sources']}"
     )
+    if package.regions:
+        text += f"\n  regions:   {payload['regions']} (semantic analysis)"
     _emit(payload, text, args.json)
     return EXIT_OK
 
@@ -394,6 +400,73 @@ def cmd_region_delete(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_region_detect(args: argparse.Namespace) -> int:
+    from inferref.semantic import apply_detections, clear_semantic_annotations, detect
+
+    package = _load(args.trace)
+    try:
+        detections = detect(
+            package,
+            detector_names=args.detector,
+            min_confidence=args.min_confidence,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if not detections:
+        _emit(
+            {"detections": [], "counts": {"detections": 0}},
+            "No semantic regions detected.",
+            args.json,
+        )
+        return EXIT_OK
+
+    if args.dry_run:
+        lines = [f"{len(detections)} semantic region(s) would be created:", ""]
+        for detection in detections:
+            lines.append(
+                f"  {detection.confidence:.2f}  {detection.region_name:44s} "
+                f"{len(detection.node_ids):4d} ops  [{detection.method}]"
+            )
+            if args.verbose:
+                lines.append(f"        {detection.evidence}")
+        lines.append("")
+        lines.append("Re-run without --dry-run to write them to regions.json.")
+        _emit(
+            {"dry_run": True, "detections": [d.to_dict() for d in detections]},
+            "\n".join(lines),
+            args.json,
+        )
+        return EXIT_OK
+
+    if args.replace:
+        clear_semantic_annotations(package)
+        package.regions = [r for r in package.regions if r.semantic is None]
+
+    result = apply_detections(package, detections)
+    package.save_regions()
+    # Annotations live in graph.json, so the whole package is rewritten.
+    package.save(package.root)
+
+    lines = [
+        f"Detected {len(result.detections)} semantic region(s), "
+        f"created {len(result.regions)}:",
+        "",
+    ]
+    for name, count in result.summary_by_name().items():
+        lines.append(f"  {count:4d}x  {name}")
+    if result.skipped:
+        lines.append("")
+        lines.append(f"  {len(result.skipped)} skipped:")
+        for detection, reason in result.skipped:
+            lines.append(f"    {detection.region_name}: {reason}")
+    lines.append("")
+    lines.append(f"Annotated {result.annotated_operators} operator(s).")
+    _emit(result.to_dict(), "\n".join(lines), args.json)
+    return EXIT_OK
+
+
 # -- export ----------------------------------------------------------------
 
 
@@ -484,6 +557,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip payloads larger than this many elements (0 = no limit)",
     )
     p.add_argument("--no-source-map", action="store_true", help="disable source mapping")
+    p.add_argument(
+        "--semantic-analysis",
+        action="store_true",
+        help=(
+            "detect semantic regions after tracing (SPEC §17); off by default so "
+            "physical tracing stays usable without it"
+        ),
+    )
     p.add_argument(
         "--embed-source-text",
         action="store_true",
@@ -605,6 +686,42 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("name", help="region name or id")
     _add_json(q)
     q.set_defaults(func=cmd_region_delete)
+
+    q = rsub.add_parser(
+        "detect",
+        help="detect semantic regions automatically (SPEC §17)",
+        description=(
+            "Recognise Linear / RMSNorm / RoPE / Attention and friends from the "
+            "module hierarchy and source functions already recorded in the trace, "
+            "and turn each invocation into a region."
+        ),
+    )
+    q.add_argument("trace", help="trace package directory")
+    q.add_argument(
+        "--dry-run", action="store_true", help="list what would be created, write nothing"
+    )
+    q.add_argument(
+        "--min-confidence",
+        type=float,
+        default=CONFIDENCE_FLOOR,
+        help=(
+            "drop detections below this confidence (IR §32: 1.0 deterministic, "
+            "0.90-0.99 very strong, 0.70-0.89 likely)"
+        ),
+    )
+    q.add_argument(
+        "--detector",
+        action="append",
+        help=f"only run this detector (repeatable); available: {', '.join(detector_names())}",
+    )
+    q.add_argument(
+        "--replace",
+        action="store_true",
+        help="discard existing semantic regions and annotations first",
+    )
+    q.add_argument("-v", "--verbose", action="store_true", help="show why each was detected")
+    _add_json(q)
+    q.set_defaults(func=cmd_region_detect)
 
     # export
     p = sub.add_parser("export", help="export a trace as a single JSON document")

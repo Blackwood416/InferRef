@@ -91,7 +91,7 @@ def test_import_inferref_without_torch(traced_dir: Path) -> None:
         """,
         traced_dir,
     )
-    assert "version 0.1.1" in out
+    assert "version 0.2.0" in out
 
 
 def test_load_trace_without_torch(traced_dir: Path) -> None:

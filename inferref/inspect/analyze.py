@@ -30,6 +30,14 @@ class Analysis:
     covered_operators: int = 0
     regions: list[dict[str, Any]] = field(default_factory=list)
 
+    #: Fraction of operators carrying at least one semantic annotation
+    #: (SPEC §25 "Semantic region coverage").
+    semantic_coverage: float = 0.0
+    semantic_counts: dict[str, int] = field(default_factory=dict)
+    #: Modules whose operators got no semantic label at all — the work list for
+    #: supporting a new model (SPEC §25 "Unsupported patterns").
+    unlabelled_modules: list[str] = field(default_factory=list)
+
     #: Fraction of operators whose source location is known.
     source_coverage: float = 0.0
     #: Fraction of values with a full payload — what testcase extraction needs.
@@ -53,10 +61,13 @@ class Analysis:
             "module_counts": self.module_counts,
             "coverage": {
                 "region": self.region_coverage,
+                "semantic": self.semantic_coverage,
                 "source": self.source_coverage,
                 "payload": self.payload_coverage,
                 "covered_operators": self.covered_operators,
             },
+            "semantic_counts": self.semantic_counts,
+            "unlabelled_modules": self.unlabelled_modules,
             "regions": self.regions,
             "capture_modes": self.capture_modes,
             "signatures": self.signature_summary,
@@ -76,17 +87,29 @@ def analyze(package: TracePackage) -> Analysis:
     operator_counter: Counter[str] = Counter()
     module_counter: Counter[str] = Counter()
     mutating: Counter[str] = Counter()
+    semantic_counter: Counter[str] = Counter()
     non_portable: set[str] = set()
     sourced = 0
+    labelled = 0
+    labelled_modules: set[str] = set()
+    all_modules: set[str] = set()
 
     for op in graph.operators:
         operator_counter[op.canonical_name] += 1
         path = package.module_path(op.module_stack)
         module_counter[path or "<root>"] += 1
+        all_modules.add(path or "<root>")
         if op.source_id is not None:
             sourced += 1
         if op.effects.mutated_storages:
             mutating[op.canonical_name] += 1
+        semantic = [a for a in op.annotations if a.type == "semantic"]
+        if semantic:
+            labelled += 1
+            labelled_modules.add(path or "<root>")
+            # Count the innermost (most specific) label only, so a Linear
+            # inside an Attention is not double counted.
+            semantic_counter[semantic[-1].name] += 1
         for arg in list(op.positional_args) + list(op.keyword_args.values()):
             if getattr(arg, "kind", None) == "opaque" and not getattr(arg, "portable", True):
                 non_portable.add(op.canonical_name)
@@ -94,6 +117,8 @@ def analyze(package: TracePackage) -> Analysis:
     result.operator_counts = dict(operator_counter.most_common())
     result.module_counts = dict(module_counter.most_common())
     result.mutating_operators = dict(mutating.most_common())
+    result.semantic_counts = dict(semantic_counter.most_common())
+    result.unlabelled_modules = sorted(all_modules - labelled_modules)
     result.non_portable_operators = sorted(non_portable)
 
     covered: set[int] = set()
@@ -114,6 +139,7 @@ def analyze(package: TracePackage) -> Analysis:
     if result.total_operators:
         result.region_coverage = len(covered) / result.total_operators
         result.source_coverage = sourced / result.total_operators
+        result.semantic_coverage = labelled / result.total_operators
 
     capture_counter: Counter[str] = Counter()
     full = 0
@@ -156,8 +182,27 @@ def render_analysis(analysis: Analysis, *, top: int = 15) -> str:
         f"  Region coverage:  {analysis.region_coverage:6.1%} "
         f"({analysis.covered_operators}/{analysis.total_operators} operators)"
     )
+    lines.append(f"  Semantic coverage:{analysis.semantic_coverage:6.1%}")
     lines.append(f"  Payload coverage: {analysis.payload_coverage:6.1%}")
     lines.append("")
+
+    if analysis.semantic_counts:
+        lines.append("Semantic operators (innermost label):")
+        for name, count in analysis.semantic_counts.items():
+            lines.append(f"  {count:6d}  {name}")
+        lines.append("")
+    elif analysis.total_operators:
+        lines.append("No semantic labels. Run `inferref region detect <trace>`.")
+        lines.append("")
+
+    if analysis.unlabelled_modules:
+        # SPEC §25 "Unsupported patterns": the work list for a new model.
+        lines.append("Modules with no semantic label:")
+        for path in analysis.unlabelled_modules[:top]:
+            lines.append(f"  {path}")
+        if len(analysis.unlabelled_modules) > top:
+            lines.append(f"  ... and {len(analysis.unlabelled_modules) - top} more")
+        lines.append("")
 
     signatures = analysis.signature_summary
     lines.append("Operator signatures (SPEC §24):")

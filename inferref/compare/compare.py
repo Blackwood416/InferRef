@@ -382,10 +382,11 @@ def _annotate_from_trace(
         comparison.module_path = package.module_path(op.module_stack) or None
         source = package.source(op.source_id)
         comparison.source = str(source) if source else None
-        for region in package.regions:
-            if op.id in region.node_ids:
-                comparison.region = region.name
-                break
+        # Most specific containing region: regions nest (IR §36) and the
+        # innermost one is what identifies the tensor.
+        containing = [r for r in package.regions if op.id in r.node_ids]
+        if containing:
+            comparison.region = min(containing, key=lambda r: len(r.node_ids)).name
 
 
 def _comparable_values(package: TracePackage) -> list[tuple[int, str]]:

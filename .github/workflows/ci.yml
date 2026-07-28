@@ -140,14 +140,11 @@ jobs:
           inferref validate trace/
           inferref analyze trace/ --json > /dev/null
 
-          # Derive layer 0's RoPE operator range rather than hardcoding ids,
-          # so editing the example model cannot silently break this step.
-          eval "$(python .github/scripts/rope_range.py trace/)"
-          echo "RoPE range: op $ROPE_FROM..$ROPE_TO"
-
-          inferref region create trace/ --name RotaryEmbedding \
-            --from-op "$ROPE_FROM" --to-op "$ROPE_TO" --semantic RoPE
-          inferref testcase extract trace/ --region RotaryEmbedding -o repro/rope \
+          # Semantic detection finds the RoPE region on its own; no operator
+          # ids appear anywhere in this workflow.
+          inferref region detect trace/
+          inferref testcase extract trace/ --region "RoPE@layers.0.self_attn" \
+            -o repro/rope \
             --input-names cos,sin,query,key --output-names q_embed,k_embed
 
           python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
@@ -206,10 +203,9 @@ jobs:
           pip install -e ".[dev]"
 
           python examples/mini_llama/run_trace.py --output trace/
-          eval "$(python .github/scripts/rope_range.py trace/)"
-          inferref region create trace/ --name RoPE \
-            --from-op "$ROPE_FROM" --to-op "$ROPE_TO"
-          inferref testcase extract trace/ --region RoPE -o repro/rope \
+          inferref region detect trace/
+          inferref testcase extract trace/ --region "RoPE@layers.0.self_attn" \
+            -o repro/rope \
             --input-names cos,sin,query,key --output-names q_embed,k_embed
           python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
 
