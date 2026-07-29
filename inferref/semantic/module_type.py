@@ -67,6 +67,9 @@ BUILTIN_TYPES: dict[str, str] = {
 #: so more specific patterns must come first. Matched against the bare class
 #: name (``Qwen3RMSNorm``), case-insensitively.
 NAME_PATTERNS: tuple[tuple[str, str], ...] = (
+    # Cache before Attention/MLP: cache wrappers often contain those words in
+    # a model-qualified class name and the mutation semantic is more specific.
+    (r"kv.?cache|key.?value.?cache|static.?cache|dynamic.?cache", "KVCacheUpdate"),
     (r"rmsnorm", "RMSNorm"),
     (r"layernorm", "LayerNorm"),
     (r"rotary|rope", "RoPE"),

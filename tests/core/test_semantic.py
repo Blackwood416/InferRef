@@ -118,6 +118,8 @@ def _linear_package() -> TracePackage:
         ("mymodel.SwiGLUMLP", "SwiGLU", CONFIDENCE_STRONG),
         ("mymodel.CausalSelfAttention", "Attention", CONFIDENCE_STRONG),
         ("mymodel.DecoderLayer", "TransformerBlock", CONFIDENCE_STRONG),
+        ("mymodel.StaticKVCache", "KVCacheUpdate", CONFIDENCE_STRONG),
+        ("mymodel.KeyValueCache", "KVCacheUpdate", CONFIDENCE_STRONG),
     ],
 )
 def test_module_type_mapping(type_path: str, expected: str, confidence: float) -> None:
@@ -145,6 +147,7 @@ def test_specific_patterns_win_over_general() -> None:
     assert semantic_for_type("m.LayerNorm")[0] == "LayerNorm"
     # `SwiGLUMLP` contains both `swiglu` and `mlp`; the specific one wins.
     assert semantic_for_type("m.SwiGLUMLP")[0] == "SwiGLU"
+    assert semantic_for_type("m.AttentionKVCache")[0] == "KVCacheUpdate"
 
 
 def test_builtin_beats_name_heuristic() -> None:
@@ -248,7 +251,10 @@ def test_source_detector_matches_the_whole_stack() -> None:
     assert first.node_ids == (1, 2, 3, 4)     # includes the rotate_half ops
     assert first.confidence == CONFIDENCE_VERY_STRONG
     assert first.method == "source_function"
-    assert first.scope == "attn"
+    # Repeated invocations at one module path get stable ordinals.  Distinct
+    # layer paths do not need them, but prefill/decode calls do.
+    assert first.scope == "attn#0"
+    assert found[1].scope == "attn#1"
     assert is_contiguous(package.graph, first.node_ids)
 
     # The unrelated `mm` at index 4 splits the two invocations.
@@ -268,6 +274,8 @@ def test_nested_helper_is_not_its_own_region() -> None:
         ("apply_rotary_pos_emb", "RoPE"),
         ("apply_rope", "RoPE"),
         ("repeat_kv", "RepeatKV"),
+        ("update_kv_cache", "KVCacheUpdate"),
+        ("append_kv_cache", "KVCacheUpdate"),
         ("scaled_dot_product_attention", "Attention"),
         ("forward", None),
         ("some_random_helper", None),

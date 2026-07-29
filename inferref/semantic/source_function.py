@@ -32,6 +32,10 @@ DETECTOR_ID = "inferref.semantic.source_function.v1"
 #: Function-name patterns -> semantic name, matched case-insensitively against
 #: the function names in an operator's source stack. Ordered; first match wins.
 FUNCTION_PATTERNS: tuple[tuple[str, str], ...] = (
+    (
+        r"^update_kv_cache$|^append_kv_cache$|^write_kv_cache$",
+        "KVCacheUpdate",
+    ),
     (r"^apply_rotary_pos_emb$|^apply_rope$|^apply_rotary_emb$", "RoPE"),
     (r"^repeat_kv$", "RepeatKV"),
     (r"^scaled_dot_product_attention$|^eager_attention_forward$", "Attention"),
@@ -77,22 +81,44 @@ class SourceFunctionDetector:
                 break  # innermost recognised frame wins
 
         detections: list[Detection] = []
+        pending: list[tuple[str, str, tuple[int, ...], str]] = []
         for key, nodes in matched.items():
             semantic_name, function = key.split("\x00", 1)
             runs = split_invocations(package.graph, nodes)
-            for index, run in enumerate(runs):
-                scope = self._scope_for(package, run)
-                detections.append(
-                    Detection(
-                        name=semantic_name,
-                        node_ids=run,
-                        confidence=self.confidence,
-                        detector=DETECTOR_ID,
-                        method="source_function",
-                        scope=scope or f"#{index}",
-                        evidence=f"operators issued from {function}()",
-                    )
+            for run in runs:
+                pending.append(
+                    (semantic_name, function, run, self._scope_for(package, run))
                 )
+
+        # One source function can be invoked repeatedly by the same module
+        # (prefill, then decode, then decode again).  Distinct paths already
+        # disambiguate layer calls; repeated calls at one path need an ordinal.
+        scope_counts: dict[tuple[str, str], int] = {}
+        for semantic_name, _function, _run, scope in pending:
+            key = (semantic_name, scope)
+            scope_counts[key] = scope_counts.get(key, 0) + 1
+        scope_ordinals: dict[tuple[str, str], int] = {}
+
+        for semantic_name, function, run, base_scope in pending:
+            scope_key = (semantic_name, base_scope)
+            ordinal = scope_ordinals.get(scope_key, 0)
+            scope_ordinals[scope_key] = ordinal + 1
+            scope = base_scope
+            if scope_counts[scope_key] > 1:
+                scope = f"{scope or '<root>'}#{ordinal}"
+            elif not scope:
+                scope = "<root>"
+            detections.append(
+                Detection(
+                    name=semantic_name,
+                    node_ids=run,
+                    confidence=self.confidence,
+                    detector=DETECTOR_ID,
+                    method="source_function",
+                    scope=scope,
+                    evidence=f"operators issued from {function}()",
+                )
+            )
         return detections
 
     @staticmethod

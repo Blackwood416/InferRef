@@ -200,6 +200,12 @@ def _check_producer_consumer(pkg: TracePackage, issues: list[ValidationIssue]) -
         for vid in graph.op_input_value_ids(op):
             actual_consumers.setdefault(vid, set()).add(op.id)
 
+    # A mutation produces the next storage generation even when the base
+    # tensor carrying that generation is not the Python return object.
+    effect_producers, _ = graph.derived_links()
+    for vid, op_id in effect_producers.items():
+        actual_producers.setdefault(vid, op_id)
+
     for value in graph.values:
         where = f"value:{value.id}"
         expected = actual_producers.get(value.id)

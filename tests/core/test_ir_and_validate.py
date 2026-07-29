@@ -21,6 +21,7 @@ from inferref.ir.region import RegionRecord
 from inferref.ir.source import SourceFrame, SourceRecord
 from inferref.ir.tensor_value import CaptureInfo, Device, TensorValueRecord
 from inferref.ir.validate import validate_package
+from inferref.region.boundary import derive_boundary
 from inferref.ir.values import (
     DictValue,
     ListValue,
@@ -190,6 +191,50 @@ def test_invariant_7_mutation_must_advance_version() -> None:
                                           version_after=3),)
     )
     assert any("does not advance version" in e for e in _errors(package))
+
+
+def test_mutation_effect_produces_unreturned_storage_alias() -> None:
+    """A base tensor at version_after is caused by copy_, not an input."""
+    values = [
+        _tensor(1, storage_id=1, storage_version=0),  # target before write
+        _tensor(2, storage_id=1, storage_version=1),  # copy_ target result
+        _tensor(3, storage_id=1, storage_version=1),  # base cache after write
+        _tensor(4, shape=(1, 2), storage_id=1, storage_version=1),  # live view
+        _tensor(5, storage_id=5, storage_version=0),  # source values
+    ]
+    copy = OperatorRecord(
+        id=1,
+        execution_index=0,
+        namespace="aten",
+        op="copy_",
+        overload="default",
+        positional_args=(TensorRef(1), TensorRef(5)),
+        result=TensorRef(2),
+        effects=Effects(
+            mutated_storages=(
+                StorageMutation(storage_id=1, version_before=0, version_after=1),
+            )
+        ),
+    )
+    live_slice = OperatorRecord(
+        id=2,
+        execution_index=1,
+        namespace="aten",
+        op="slice",
+        overload="Tensor",
+        positional_args=(TensorRef(3),),
+        result=TensorRef(4),
+    )
+    graph = Graph(operators=[copy, live_slice], values=values)
+    graph.recompute_links()
+
+    assert graph.value(2).producer == 1  # explicit return
+    assert graph.value(3).producer == 1  # storage-generation effect
+    assert graph.value(4).producer == 2  # explicit downstream view wins
+    assert derive_boundary(graph, [1, 2])[0] == [1, 5]
+
+    package = TracePackage(manifest=Manifest(), graph=graph)
+    assert _errors(package) == []
 
 
 # -- invariants 8 & 9: regions ---------------------------------------------

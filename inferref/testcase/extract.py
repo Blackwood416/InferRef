@@ -101,11 +101,24 @@ def _resolve_names(
                 f"got {len(explicit)} {prefix} name(s) but the boundary has "
                 f"{len(value_ids)} value(s)"
             )
-        return [name.strip() for name in explicit]
-    return [
+        names = [name.strip() for name in explicit]
+        if len(set(names)) != len(names):
+            raise ExtractionError(f"{prefix} names must be unique: {names}")
+        return names
+    names = [
         _value_label(package, value_id, f"{prefix}_{position}")
         for position, value_id in enumerate(value_ids)
     ]
+    # Mutating regions can expose several immutable values for one qualified
+    # buffer name (pre-state, target view, post-state).  Keep readable names
+    # without allowing later payload copies to overwrite earlier ones.
+    used: dict[str, int] = {}
+    unique: list[str] = []
+    for name in names:
+        ordinal = used.get(name, 0) + 1
+        used[name] = ordinal
+        unique.append(name if ordinal == 1 else f"{name}_{ordinal}")
+    return unique
 
 
 def _copy_payload(

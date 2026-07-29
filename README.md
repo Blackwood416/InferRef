@@ -131,6 +131,24 @@ Matching uses the whole source stack, so operators from an inlined helper land i
 region — `rotate_half`'s slice/neg/cat operators belong to RoPE, which is what makes the detected
 region a clean contiguous slice rather than one with holes.
 
+### KV-cache mutation path
+
+The static-cache example performs a three-token prefill followed by one decode
+step, then checks both calls against uncached causal attention:
+
+```bash
+python examples/mini_llama/run_kv_cache_trace.py --output trace-kv/
+inferref inspect trace-kv/ --operator aten.copy_.default
+inferref region list trace-kv/
+inferref testcase extract trace-kv/ --region "KVCacheUpdate@cache#1" -o repro/cache-decode
+```
+
+The two cache storages remain allocated while their immutable Trace Values
+advance from version 0 to 1 (prefill) and 1 to 2 (decode). Semantic analysis
+splits the repeated cache-module invocation into `KVCacheUpdate@cache#0` and
+`KVCacheUpdate@cache#1`; both mutation regions produce standalone testcase
+payloads without filename collisions between storage generations.
+
 ## Tracing your own model
 
 ```python
@@ -230,8 +248,8 @@ Pass `--strict-layout` to enforce it.
 ## Tests
 
 ```bash
-python -m pytest tests -q          # 250 tests
-python -m pytest tests/core -q     # 149 tests, no PyTorch required
+python -m pytest tests -q          # 262 tests
+python -m pytest tests/core -q     # 154 tests, no PyTorch required
 ```
 
 The suite is hermetic — no downloads, no network — and split along the dependency boundary:

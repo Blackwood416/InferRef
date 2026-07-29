@@ -112,11 +112,21 @@ class Graph:
 
     # -- derived ----------------------------------------------------------
 
-    def recompute_links(self) -> None:
-        """Recompute ``producer`` / ``consumers`` from the operator list.
+    def derived_links(self) -> tuple[dict[int, int], dict[int, list[int]]]:
+        """Derive producer and consumer maps from operators and effects.
 
-        Producer/consumer links are derived data; recomputing them keeps
-        validation invariants 4 and 5 (IR §48) satisfied after edits.
+        A mutating operator produces more than its Python return object.  It
+        also produces a new generation of the entire aliased storage.  A later
+        read through the base tensor therefore has a real producer even when
+        the operator returned only the written view::
+
+            cache[:, :, pos].copy_(key)   # result is the target view
+            live = cache[:, :, :end]      # base tensor at the new generation
+
+        Without this effect edge, ``live`` looks like an external graph input
+        and mutation regions cannot have a truthful boundary.  Explicit
+        operator results win; mutation effects only fill values that otherwise
+        have no producer, so a downstream view keeps its own producing op.
         """
         producers: dict[int, int] = {}
         consumers: dict[int, list[int]] = {}
@@ -125,6 +135,41 @@ class Graph:
                 consumers.setdefault(vid, []).append(op.id)
             for vid in self.op_output_value_ids(op):
                 producers.setdefault(vid, op.id)
+
+        values_by_generation: dict[tuple[int, int], list[int]] = {}
+        for value in self.values:
+            if value.storage_id is None:
+                continue
+            values_by_generation.setdefault(
+                (value.storage_id, value.storage_version), []
+            ).append(value.id)
+
+        for op in self.ops_in_execution_order():
+            for mutation in op.effects.mutated_storages:
+                for vid in values_by_generation.get(
+                    (mutation.storage_id, mutation.version_after), ()
+                ):
+                    producers.setdefault(vid, op.id)
+        return producers, consumers
+
+    def produced_value_ids(self, op: OperatorRecord) -> list[int]:
+        """Values produced explicitly or through a storage mutation effect."""
+        explicit = self.op_output_value_ids(op)
+        seen = set(explicit)
+        effect = [
+            value.id
+            for value in self.values
+            if value.producer == op.id and value.id not in seen
+        ]
+        return explicit + effect
+
+    def recompute_links(self) -> None:
+        """Recompute ``producer`` / ``consumers`` from the operator list.
+
+        Producer/consumer links are derived data; recomputing them keeps
+        validation invariants 4 and 5 (IR §48) satisfied after edits.
+        """
+        producers, consumers = self.derived_links()
         for value in self.values:
             object.__setattr__(value, "producer", producers.get(value.id))
             object.__setattr__(value, "consumers", tuple(consumers.get(value.id, ())))

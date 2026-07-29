@@ -39,7 +39,7 @@ def derive_boundary(
     # Values produced within the region.
     produced_inside: set[int] = set()
     for op in ops_inside:
-        produced_inside.update(graph.op_output_value_ids(op))
+        produced_inside.update(graph.produced_value_ids(op))
 
     # Inputs: consumed inside, not produced inside.
     inputs: list[int] = []
@@ -70,7 +70,7 @@ def derive_boundary(
     outputs: list[int] = []
     seen_outputs: set[int] = set()
     for op in ops_inside:
-        for vid in graph.op_output_value_ids(op):
+        for vid in graph.produced_value_ids(op):
             if vid in seen_outputs:
                 continue
             escapes = (
