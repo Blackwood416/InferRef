@@ -285,6 +285,23 @@ def test_source_function_mapping(function: str, expected: str | None) -> None:
     assert semantic_for_function(function) == expected
 
 
+def test_source_detector_honours_instance_patterns() -> None:
+    """Custom detector configuration must not fall back to global patterns."""
+    frame = SourceFrame("extension.py", 7, "project_fused_gate")
+    package = _build(
+        ops=[(1, "mul", [1, 2], 3, (), 1)],
+        sources=[SourceRecord(id=1, primary=frame, stack=(frame,))],
+    )
+    detector = SourceFunctionDetector(
+        patterns=((r"^project_fused_gate$", "ProjectGate"),)
+    )
+
+    found = detector.detect(package)
+
+    assert [d.name for d in found] == ["ProjectGate"]
+    assert found[0].node_ids == (1,)
+
+
 # -- invocation splitting --------------------------------------------------
 
 
@@ -352,6 +369,39 @@ def test_detect_deduplicates_identical_node_sets() -> None:
     assert len(found) == 1
     # source_function (0.95) beats module name heuristic (0.90).
     assert found[0].confidence == CONFIDENCE_VERY_STRONG
+
+
+def test_detect_retains_different_semantics_on_identical_node_sets() -> None:
+    """One physical boundary may carry multiple valid semantic readings."""
+    package = _build(ops=[(1, "mul", [1, 2], 3, (), None)])
+
+    class FixedDetector:
+        def __init__(self, semantic: str) -> None:
+            self.semantic = semantic
+
+        def detect(self, _package: TracePackage) -> list[Detection]:
+            return [
+                Detection(
+                    name=self.semantic,
+                    node_ids=(1,),
+                    confidence=CONFIDENCE_STRONG,
+                    detector=f"test.{self.semantic}",
+                    method="module",
+                )
+            ]
+
+    found = detect(
+        package,
+        detectors=[FixedDetector("MLP"), FixedDetector("SwiGLU")],
+    )
+
+    assert {d.name for d in found} == {"MLP", "SwiGLU"}
+    applied = apply_detections(package, found)
+    assert {region.semantic.name for region in applied.regions} == {"MLP", "SwiGLU"}
+    assert {annotation.name for annotation in package.graph.op(1).annotations} == {
+        "MLP",
+        "SwiGLU",
+    }
 
 
 def test_detect_orders_outermost_first() -> None:

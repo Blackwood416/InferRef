@@ -248,8 +248,8 @@ Pass `--strict-layout` to enforce it.
 ## Tests
 
 ```bash
-python -m pytest tests -q          # 262 tests
-python -m pytest tests/core -q     # 154 tests, no PyTorch required
+python -m pytest tests -q          # 268 tests
+python -m pytest tests/core -q     # 157 tests, no PyTorch required
 ```
 
 The suite is hermetic — no downloads, no network — and split along the dependency boundary:

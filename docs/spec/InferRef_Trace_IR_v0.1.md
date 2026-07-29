@@ -653,6 +653,23 @@ Metadata plus selected values.
 
 Complete logical tensor payload is stored.
 
+If a policy requested a stronger mode but InferRef retained less, the capture
+record SHOULD describe that downgrade with additive, machine-readable fields:
+
+```json
+{
+  "mode": "hash",
+  "requested_mode": "full",
+  "degraded_reason": "max_capture_elements",
+  "limit": 1000000,
+  "logical_numel": 4194304
+}
+```
+
+`degraded_reason` SHOULD be a stable identifier rather than prose. `limit` and
+`logical_numel` are present when a size policy caused the downgrade. Readers
+MUST tolerate these fields being absent in older v0.1 traces.
+
 ---
 
 # 19. Tensor Hash Record

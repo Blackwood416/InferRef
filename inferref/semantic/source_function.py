@@ -48,11 +48,19 @@ FUNCTION_PATTERNS: tuple[tuple[str, str], ...] = (
 NESTED_HELPERS: frozenset[str] = frozenset({"rotate_half", "rotate_every_two"})
 
 
-def semantic_for_function(function: str) -> str | None:
-    """Map a source function name to a semantic name, if recognised."""
+def semantic_for_function(
+    function: str,
+    patterns: tuple[tuple[str, str], ...] = FUNCTION_PATTERNS,
+) -> str | None:
+    """Map a source function name to a semantic name, if recognised.
+
+    ``patterns`` is explicit so callers and :class:`SourceFunctionDetector`
+    instances can supply project-specific conventions without mutating global
+    detector state.
+    """
     if function in NESTED_HELPERS:
         return None
-    for pattern, name in FUNCTION_PATTERNS:
+    for pattern, name in patterns:
         if re.search(pattern, function, re.IGNORECASE):
             return name
     return None
@@ -74,7 +82,7 @@ class SourceFunctionDetector:
             if source is None:
                 continue
             for frame in source.stack:
-                semantic_name = semantic_for_function(frame.function)
+                semantic_name = semantic_for_function(frame.function, self.patterns)
                 if semantic_name is None:
                     continue
                 matched.setdefault(f"{semantic_name}\x00{frame.function}", []).append(op.id)

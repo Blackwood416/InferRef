@@ -139,7 +139,12 @@ class TensorCapture:
             # silently would hand back a trace that looks fine and yields
             # testcases that cannot run.
             self._record_failure(exc)
-            return CaptureInfo(mode="metadata")
+            return CaptureInfo(
+                mode="metadata",
+                requested_mode=mode,
+                degraded_reason="capture_error",
+                logical_numel=record.logical_numel,
+            )
 
         digest = hashlib.new(HASH_ALGORITHM, raw).hexdigest()
         hashes = (TensorHash(algorithm=HASH_ALGORITHM, domain=HASH_DOMAIN, value=digest),)
@@ -147,7 +152,14 @@ class TensorCapture:
             return CaptureInfo(mode="hash", hashes=hashes)
 
         if self.max_elements and record.logical_numel > self.max_elements:
-            return CaptureInfo(mode="hash", hashes=hashes)
+            return CaptureInfo(
+                mode="hash",
+                hashes=hashes,
+                requested_mode=mode,
+                degraded_reason="max_capture_elements",
+                limit=self.max_elements,
+                logical_numel=record.logical_numel,
+            )
 
         payload = self._write_payload(digest, record, raw)
         return CaptureInfo(mode="full", payload=payload, hashes=hashes)

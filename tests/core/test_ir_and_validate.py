@@ -76,6 +76,28 @@ def _errors(package: TracePackage) -> list[str]:
     return [str(i) for i in validate_package(package) if i.severity == "error"]
 
 
+def test_capture_degradation_metadata_roundtrip() -> None:
+    capture = CaptureInfo(
+        mode="hash",
+        requested_mode="full",
+        degraded_reason="max_capture_elements",
+        limit=1_000_000,
+        logical_numel=4_194_304,
+    )
+
+    encoded = capture.to_dict()
+    decoded = CaptureInfo.from_dict(encoded)
+
+    assert encoded == {
+        "mode": "hash",
+        "requested_mode": "full",
+        "degraded_reason": "max_capture_elements",
+        "limit": 1_000_000,
+        "logical_numel": 4_194_304,
+    }
+    assert decoded == capture
+
+
 # -- happy path ------------------------------------------------------------
 
 

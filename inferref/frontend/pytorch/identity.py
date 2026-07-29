@@ -19,11 +19,14 @@ Three distinct identities are maintained:
     operator runs. Versions are instead advanced from the operator schema's
     declared writes (see :mod:`inferref.frontend.pytorch.dispatch`).
 
-Value records are interned on ``(storage_id, storage_version, dtype, shape,
-stride, storage_offset)``. Two tensors matching on that tuple are by
-construction the same immutable logical value, which is what delivers parameter
-deduplication (IR §39): one weight shared by 32 layers yields a single value
-record and a single payload.
+Value records are interned on ``(runtime_object_id, storage_id,
+storage_version, dtype, shape, stride, storage_offset)``. Runtime object
+identity keeps the observed dataflow truthful when two tensor objects share a
+storage, generation and layout. Payload canonicalisation is separate and uses
+content plus layout, so distinct trace values may still share one payload file.
+Repeated observations of the same unchanged parameter object intern to one
+value; tied or aliased objects remain distinct values with shared parameter and
+payload metadata (IR §39).
 """
 
 from __future__ import annotations
@@ -212,8 +215,9 @@ class Identity:
     def intern(self, tensor: torch.Tensor, memo: dict[tuple, int] | None = None) -> tuple[int, bool]:
         """Return ``(value_id, is_new)`` for the current state of ``tensor``.
 
-        Repeat observations of an unchanged tensor collapse onto one record —
-        this is where parameter deduplication happens (IR §39).
+        Repeat observations of the same unchanged tensor object collapse onto
+        one record. Payload deduplication for distinct objects happens later in
+        :class:`~inferref.frontend.pytorch.capture.TensorCapture` (IR §39).
 
         Passing ``memo`` switches to *output* interning: a fresh record is
         allocated even when an identical one exists, and the intern table is

@@ -407,6 +407,30 @@ def test_capture_failure_is_reported_not_swallowed(
     assert any("cannot be reproduced" in w for w in warnings)
     # And every value really did fall back to metadata.
     assert all(v.capture.mode == "metadata" for v in package.graph.values)
+    assert all(v.capture.requested_mode == "full" for v in package.graph.values)
+    assert all(v.capture.degraded_reason == "capture_error" for v in package.graph.values)
+
+
+def test_capture_limit_records_structured_degradation(trace_dir: Path) -> None:
+    """Hash-only fallback must retain why a full payload was not written."""
+    x = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+    package = _trace(
+        lambda session: session.mark_output("y", x * 2),
+        trace_dir,
+        capture_tensors="all",
+        max_capture_elements=4,
+    )
+
+    degraded = [
+        value.capture
+        for value in package.graph.values
+        if value.capture.degraded_reason == "max_capture_elements"
+    ]
+    assert degraded
+    assert all(capture.mode == "hash" for capture in degraded)
+    assert all(capture.requested_mode == "full" for capture in degraded)
+    assert all(capture.limit == 4 for capture in degraded)
+    assert all(capture.logical_numel == 6 for capture in degraded)
 
 
 # -- validity --------------------------------------------------------------

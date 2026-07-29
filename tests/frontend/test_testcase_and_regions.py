@@ -119,6 +119,43 @@ def test_testcase_without_payloads_is_flagged(
     )
 
 
+def test_testcase_explains_capture_limit_degradation(
+    trace_dir: Path, tmp_path: Path
+) -> None:
+    """Agents get the exact reason and threshold for a hash-only boundary."""
+    x = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+    with torch.no_grad(), inferref.trace(
+        output=trace_dir,
+        capture_tensors="all",
+        max_capture_elements=4,
+    ) as session:
+        session.mark_input("x", x)
+        session.mark_output("y", x + 1)
+    package = TracePackage.load(trace_dir)
+    op = next(
+        candidate
+        for candidate in package.graph.ops_in_execution_order()
+        if candidate.canonical_name == "aten.add.Tensor"
+    )
+
+    result = extract_operator(package, op.id, tmp_path / "limited")
+    manifest = json.loads(
+        (tmp_path / "limited" / "testcase.json").read_text(encoding="utf-8")
+    )
+    details = manifest["missing_payload_details"]
+
+    assert not result.reproducible
+    assert details
+    assert {detail["reason"] for detail in details} == {"max_capture_elements"}
+    assert all(detail["capture"]["requested_mode"] == "full" for detail in details)
+    assert all(detail["capture"]["mode"] == "hash" for detail in details)
+    assert all(detail["capture"]["limit"] == 4 for detail in details)
+    assert all(detail["capture"]["logical_numel"] == 6 for detail in details)
+    readme = (tmp_path / "limited" / "README.md").read_text(encoding="utf-8")
+    assert "max_capture_elements=4" in readme
+    assert "logical_numel=6" in readme
+
+
 # -- criterion 9: a multi-op RoPE reference region --------------------------
 
 

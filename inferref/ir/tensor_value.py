@@ -85,6 +85,14 @@ class CaptureInfo:
     payload: str | None = None
     hashes: tuple[TensorHash, ...] = ()
     sample: list[Any] | None = None
+    #: Present when capture policy requested more than ``mode`` retained.
+    requested_mode: str | None = None
+    #: Stable machine-readable reason for the downgrade.
+    degraded_reason: str | None = None
+    #: Policy limit involved in the downgrade, when applicable.
+    limit: int | None = None
+    #: Tensor size evaluated against ``limit``, when applicable.
+    logical_numel: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"mode": self.mode}
@@ -94,6 +102,14 @@ class CaptureInfo:
             out["hashes"] = [h.to_dict() for h in self.hashes]
         if self.sample is not None:
             out["sample"] = self.sample
+        if self.requested_mode is not None:
+            out["requested_mode"] = self.requested_mode
+        if self.degraded_reason is not None:
+            out["degraded_reason"] = self.degraded_reason
+        if self.limit is not None:
+            out["limit"] = self.limit
+        if self.logical_numel is not None:
+            out["logical_numel"] = self.logical_numel
         return out
 
     @classmethod
@@ -105,6 +121,10 @@ class CaptureInfo:
             payload=data.get("payload"),
             hashes=tuple(TensorHash.from_dict(h) for h in data.get("hashes", ())),
             sample=data.get("sample"),
+            requested_mode=data.get("requested_mode"),
+            degraded_reason=data.get("degraded_reason"),
+            limit=data.get("limit"),
+            logical_numel=data.get("logical_numel"),
         )
 
 

@@ -78,15 +78,17 @@ def detect(
 
 
 def _deduplicate(detections: Iterable[Detection]) -> list[Detection]:
-    """Collapse detections covering exactly the same operators.
+    """Collapse duplicate labels covering exactly the same operators.
 
     A construct can be recognised twice — a ``RotaryEmbedding`` module and the
-    ``apply_rotary_pos_emb`` it calls, say. Keeping both would create two
-    regions over one node set, so the higher-confidence one wins.
+    ``apply_rotary_pos_emb`` it calls, say. For the *same semantic label*, the
+    higher-confidence proposal wins. Different labels over one physical node
+    set are retained: ``MLP`` and ``SwiGLU`` can be two valid interpretations
+    of a thin wrapper, just as regions may otherwise overlap or nest.
     """
-    best: dict[tuple[int, ...], Detection] = {}
+    best: dict[tuple[str, tuple[int, ...]], Detection] = {}
     for detection in detections:
-        key = tuple(sorted(detection.node_ids))
+        key = (detection.name, tuple(sorted(detection.node_ids)))
         incumbent = best.get(key)
         if incumbent is None or detection.confidence > incumbent.confidence:
             best[key] = detection

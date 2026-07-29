@@ -233,7 +233,12 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_testcase_extract(args: argparse.Namespace) -> int:
-    from inferref.testcase.extract import ExtractionError, extract_operator, extract_region
+    from inferref.testcase.extract import (
+        ExtractionError,
+        extract_operator,
+        extract_region,
+        format_missing_payload,
+    )
 
     package = _load(args.trace)
     input_names = args.input_names.split(",") if args.input_names else None
@@ -276,8 +281,10 @@ def cmd_testcase_extract(args: argparse.Namespace) -> int:
         if result.missing_payloads:
             text += (
                 f"\n    {len(set(result.missing_payloads))} value(s) have no payload; "
-                "re-trace with --capture-tensors all"
+                "details:"
             )
+            for detail in result.missing_payload_details:
+                text += f"\n      - {format_missing_payload(detail)}"
         if result.non_portable:
             text += f"\n    non-portable values: {', '.join(sorted(set(result.non_portable)))}"
     _emit(result.to_dict(), text, args.json)

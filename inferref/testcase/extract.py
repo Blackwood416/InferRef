@@ -53,6 +53,9 @@ class ExtractedTestcase:
     outputs: list[str] = field(default_factory=list)
     #: Values lacking a payload; the testcase cannot run without them.
     missing_payloads: list[int] = field(default_factory=list)
+    #: Structured reasons for every missing payload, suitable for agents and
+    #: user-facing diagnostics.
+    missing_payload_details: list[dict[str, Any]] = field(default_factory=list)
     #: Non-portable opaque arguments (IR §41).
     non_portable: list[str] = field(default_factory=list)
 
@@ -68,6 +71,7 @@ class ExtractedTestcase:
             "outputs": self.outputs,
             "reproducible": self.reproducible,
             "missing_payloads": self.missing_payloads,
+            "missing_payload_details": self.missing_payload_details,
             "non_portable": self.non_portable,
         }
 
@@ -137,6 +141,70 @@ def _copy_payload(
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
     return True
+
+
+def _missing_payload_detail(
+    package: TracePackage,
+    value_id: int,
+    name: str,
+    boundary: str,
+    value: TensorValueRecord | None,
+) -> dict[str, Any]:
+    """Explain why one testcase boundary has no runnable payload."""
+    detail: dict[str, Any] = {
+        "value_id": value_id,
+        "name": name,
+        "boundary": boundary,
+    }
+    if value is None:
+        detail["reason"] = "value_not_found"
+        return detail
+
+    capture = value.capture
+    detail["capture"] = capture.to_dict()
+    if capture.degraded_reason:
+        detail["reason"] = capture.degraded_reason
+    elif capture.mode != "full":
+        detail["reason"] = "capture_mode"
+    elif not capture.payload:
+        detail["reason"] = "payload_not_referenced"
+    elif package.root is None:
+        detail["reason"] = "trace_root_unavailable"
+    elif not (Path(package.root) / capture.payload).is_file():
+        detail["reason"] = "payload_file_missing"
+    else:  # Defensive: _copy_payload() may gain another failure condition.
+        detail["reason"] = "payload_unavailable"
+    return detail
+
+
+def format_missing_payload(detail: dict[str, Any]) -> str:
+    """Render one structured payload failure as a concise actionable message."""
+    boundary = detail.get("boundary", "value")
+    name = detail.get("name", "unknown")
+    value_id = detail.get("value_id", "unknown")
+    prefix = f"{boundary} {name} (value {value_id})"
+    reason = detail.get("reason", "payload_unavailable")
+    capture = detail.get("capture") or {}
+
+    if reason == "max_capture_elements":
+        return (
+            f"{prefix}: requested {capture.get('requested_mode', 'full')} capture was "
+            f"degraded to {capture.get('mode', 'hash')} by max_capture_elements="
+            f"{capture.get('limit', 'unknown')} (logical_numel="
+            f"{capture.get('logical_numel', 'unknown')})"
+        )
+    if reason == "capture_error":
+        return f"{prefix}: tensor capture failed and was degraded to metadata"
+    if reason == "capture_mode":
+        return (
+            f"{prefix}: capture mode is {capture.get('mode', 'unknown')}; "
+            "re-trace with --capture-tensors all"
+        )
+    if reason == "payload_file_missing":
+        return f"{prefix}: referenced payload file is missing from the trace"
+    if reason == "value_not_found":
+        return f"{prefix}: value record is missing from the trace"
+    return f"{prefix}: payload is unavailable ({reason})"
 
 
 def _describe_argument(value: Value) -> Any:
@@ -254,15 +322,21 @@ def _write_testcase(
     output_names = _resolve_names(package, output_ids, output_names, "output")
 
     for position, value_id in enumerate(input_ids):
+        label = input_names[position]
         if not graph.has_value(value_id):
             result.missing_payloads.append(value_id)
+            result.missing_payload_details.append(
+                _missing_payload_detail(package, value_id, label, "input", None)
+            )
             continue
         value = graph.value(value_id)
-        label = input_names[position]
         relative = f"inputs/{label}.irtensor"
         ok = _copy_payload(package, value, output / relative)
         if not ok:
             result.missing_payloads.append(value_id)
+            result.missing_payload_details.append(
+                _missing_payload_detail(package, value_id, label, "input", value)
+            )
         manifest_inputs.append(
             {
                 "name": label,
@@ -270,26 +344,34 @@ def _write_testcase(
                 "payload": relative if ok else None,
                 "role": value.role,
                 "qualified_name": value.qualified_name,
+                **({"capture": value.capture.to_dict()} if not ok else {}),
                 **_tensor_metadata(value),
             }
         )
         result.inputs.append(label)
 
     for position, value_id in enumerate(output_ids):
+        label = output_names[position]
         if not graph.has_value(value_id):
             result.missing_payloads.append(value_id)
+            result.missing_payload_details.append(
+                _missing_payload_detail(package, value_id, label, "output", None)
+            )
             continue
         value = graph.value(value_id)
-        label = output_names[position]
         relative = f"reference/{label}.irtensor"
         ok = _copy_payload(package, value, output / relative)
         if not ok:
             result.missing_payloads.append(value_id)
+            result.missing_payload_details.append(
+                _missing_payload_detail(package, value_id, label, "output", value)
+            )
         manifest_outputs.append(
             {
                 "name": label,
                 "value_id": value_id,
                 "payload": relative if ok else None,
+                **({"capture": value.capture.to_dict()} if not ok else {}),
                 **_tensor_metadata(value),
                 **_provenance(package, value),
             }
@@ -339,6 +421,7 @@ def _write_testcase(
         manifest["non_portable_values"] = sorted(set(result.non_portable))
     if result.missing_payloads:
         manifest["missing_payloads"] = sorted(set(result.missing_payloads))
+        manifest["missing_payload_details"] = result.missing_payload_details
 
     (output / "testcase.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -398,10 +481,15 @@ def _render_readme(manifest: dict[str, Any]) -> str:
                 + "."
             )
         if manifest.get("missing_payloads"):
-            lines.append(
-                "> Some tensor payloads were not captured. Re-trace with "
-                "`--capture-tensors all`."
-            )
+            details = manifest.get("missing_payload_details") or ()
+            if details:
+                for detail in details:
+                    lines.append(f"> {format_missing_payload(detail)}.")
+            else:
+                lines.append(
+                    "> Some tensor payloads were not captured. Re-trace with "
+                    "`--capture-tensors all`."
+                )
         lines.append("")
 
     lines.append("## Reference operators")
