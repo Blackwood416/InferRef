@@ -7,13 +7,14 @@ and a future plugin mechanism has an obvious place to hook into.
 from __future__ import annotations
 
 from inferref.semantic.base import SemanticDetector
+from inferref.semantic.cache_update import CacheUpdateDetector
 from inferref.semantic.module_type import ModuleTypeDetector
 from inferref.semantic.source_function import SourceFunctionDetector
 
 
 def builtin_detectors() -> list[SemanticDetector]:
     """Every detector enabled by default, in the order they run."""
-    return [ModuleTypeDetector(), SourceFunctionDetector()]
+    return [ModuleTypeDetector(), SourceFunctionDetector(), CacheUpdateDetector()]
 
 
 def detector_names() -> list[str]:

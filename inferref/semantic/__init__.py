@@ -16,6 +16,7 @@ from inferref.semantic.base import (
     Detection,
     SemanticDetector,
 )
+from inferref.semantic.cache_update import CacheUpdateDetector
 from inferref.semantic.invocations import is_contiguous, split_invocations
 from inferref.semantic.module_type import ModuleTypeDetector, semantic_for_type
 from inferref.semantic.registry import builtin_detectors, detector_names, select
@@ -37,6 +38,7 @@ __all__ = [
     "CONFIDENCE_STRONG",
     "CONFIDENCE_VERY_STRONG",
     "CONFIDENCE_WEAK",
+    "CacheUpdateDetector",
     "Detection",
     "DetectionResult",
     "ModuleTypeDetector",

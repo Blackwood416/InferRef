@@ -67,8 +67,8 @@ jobs:
           - { os: ubuntu-latest,  python: "3.12", torch: current }
           - { os: windows-latest, python: "3.12", torch: current }
           - { os: ubuntu-latest,  python: "3.13", torch: current }
-          # Semantic detection leans on class-name conventions, so one leg runs
-          # it against real transformers code rather than only our own example.
+          # Semantic and KV-cache detection lean on upstream implementation
+          # conventions, so one leg runs real transformers model/cache code.
           - { os: ubuntu-latest,  python: "3.12", torch: current, hf: true }
           # Early warning for upstream breakage; never blocks a merge.
           - { os: ubuntu-latest,  python: "3.12", torch: nightly }

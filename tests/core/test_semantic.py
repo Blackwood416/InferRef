@@ -12,7 +12,7 @@ import pytest
 from inferref.ir.graph import Graph, GraphIO
 from inferref.ir.manifest import Manifest
 from inferref.ir.module import ModuleRecord
-from inferref.ir.operator import OperatorRecord
+from inferref.ir.operator import Effects, OperatorRecord, StorageMutation
 from inferref.ir.package import TracePackage
 from inferref.ir.source import SourceFrame, SourceRecord
 from inferref.ir.tensor_value import TensorValueRecord
@@ -22,6 +22,7 @@ from inferref.semantic import (
     CONFIDENCE_DETERMINISTIC,
     CONFIDENCE_STRONG,
     CONFIDENCE_VERY_STRONG,
+    CacheUpdateDetector,
     Detection,
     ModuleTypeDetector,
     SourceFunctionDetector,
@@ -302,6 +303,78 @@ def test_source_detector_honours_instance_patterns() -> None:
     assert found[0].node_ids == (1,)
 
 
+# -- cache update detector -------------------------------------------------
+
+
+def _cache_update_package(*, file: str = "transformers/cache_utils.py") -> TracePackage:
+    module = ModuleRecord(id=1, path="model.layers.0.self_attn", type="example.Attention")
+    frame = SourceFrame(file, 100, "update")
+    package = _build(
+        ops=[
+            (1, "arange", [1], 2, (1,), 1),
+            (2, "add", [2, 3], 4, (1,), 1),
+            (3, "add_", [5, 6], 7, (1,), 1),
+            (4, "index_copy_", [8, 4, 9], 10, (1,), 1),
+            (5, "index_copy_", [11, 4, 12], 13, (1,), 1),
+        ],
+        modules=[module],
+        sources=[SourceRecord(id=1, primary=frame, stack=(frame,))],
+    )
+    for op_id, storage_id in ((3, 5), (4, 8), (5, 11)):
+        package.graph.op(op_id).effects = Effects(
+            mutated_storages=(StorageMutation(storage_id, 0, 1),)
+        )
+    return package
+
+
+def test_cache_detector_requires_source_and_physical_evidence() -> None:
+    detection = CacheUpdateDetector().detect(_cache_update_package())
+
+    assert len(detection) == 1
+    assert detection[0].name == "KVCacheUpdate"
+    assert detection[0].node_ids == (1, 2, 3, 4, 5)
+    assert detection[0].scope == "model.layers.0.self_attn"
+    assert detection[0].confidence == CONFIDENCE_VERY_STRONG
+    assert detection[0].method == "semantic_pattern"
+    assert "3 storage mutation(s)" in detection[0].evidence
+
+
+def test_cache_detector_does_not_match_generic_update() -> None:
+    package = _cache_update_package(file="project/model.py")
+    assert CacheUpdateDetector().detect(package) == []
+
+
+def test_cache_detector_rejects_one_weak_cache_file_signal() -> None:
+    frame = SourceFrame("project/cache.py", 20, "update")
+    package = _build(
+        ops=[(1, "add_", [1, 2], 3, (), 1)],
+        sources=[SourceRecord(id=1, primary=frame, stack=(frame,))],
+    )
+    package.graph.op(1).effects = Effects(
+        mutated_storages=(StorageMutation(1, 0, 1),)
+    )
+
+    assert CacheUpdateDetector().detect(package) == []
+
+
+def test_cache_detector_recognises_dynamic_concat_without_mutation() -> None:
+    frame = SourceFrame("transformers/cache_utils.py", 50, "update")
+    package = _build(
+        ops=[
+            (1, "cat", [1, 2], 3, (), 1),
+            (2, "cat", [4, 5], 6, (), 1),
+        ],
+        sources=[SourceRecord(id=1, primary=frame, stack=(frame,))],
+    )
+
+    detection = CacheUpdateDetector().detect(package)
+
+    assert len(detection) == 1
+    assert detection[0].node_ids == (1, 2)
+    assert detection[0].confidence == CONFIDENCE_STRONG
+    assert "2 tensor concatenation(s)" in detection[0].evidence
+
+
 # -- invocation splitting --------------------------------------------------
 
 
@@ -518,8 +591,8 @@ def test_detections_survive_a_roundtrip(tmp_path) -> None:
 
 
 def test_registry() -> None:
-    assert detector_names() == ["module_type", "source_function"]
-    assert len(select(None)) == 2
+    assert detector_names() == ["module_type", "source_function", "cache_update"]
+    assert len(select(None)) == 3
     assert [d.name for d in select(["source_function"])] == ["source_function"]
     with pytest.raises(ValueError, match="unknown detector"):
         select(["nope"])

@@ -45,7 +45,8 @@ class Detection:
     #: Versioned detector identity, e.g. ``inferref.semantic.module_type.v1``
     #: (IR §31).
     detector: str
-    #: Region creation method (IR §35): ``module`` or ``source_function``.
+    #: Region creation method (IR §35), such as ``module``,
+    #: ``source_function`` or ``semantic_pattern``.
     method: str
     #: Module path the detection is anchored to; used to build a readable name.
     scope: str = ""

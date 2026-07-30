@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-07-30 | [Real Hugging Face KV-cache validation](2026-07-30-hf-kv-cache-validation.md) | Real Llama Dynamic/StaticCache prefill+decode; effect-backed cache detector; 277 tests |
 | 2026-07-29 | [Semantic and capture hardening](2026-07-29-semantic-capture-hardening.md) | Configurable source detection; multi-label boundaries; explicit capture degradation; 268 tests |
 | 2026-07-29 | [KV-cache validation](2026-07-29-kv-cache-validation.md) | Static prefill/decode cache; mutation effect edges; 263 tests |
 | 2026-07-28 | [Semantic detection](2026-07-28-semantic-detection.md) | Automatic region detection; operator ids gone from the workflow; 235 tests |

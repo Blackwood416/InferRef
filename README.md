@@ -109,13 +109,15 @@ or during tracing:
 inferref trace run_model.py -o trace/ --semantic-analysis
 ```
 
-Two detectors ship today, scored per IR §32:
+Three detectors ship today, scored per IR §32:
 
 | Detector | Evidence | Confidence |
 | --- | --- | --- |
 | `module_type` | `torch.nn.Linear` and other built-ins | 1.00 — deterministic |
 | `module_type` | class names like `Qwen3RMSNorm`, `LlamaAttention` | 0.90 — very strong |
 | `source_function` | `apply_rotary_pos_emb`, `repeat_kv`, … | 0.95 — very strong |
+| `cache_update` | cache source frame plus storage mutation | 0.95 — very strong |
+| `cache_update` | cache source frame plus tensor concatenation | 0.90 — strong |
 
 Regions nest and may overlap (IR §36): a `Linear@layers.0.self_attn.q_proj` sits inside
 `Attention@layers.0.self_attn` inside `TransformerBlock@layers.0`. `inspect` shows the chain
@@ -148,6 +150,17 @@ advance from version 0 to 1 (prefill) and 1 to 2 (decode). Semantic analysis
 splits the repeated cache-module invocation into `KVCacheUpdate@cache#0` and
 `KVCacheUpdate@cache#1`; both mutation regions produce standalone testcase
 payloads without filename collisions between storage generations.
+
+The real-model suite also runs Hugging Face's `LlamaForCausalLM` with both
+`DynamicCache` and `StaticCache`, entirely from a tiny random config (no model
+download). For `StaticCache`, each decoder layer records three writes per phase:
+the cumulative length plus key/value `index_copy_` operations. The
+`cache_update` detector uses the cache source frame together with those
+physical effects, so it can safely recognise the generic HF method named
+`update` without matching every `update()` in the program. It requires at least
+two mutation/concatenation signals, consistent with key and value handling.
+Extracted prefill and decode regions are replayed independently with NumPy and
+compared exactly to their `.irtensor` references.
 
 ## Tracing your own model
 
@@ -248,8 +261,8 @@ Pass `--strict-layout` to enforce it.
 ## Tests
 
 ```bash
-python -m pytest tests -q          # 268 tests
-python -m pytest tests/core -q     # 157 tests, no PyTorch required
+python -m pytest tests -q          # 277 tests
+python -m pytest tests/core -q     # 161 tests, no PyTorch required
 ```
 
 The suite is hermetic — no downloads, no network — and split along the dependency boundary:
