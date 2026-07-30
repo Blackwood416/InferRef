@@ -375,6 +375,67 @@ def test_cache_detector_recognises_dynamic_concat_without_mutation() -> None:
     assert "2 tensor concatenation(s)" in detection[0].evidence
 
 
+def test_cache_detector_recognises_named_recurrent_state_write() -> None:
+    frame = SourceFrame("transformers/cache_utils.py", 100, "update_recurrent_state")
+    package = _build(
+        ops=[(1, "copy_", [1, 2], 3, (), 1)],
+        sources=[SourceRecord(id=1, primary=frame, stack=(frame,))],
+    )
+    package.graph.op(1).effects = Effects(
+        mutated_storages=(StorageMutation(1, 0, 1),)
+    )
+
+    detection = CacheUpdateDetector().detect(package)
+
+    assert len(detection) == 1
+    assert detection[0].name == "StateCacheUpdate"
+    assert detection[0].node_ids == (1,)
+    assert detection[0].confidence == CONFIDENCE_VERY_STRONG
+    assert "update_recurrent_state" in detection[0].evidence
+
+
+def test_cache_detector_recognises_direct_causal_conv_state_write() -> None:
+    frame = SourceFrame(
+        "transformers/models/hybrid/modeling.py", 50, "torch_causal_conv1d_update"
+    )
+    package = _build(
+        ops=[(1, "copy_", [1, 2], 3, (), 1)],
+        sources=[SourceRecord(id=1, primary=frame, stack=(frame,))],
+    )
+    package.graph.op(1).effects = Effects(
+        mutated_storages=(StorageMutation(1, 0, 1),)
+    )
+
+    detection = CacheUpdateDetector().detect(package)
+
+    assert len(detection) == 1
+    assert detection[0].name == "StateCacheUpdate"
+    assert "torch_causal_conv1d_update" in detection[0].evidence
+
+
+def test_named_state_update_still_requires_physical_mutation() -> None:
+    frame = SourceFrame("transformers/cache_utils.py", 100, "update_conv_state")
+    package = _build(
+        ops=[(1, "clone", [1], 2, (), 1)],
+        sources=[SourceRecord(id=1, primary=frame, stack=(frame,))],
+    )
+
+    assert CacheUpdateDetector().detect(package) == []
+
+
+def test_named_recurrent_update_outside_cache_source_is_rejected() -> None:
+    frame = SourceFrame("project/model.py", 100, "update_recurrent_state")
+    package = _build(
+        ops=[(1, "copy_", [1, 2], 3, (), 1)],
+        sources=[SourceRecord(id=1, primary=frame, stack=(frame,))],
+    )
+    package.graph.op(1).effects = Effects(
+        mutated_storages=(StorageMutation(1, 0, 1),)
+    )
+
+    assert CacheUpdateDetector().detect(package) == []
+
+
 # -- invocation splitting --------------------------------------------------
 
 
