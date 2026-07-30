@@ -83,9 +83,12 @@ core suite                                  161 passed
 PyTorch 2.1 full suite                       267 passed, 2 HF modules skipped
 ```
 
-The GitHub-hosted matrix still needs to run once on this change. The dedicated
-HF leg installs current Transformers and will execute the real-model suite;
-other frontend legs skip it when the optional dependency is absent.
+The first GitHub-hosted run passed the dedicated current-Transformers leg; other
+frontend legs correctly skipped the two optional HF modules. It exposed one
+unrelated Windows runner change: pip 26.2 refuses `pip install --upgrade pip`
+and requires `python -m pip install --upgrade pip`. The C++ cross-language job
+now uses the module form consistently; a second matrix run verifies that
+maintenance fix.
 
 ## Remaining risks
 
