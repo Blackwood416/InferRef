@@ -3,7 +3,7 @@
 Two lookup tables are built from the traced root module:
 
 * ``id(tensor) -> qualified_name`` catches parameters passed directly;
-* ``storage data_ptr -> qualified_name`` additionally catches tensors *derived*
+* ``storage identity -> qualified_name`` additionally catches tensors *derived*
   from a parameter. This matters more than it sounds: ``nn.Linear`` dispatches
   as ``aten.t(weight)`` followed by ``aten.addmm``, so the matrix reaching the
   matmul is a transposed view whose object identity differs from the parameter's.
@@ -18,16 +18,18 @@ from dataclasses import dataclass, field
 
 import torch
 
+from inferref.frontend.pytorch.identity import storage_identity_key
+
 
 @dataclass
 class ParameterIndex:
     """Maps runtime tensors back to parameter/buffer names."""
 
     _by_pyid: dict[int, tuple[str, str]] = field(default_factory=dict)
-    _by_ptr: dict[int, tuple[str, str]] = field(default_factory=dict)
+    _by_storage: dict[tuple[str, int], tuple[str, str]] = field(default_factory=dict)
     #: Every name observed over a storage, in registration order. Tied weights
     #: (a shared embedding / lm_head, say) legitimately have more than one.
-    _names_by_ptr: dict[int, list[str]] = field(default_factory=dict)
+    _names_by_storage: dict[tuple[str, int], list[str]] = field(default_factory=dict)
     _indexed_roots: set[int] = field(default_factory=set)
 
     def index(self, root: torch.nn.Module, prefix: str = "") -> None:
@@ -54,11 +56,11 @@ class ParameterIndex:
         # directly or through a view.
         self._by_pyid.setdefault(id(tensor), (name, role))
         try:
-            ptr = tensor.untyped_storage().data_ptr()
+            key = storage_identity_key(tensor.untyped_storage())
         except (RuntimeError, NotImplementedError, AttributeError):
             return
-        self._by_ptr.setdefault(ptr, (name, role))
-        names = self._names_by_ptr.setdefault(ptr, [])
+        self._by_storage.setdefault(key, (name, role))
+        names = self._names_by_storage.setdefault(key, [])
         if name not in names:
             names.append(name)
 
@@ -68,10 +70,10 @@ class ParameterIndex:
         if hit is not None:
             return hit[1], hit[0]
         try:
-            ptr = tensor.untyped_storage().data_ptr()
+            key = storage_identity_key(tensor.untyped_storage())
         except (RuntimeError, NotImplementedError, AttributeError):
             return "activation", None
-        hit = self._by_ptr.get(ptr)
+        hit = self._by_storage.get(key)
         if hit is not None:
             # A view of a parameter is still parameter data for dedup purposes,
             # but is not itself the named parameter.
@@ -86,10 +88,10 @@ class ParameterIndex:
         ``model.embed_tokens.weight`` are one allocation, not two.
         """
         try:
-            ptr = tensor.untyped_storage().data_ptr()
+            key = storage_identity_key(tensor.untyped_storage())
         except (RuntimeError, NotImplementedError, AttributeError):
             return ()
-        names = self._names_by_ptr.get(ptr, ())
+        names = self._names_by_storage.get(key, ())
         return tuple(names) if len(names) > 1 else ()
 
     def is_parameter_data(self, tensor: torch.Tensor) -> bool:

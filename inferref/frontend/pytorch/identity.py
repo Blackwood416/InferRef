@@ -6,10 +6,10 @@ Three distinct identities are maintained:
     The framework tensor *object* observed. Diagnostic only (IR §13).
 
 ``storage_id``
-    The backing allocation. Shared by views (IR §14). Keyed by ``data_ptr``, but
-    guarded with a :class:`StorageWeakRef`: CPython/PyTorch reuse freed
-    addresses, so a bare ``data_ptr`` table would eventually alias two unrelated
-    storages together.
+    The backing allocation. Shared by views (IR §14). Non-empty allocations are
+    keyed by ``data_ptr`` and guarded with a :class:`StorageWeakRef`: PyTorch may
+    reuse freed addresses. Empty storages all report pointer zero, so those use
+    the underlying storage object's identity instead.
 
 ``storage_version``
     The logical mutation generation (IR §15). **InferRef maintains this itself.**
@@ -62,15 +62,33 @@ def torch_device_of(tensor: torch.Tensor) -> Device:
 class _StorageSlot:
     storage_id: int
     weak: StorageWeakRef
+    storage_impl: int
     device: Device
     dtype: str
+
+
+def storage_identity_key(storage: Any) -> tuple[str, int]:
+    """Stable lookup key for one live storage allocation.
+
+    ``data_ptr() == 0`` is shared by every empty allocation and therefore is
+    not an identity. PyTorch's storage ``_cdata`` identifies the underlying
+    StorageImpl and is shared by views; it is used only for this zero-pointer
+    case so a real reallocation that changes a non-zero pointer remains visible
+    as a storage rebind in Trace IR.
+    """
+    ptr = int(storage.data_ptr())
+    if ptr != 0:
+        return ("data_ptr", ptr)
+    cdata = getattr(storage, "_cdata", None)
+    return ("storage", int(cdata) if cdata is not None else id(storage))
 
 
 @dataclass
 class Identity:
     """Assigns and remembers InferRef ids for tensors, storages and values."""
 
-    _storage_by_ptr: dict[int, _StorageSlot] = field(default_factory=dict)
+    _storage_by_key: dict[tuple[str, int], _StorageSlot] = field(default_factory=dict)
+    _key_by_storage_impl: dict[int, tuple[str, int]] = field(default_factory=dict)
     _storage_versions: dict[int, int] = field(default_factory=dict)
     _storage_observed: dict[int, set[int]] = field(default_factory=dict)
     _storage_records: dict[int, StorageRecord] = field(default_factory=dict)
@@ -95,9 +113,25 @@ class Identity:
             # Sparse / meta / functional tensors may have no accessible storage.
             return None
 
-        ptr = storage.data_ptr()
-        slot = self._storage_by_ptr.get(ptr)
+        key = storage_identity_key(storage)
+        storage_impl = int(getattr(storage, "_cdata", id(storage)))
+        previous_key = self._key_by_storage_impl.get(storage_impl)
+        if previous_key is not None and previous_key != key:
+            # The same StorageImpl moved to another allocation (resize_/out=
+            # reallocation). Its old pointer can be reused while the storage
+            # object remains alive, so leaving that live weak slot behind would
+            # later alias an unrelated allocation to the old storage id.
+            previous_slot = self._storage_by_key.get(previous_key)
+            if (
+                previous_slot is not None
+                and previous_slot.storage_impl == storage_impl
+                and not previous_slot.weak.expired()
+            ):
+                self._storage_by_key.pop(previous_key, None)
+
+        slot = self._storage_by_key.get(key)
         if slot is not None and not slot.weak.expired():
+            self._key_by_storage_impl[storage_impl] = key
             return slot.storage_id
 
         # Either unseen, or the previous occupant of this address has been freed
@@ -106,9 +140,14 @@ class Identity:
         self._next_storage_id += 1
         device = torch_device_of(tensor)
         dtype = torch_dtype_name(tensor.dtype)
-        self._storage_by_ptr[ptr] = _StorageSlot(
-            storage_id=storage_id, weak=StorageWeakRef(storage), device=device, dtype=dtype
+        self._storage_by_key[key] = _StorageSlot(
+            storage_id=storage_id,
+            weak=StorageWeakRef(storage),
+            storage_impl=storage_impl,
+            device=device,
+            dtype=dtype,
         )
+        self._key_by_storage_impl[storage_impl] = key
         self._storage_versions[storage_id] = 0
         self._storage_observed[storage_id] = {0}
         self._storage_records[storage_id] = StorageRecord(

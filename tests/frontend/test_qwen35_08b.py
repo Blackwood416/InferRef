@@ -16,7 +16,7 @@ import torch
 import inferref
 from inferref.ir.package import TracePackage
 from inferref.ir.validate import validate_package
-from inferref.semantic import detect
+from inferref.semantic import apply_detections, detect, is_contiguous
 
 transformers = pytest.importorskip(
     "transformers", reason="Qwen3.5 integration needs the hf extra"
@@ -70,17 +70,21 @@ def test_official_qwen35_08b_hybrid_cache(tmp_path: Path) -> None:
             use_cache=True,
             logits_to_keep=1,
         )
+        cache = prefill.past_key_values
+        prefill_seq_length = int(cache.get_seq_length())
         decode = model(
             input_ids=input_ids[:, 4:],
-            past_key_values=prefill.past_key_values,
+            past_key_values=cache,
             use_cache=True,
             logits_to_keep=1,
         )
 
     assert torch.allclose(decode.logits, reference, atol=1e-4, rtol=1e-4)
-    assert prefill.past_key_values.get_seq_length() == 5
-    assert type(prefill.past_key_values.layers[0]).__name__ == "LinearAttentionLayer"
-    assert type(prefill.past_key_values.layers[3]).__name__ == "DynamicLayer"
+    assert prefill_seq_length == 4
+    assert decode.past_key_values is cache
+    assert cache.get_seq_length() == 5
+    assert type(cache.layers[0]).__name__ == "LinearAttentionLayer"
+    assert type(cache.layers[3]).__name__ == "DynamicLayer"
 
     packages: dict[str, TracePackage] = {}
     for label, scope in {
@@ -111,9 +115,36 @@ def test_official_qwen35_08b_hybrid_cache(tmp_path: Path) -> None:
             session.mark_output("decode_logits", traced_decode.logits)
         packages[label] = TracePackage.load(output)
 
-    assert len(_cache_detections(packages["linear"], "StateCacheUpdate")) == 4
-    assert len(_cache_detections(packages["full"], "KVCacheUpdate")) == 2
-    for package in packages.values():
+    state_updates = _cache_detections(packages["linear"], "StateCacheUpdate")
+    kv_updates = _cache_detections(packages["full"], "KVCacheUpdate")
+    assert {item.scope for item in state_updates} == {
+        f"model.language_model.layers.0.linear_attn#{index}" for index in range(4)
+    }
+    assert {item.scope for item in kv_updates} == {
+        "model.language_model.layers.3.self_attn#0",
+        "model.language_model.layers.3.self_attn#1",
+    }
+    assert all("1 storage mutation(s)" in item.evidence for item in state_updates)
+    assert all("2 tensor concatenation(s)" in item.evidence for item in kv_updates)
+
+    for package, detections in (
+        (packages["linear"], state_updates),
+        (packages["full"], kv_updates),
+    ):
+        ordered = sorted(
+            detections,
+            key=lambda item: min(
+                package.graph.op(node_id).execution_index
+                for node_id in item.node_ids
+            ),
+        )
+        assert [int(item.scope.rsplit("#", 1)[1]) for item in ordered] == list(
+            range(len(ordered))
+        )
+        assert all(is_contiguous(package.graph, item.node_ids) for item in detections)
+        result = apply_detections(package, detections)
+        assert len(result.regions) == len(detections)
+        assert not result.skipped
         errors = [
             issue
             for issue in validate_package(package)

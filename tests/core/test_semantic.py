@@ -544,6 +544,28 @@ def test_detect_orders_outermost_first() -> None:
     assert sizes == sorted(sizes, reverse=True)
 
 
+def test_detect_uses_execution_order_not_opaque_operator_ids() -> None:
+    package = _build(
+        ops=[
+            (100, "early", [1], 2, (), None),
+            (1, "late", [2], 3, (), None),
+        ]
+    )
+
+    class ReversedIdDetector:
+        name = "reversed_ids"
+
+        def detect(self, _package: TracePackage) -> list[Detection]:
+            return [
+                Detection("Late", (1,), 1.0, "test.order", "module"),
+                Detection("Early", (100,), 1.0, "test.order", "module"),
+            ]
+
+    found = detect(package, detectors=[ReversedIdDetector()])
+
+    assert [item.name for item in found] == ["Early", "Late"]
+
+
 def test_apply_writes_annotations_and_regions() -> None:
     package = _linear_package()
     result = apply_detections(package, detect(package))

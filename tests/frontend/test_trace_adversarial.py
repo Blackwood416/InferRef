@@ -14,8 +14,10 @@ import torch
 
 import inferref
 from inferref.frontend.pytorch.dispatch import iter_tensors, iter_written_tensors
+from inferref.frontend.pytorch.params import ParameterIndex
 from inferref.ir.package import TracePackage
 from inferref.ir.validate import validate_package
+from inferref.ir.values import TensorRef
 
 
 def _trace(fn, trace_dir: Path, **kwargs) -> TracePackage:
@@ -36,6 +38,13 @@ def _find(package: TracePackage, needle: str):
     return [
         op for op in package.graph.ops_in_execution_order() if needle in op.canonical_name
     ]
+
+
+def _io_value_id(package: TracePackage, name: str, *, output: bool = False) -> int:
+    entries = package.graph.outputs if output else package.graph.inputs
+    value = next(entry.value for entry in entries if entry.name == name)
+    assert isinstance(value, TensorRef)
+    return value.value_id
 
 
 # -- mutation binding ------------------------------------------------------
@@ -62,6 +71,27 @@ def test_keyword_only_write_is_detected(trace_dir: Path) -> None:
     written = mutations[0][0]
     outputs = package.graph.op_output_value_ids(ops[0])
     assert package.graph.value(outputs[0]).storage_id == written
+
+
+def test_out_reallocation_is_rebind_not_old_storage_mutation(trace_dir: Path) -> None:
+    """An empty ``out=`` tensor may be rebound before receiving the result."""
+    a = torch.ones(1024)
+    b = torch.ones(1024)
+    out = torch.empty(0)
+    assert out.data_ptr() == 0
+
+    package = _trace(lambda session: torch.add(a, b, out=out), trace_dir)
+    op = _find(package, "aten.add.out")[0]
+    before_ref = op.keyword_args["out"]
+    assert isinstance(before_ref, TensorRef)
+    before = package.graph.value(before_ref.value_id)
+    output = package.graph.value(package.graph.op_output_value_ids(op)[0])
+
+    assert out.data_ptr() != 0
+    assert not op.effects.mutated_storages
+    assert before.storage_id != output.storage_id
+    assert output.storage_version == 0
+    assert [item.relationship for item in op.effects.aliases] == ["same_object"]
 
 
 def test_container_write_is_detected(trace_dir: Path) -> None:
@@ -129,6 +159,114 @@ def test_pure_operator_records_no_mutation(trace_dir: Path) -> None:
     package = _trace(lambda s: a + b, trace_dir)
     for op in package.graph.operators:
         assert not op.effects.mutated_storages, op.canonical_name
+
+
+def test_independent_empty_tensors_have_distinct_storage_identity(
+    trace_dir: Path,
+) -> None:
+    """Pointer zero is not a storage identity: every empty allocation has it."""
+    x = torch.empty(0)
+    y = torch.empty(0)
+    assert x.data_ptr() == y.data_ptr() == 0
+    assert x.untyped_storage()._cdata != y.untyped_storage()._cdata
+
+    def run(session) -> None:
+        session.mark_input("x", x)
+        session.mark_input("y", y)
+        x.add_(1.0)
+        session.mark_output("y_after", y)
+
+    package = _trace(run, trace_dir)
+    x_value = package.graph.value(_io_value_id(package, "x"))
+    y_value = package.graph.value(_io_value_id(package, "y"))
+    y_after = package.graph.value(_io_value_id(package, "y_after", output=True))
+
+    assert x_value.storage_id != y_value.storage_id
+    assert y_after.storage_id == y_value.storage_id
+    assert y_after.storage_version == 0
+    mutation = _find(package, "aten.add_.Tensor")[0].effects.mutated_storages
+    assert [
+        (item.storage_id, item.version_before, item.version_after) for item in mutation
+    ] == [(x_value.storage_id, 0, 1)]
+
+
+def test_empty_parameter_views_do_not_cross_classify() -> None:
+    module = torch.nn.Module()
+    module.register_parameter("left", torch.nn.Parameter(torch.empty(0)))
+    module.register_parameter("right", torch.nn.Parameter(torch.empty(0)))
+    index = ParameterIndex()
+    index.index(module)
+
+    left_view = module.left.detach().view(0)
+    right_view = module.right.detach().view(0)
+
+    assert index.classify(left_view) == ("parameter", "left")
+    assert index.classify(right_view) == ("parameter", "right")
+
+
+def test_resize_reallocation_is_storage_rebind_not_old_storage_mutation(
+    trace_dir: Path,
+) -> None:
+    tensor = torch.empty(1)
+    pointer_before = tensor.data_ptr()
+
+    def run(session) -> None:
+        session.mark_input("before", tensor)
+        tensor.resize_(1_000_000)
+        session.mark_output("after", tensor)
+
+    package = _trace(run, trace_dir)
+    assert tensor.data_ptr() != pointer_before
+    op = _find(package, "aten.resize_")[0]
+    before = package.graph.value(_io_value_id(package, "before"))
+    after = package.graph.value(_io_value_id(package, "after", output=True))
+
+    assert not op.effects.mutated_storages
+    assert before.storage_id != after.storage_id
+    assert after.storage_version == 0
+    assert [item.relationship for item in op.effects.aliases] == ["same_object"]
+
+
+def test_resize_within_allocation_versions_existing_storage(trace_dir: Path) -> None:
+    tensor = torch.empty(100)
+    pointer_before = tensor.data_ptr()
+
+    package = _trace(lambda session: tensor.resize_(50), trace_dir)
+    assert tensor.data_ptr() == pointer_before
+    op = _find(package, "aten.resize_")[0]
+    input_id = next(
+        ref.value_id for ref in op.positional_args if isinstance(ref, TensorRef)
+    )
+    output_id = package.graph.op_output_value_ids(op)[0]
+    before = package.graph.value(input_id)
+    after = package.graph.value(output_id)
+
+    assert _mutations(op) == [(before.storage_id, 0, 1)]
+    assert after.storage_id == before.storage_id
+    assert after.storage_version == 1
+
+
+def test_set_records_object_rebind_and_new_storage_alias(trace_dir: Path) -> None:
+    target = torch.zeros(2)
+    source = torch.ones(3)
+
+    package = _trace(lambda session: target.set_(source), trace_dir)
+    op = _find(package, "aten.set_")[0]
+    input_ids = [
+        ref.value_id for ref in op.positional_args if isinstance(ref, TensorRef)
+    ]
+    output_id = package.graph.op_output_value_ids(op)[0]
+    target_before, source_before = map(package.graph.value, input_ids)
+    output = package.graph.value(output_id)
+
+    assert not op.effects.mutated_storages
+    assert output.storage_id != target_before.storage_id
+    assert output.storage_id == source_before.storage_id
+    assert output.storage_version == source_before.storage_version == 0
+    assert {item.relationship for item in op.effects.aliases} == {
+        "same_object",
+        "shared_storage",
+    }
 
 
 # -- value identity vs payload identity ------------------------------------

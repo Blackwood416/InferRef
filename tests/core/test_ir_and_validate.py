@@ -215,6 +215,42 @@ def test_invariant_7_mutation_must_advance_version() -> None:
     assert any("does not advance version" in e for e in _errors(package))
 
 
+def test_invariant_7_mutation_effect_advances_high_water_without_tensor_result() -> None:
+    values = [
+        _tensor(1, storage_id=1, storage_version=0),
+        _tensor(2, storage_id=1, storage_version=0),
+        _tensor(3, storage_id=3, storage_version=0),
+    ]
+    mutate = OperatorRecord(
+        id=1,
+        execution_index=0,
+        namespace="custom",
+        op="update_cache",
+        overload="default",
+        positional_args=(TensorRef(1),),
+        result=NoneValue(),
+        effects=Effects(
+            mutated_storages=(
+                StorageMutation(storage_id=1, version_before=0, version_after=1),
+            )
+        ),
+    )
+    stale_read = OperatorRecord(
+        id=2,
+        execution_index=1,
+        namespace="custom",
+        op="read_cache",
+        overload="default",
+        positional_args=(TensorRef(2),),
+        result=TensorRef(3),
+    )
+    graph = Graph(operators=[mutate, stale_read], values=values)
+    graph.recompute_links()
+    package = TracePackage(manifest=Manifest(), graph=graph)
+
+    assert any("version went backwards" in error for error in _errors(package))
+
+
 def test_mutation_effect_produces_unreturned_storage_alias() -> None:
     """A base tensor at version_after is caused by copy_, not an input."""
     values = [

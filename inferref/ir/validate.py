@@ -260,26 +260,56 @@ def _check_storage_versions(pkg: TracePackage, issues: list[ValidationIssue]) ->
     graph = pkg.graph
     high_water: dict[int, int] = {}
 
+    def observe_value(vid: int, op) -> None:
+        if not graph.has_value(vid):
+            return
+        value = graph.value(vid)
+        if value.storage_id is None:
+            return
+        seen = high_water.get(value.storage_id)
+        if seen is not None and value.storage_version < seen:
+            issues.append(
+                ValidationIssue(
+                    7,
+                    "error",
+                    f"storage:{value.storage_id} version went backwards "
+                    f"({seen} -> {value.storage_version}) at execution_index "
+                    f"{op.execution_index}",
+                    f"value:{vid}",
+                )
+            )
+        high_water[value.storage_id] = max(seen or 0, value.storage_version)
+
     for op in graph.ops_in_execution_order():
-        for vid in graph.op_input_value_ids(op) + graph.op_output_value_ids(op):
-            if not graph.has_value(vid):
-                continue
-            value = graph.value(vid)
-            if value.storage_id is None:
-                continue
-            seen = high_water.get(value.storage_id)
-            if seen is not None and value.storage_version < seen:
+        # Inputs are observed before the operator's effects; outputs are
+        # observed afterwards. Mutation effects must participate in the high
+        # water mark even when an operator returns no tensor for the written
+        # storage (a common custom-cache API shape).
+        for vid in graph.op_input_value_ids(op):
+            observe_value(vid, op)
+
+        for mutation in op.effects.mutated_storages:
+            seen = high_water.get(mutation.storage_id)
+            if seen is not None and mutation.version_before < seen:
                 issues.append(
                     ValidationIssue(
                         7,
                         "error",
-                        f"storage:{value.storage_id} version went backwards "
-                        f"({seen} -> {value.storage_version}) at execution_index "
+                        f"storage:{mutation.storage_id} mutation version_before "
+                        f"went backwards ({seen} -> {mutation.version_before}) "
+                        f"at execution_index "
                         f"{op.execution_index}",
-                        f"value:{vid}",
+                        f"op:{op.id}",
                     )
                 )
-            high_water[value.storage_id] = max(seen or 0, value.storage_version)
+            high_water[mutation.storage_id] = max(
+                seen or 0,
+                mutation.version_before,
+                mutation.version_after,
+            )
+
+        for vid in graph.op_output_value_ids(op):
+            observe_value(vid, op)
 
 
 # -- 8 & 9: regions --------------------------------------------------------

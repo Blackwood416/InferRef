@@ -282,21 +282,35 @@ class InferRefDispatchMode(TorchDispatchMode):
         positional = tuple(recorder.to_value(a, is_output=False) for a in args)
         keyword = {k: recorder.to_value(v, is_output=False) for k, v in kwargs.items()}
 
-        # 2. Resolve the storages this operator declares it will write to.
-        #    Ordered-set: two writable arguments may alias one storage, and that
-        #    storage must advance exactly one generation for this operator.
-        written_storages: list[int] = []
-        seen_storages: set[int] = set()
+        # 2. Resolve every tensor this operator declares it will write to and
+        #    remember its pre-call storage. We must retain the tensor objects,
+        #    not only storage ids: resize_/set_ may rebind the same runtime
+        #    object to another allocation during the call.
+        written_targets: list[tuple[torch.Tensor, int]] = []
+        seen_targets: set[int] = set()
         for target in iter_written_tensors(func, args, kwargs):
             storage_id = identity.storage_id_of(target)
-            if storage_id is not None and storage_id not in seen_storages:
-                seen_storages.add(storage_id)
-                written_storages.append(storage_id)
+            object_key = id(target)
+            if storage_id is not None and object_key not in seen_targets:
+                seen_targets.add(object_key)
+                written_targets.append((target, storage_id))
 
         # 3. Execute for real.
         out = func(*args, **kwargs)
 
-        # 4. Advance storage versions for declared writes (IR §15, §24).
+        # 4. Advance versions only for allocations that still back a writable
+        #    target after execution. If every target moved to another storage,
+        #    this was an object/storage rebind, not a mutation of the old
+        #    allocation. The new allocation starts at version zero and is
+        #    represented by the output value plus a same_object alias effect.
+        written_storages: list[int] = []
+        seen_storages: set[int] = set()
+        for target, storage_before in written_targets:
+            storage_after = identity.storage_id_of(target)
+            if storage_after == storage_before and storage_before not in seen_storages:
+                seen_storages.add(storage_before)
+                written_storages.append(storage_before)
+
         mutations: list[StorageMutation] = []
         for storage_id in written_storages:
             before, after = identity.bump_version(storage_id)
@@ -362,12 +376,23 @@ class InferRefDispatchMode(TorchDispatchMode):
             out_storage = identity.storage_id_of(out_tensor)
             if out_storage is None:
                 continue
+            same_object_recorded = False
+            storage_alias_recorded = False
             for in_ref, in_tensor in inputs:
                 if in_tensor is out_tensor:
-                    effects.append(
-                        AliasEffect(out_ref.value_id, in_ref.value_id, "same_object")
-                    )
-                    break
+                    if not same_object_recorded:
+                        effects.append(
+                            AliasEffect(out_ref.value_id, in_ref.value_id, "same_object")
+                        )
+                        same_object_recorded = True
+                    continue
+                # One canonical storage relationship is enough to establish
+                # physical aliasing. Recording every duplicate alias argument
+                # creates noisy region boundaries; same_object is retained
+                # separately so set_(source) can express both object continuity
+                # and its new backing storage.
+                if storage_alias_recorded:
+                    continue
                 if identity.storage_id_of(in_tensor) != out_storage:
                     continue
                 same_layout = (
@@ -377,7 +402,7 @@ class InferRefDispatchMode(TorchDispatchMode):
                 )
                 relationship = "shared_storage" if same_layout else "view"
                 effects.append(AliasEffect(out_ref.value_id, in_ref.value_id, relationship))
-                break
+                storage_alias_recorded = True
         return effects
 
 

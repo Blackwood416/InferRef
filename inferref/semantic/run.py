@@ -73,8 +73,18 @@ def detect(
     found = [d for d in found if d.confidence >= min_confidence]
     found = _deduplicate(found)
     # Outermost first, then by execution order, so nesting reads naturally.
-    found.sort(key=lambda d: (-len(d.node_ids), min(d.node_ids)))
+    found.sort(key=lambda d: (-len(d.node_ids), _execution_start(package, d)))
     return found
+
+
+def _execution_start(package: TracePackage, detection: Detection) -> float:
+    """First known execution index, independent of opaque operator ids."""
+    indices = [
+        package.graph.op(node_id).execution_index
+        for node_id in detection.node_ids
+        if package.graph.has_op(node_id)
+    ]
+    return float(min(indices)) if indices else float("inf")
 
 
 def _deduplicate(detections: Iterable[Detection]) -> list[Detection]:
