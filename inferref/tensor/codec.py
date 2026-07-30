@@ -148,6 +148,8 @@ def encode(
         raise IRTensorError(
             f"rank mismatch: shape has {len(shape)} dims, stride has {len(stride)}"
         )
+    if any(dim < 0 for dim in shape):
+        raise IRTensorError(f"negative dimension in shape {shape}")
     rank = len(shape)
     numel = 1
     for dim in shape:
@@ -194,6 +196,10 @@ def decode(blob: bytes, *, path: Path | None = None) -> TensorView:
         raise IRTensorError(
             f"header_size {hsize} does not match rank {rank} (expected {expected_hsize})"
         )
+    if _reserved != 0:
+        raise IRTensorError(f"reserved header field must be zero, got {_reserved}")
+    if not flags & FLAG_CANONICAL_CONTIGUOUS:
+        raise IRTensorError("payload is not marked canonical contiguous")
     if len(blob) < hsize + payload_nbytes:
         raise IRTensorError(
             f"truncated: need {hsize + payload_nbytes} bytes, have {len(blob)}"
@@ -206,6 +212,16 @@ def decode(blob: bytes, *, path: Path | None = None) -> TensorView:
     stride = struct.unpack_from(f"<{rank}q", blob, off)
     off += 8 * rank
     (storage_offset,) = struct.unpack_from("<q", blob, off)
+
+    if any(dim < 0 for dim in shape):
+        raise IRTensorError(f"negative dimension in shape {shape}")
+    shape_numel = 1
+    for dim in shape:
+        shape_numel *= dim
+    if shape_numel != numel:
+        raise IRTensorError(
+            f"logical_numel {numel} inconsistent with shape product {shape_numel}"
+        )
 
     if numel * dtype_itemsize(dtype) != payload_nbytes:
         raise IRTensorError(
@@ -266,7 +282,7 @@ def write_array(
     from inferref.tensor.dtype_numpy import inferref_dtype_for_numpy
 
     resolved = dtype or inferref_dtype_for_numpy(array.dtype)
-    contiguous = np.ascontiguousarray(array)
+    contiguous = np.ascontiguousarray(array, dtype=numpy_dtype_for(resolved))
     if stride is None:
         stride = contiguous_stride(contiguous.shape)
     return write(

@@ -227,7 +227,7 @@ def test_resize_reallocation_is_storage_rebind_not_old_storage_mutation(
     assert [item.relationship for item in op.effects.aliases] == ["same_object"]
 
 
-def test_resize_within_allocation_versions_existing_storage(trace_dir: Path) -> None:
+def test_resize_within_allocation_changes_object_metadata_only(trace_dir: Path) -> None:
     tensor = torch.empty(100)
     pointer_before = tensor.data_ptr()
 
@@ -241,9 +241,68 @@ def test_resize_within_allocation_versions_existing_storage(trace_dir: Path) -> 
     before = package.graph.value(input_id)
     after = package.graph.value(output_id)
 
-    assert _mutations(op) == [(before.storage_id, 0, 1)]
+    assert _mutations(op) == []
     assert after.storage_id == before.storage_id
-    assert after.storage_version == 1
+    assert after.storage_version == 0
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda tensor: tensor.transpose_(0, 1),
+        lambda tensor: tensor.squeeze_(0),
+        lambda tensor: tensor.unsqueeze_(0),
+    ],
+)
+def test_metadata_only_inplace_does_not_version_shared_storage(
+    trace_dir: Path, operation
+) -> None:
+    base = torch.arange(6, dtype=torch.float32).reshape(1, 2, 3)
+    alias = base.detach()
+
+    def run(session) -> None:
+        session.mark_input("base", base)
+        session.mark_input("alias", alias)
+        operation(base)
+        session.mark_output("alias_after", alias)
+
+    package = _trace(run, trace_dir)
+    metadata_op = next(
+        op
+        for op in package.graph.ops_in_execution_order()
+        if op.canonical_name in {
+            "aten.transpose_.default",
+            "aten.squeeze_.dim",
+            "aten.unsqueeze_.default",
+        }
+    )
+    alias_before = package.graph.value(_io_value_id(package, "alias"))
+    alias_after = package.graph.value(_io_value_id(package, "alias_after", output=True))
+
+    assert not metadata_op.effects.mutated_storages
+    assert alias_after.storage_id == alias_before.storage_id
+    assert alias_after.storage_version == alias_before.storage_version == 0
+    assert alias_after.producer is None
+
+
+def test_set_within_same_storage_is_metadata_only(trace_dir: Path) -> None:
+    base = torch.arange(8, dtype=torch.float32)
+    target = base[:4]
+    alias = base.detach()
+
+    def run(session) -> None:
+        session.mark_input("alias", alias)
+        target.set_(base.untyped_storage(), 2, (3,), (1,))
+        session.mark_output("alias_after", alias)
+
+    package = _trace(run, trace_dir)
+    op = _find(package, "aten.set_")[0]
+    alias_before = package.graph.value(_io_value_id(package, "alias"))
+    alias_after = package.graph.value(_io_value_id(package, "alias_after", output=True))
+
+    assert not op.effects.mutated_storages
+    assert alias_after.storage_id == alias_before.storage_id
+    assert alias_after.storage_version == alias_before.storage_version == 0
 
 
 def test_set_records_object_rebind_and_new_storage_alias(trace_dir: Path) -> None:

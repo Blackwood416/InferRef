@@ -123,6 +123,29 @@ def test_package_roundtrips_through_disk(tmp_path: Path) -> None:
     assert _errors(reloaded) == []
 
 
+def test_package_save_to_new_root_copies_payloads(tmp_path: Path) -> None:
+    import numpy as np
+
+    from inferref.tensor import codec
+
+    package = _package()
+    source = tmp_path / "source"
+    package.save(source)
+    codec.write_array(source / "tensors" / "v1.irtensor", np.zeros((2, 2), np.float32))
+    package.graph.value(1).capture = CaptureInfo(
+        mode="full", payload="tensors/v1.irtensor"
+    )
+    package.save(source)
+
+    loaded = TracePackage.load(source)
+    destination = tmp_path / "destination"
+    loaded.save(destination)
+
+    copied = TracePackage.load(destination)
+    assert (destination / "tensors" / "v1.irtensor").is_file()
+    assert _errors(copied) == []
+
+
 # -- invariants 1 & 2: reference integrity ---------------------------------
 
 
@@ -145,6 +168,60 @@ def test_invariant_1_missing_module_is_reported() -> None:
     package.modules = [ModuleRecord(id=1, path="a")]
     package.graph.operators[0].module_stack = (99,)
     assert any("missing module:99" in e for e in _errors(package))
+
+
+def test_duplicate_record_ids_are_reported_before_reindex() -> None:
+    package = _package()
+    package.graph.values.append(_tensor(1))
+    package.graph.operators.append(
+        OperatorRecord(id=1, execution_index=2, namespace="aten", op="neg")
+    )
+
+    errors = _errors(package)
+    assert any("duplicate value id 1" in error for error in errors)
+    assert any("duplicate operator id 1" in error for error in errors)
+
+
+def test_alias_effect_endpoints_must_belong_to_operator() -> None:
+    package = _package()
+    package.graph.op(1).effects = Effects(
+        aliases=(AliasEffect(output_value_id=4, input_value_id=3, relationship="view"),)
+    )
+
+    errors = _errors(package)
+    assert any("alias output value:4 is not an output" in error for error in errors)
+    assert any("alias input value:3 is not an input" in error for error in errors)
+
+
+def test_alias_effect_relationship_and_identity_are_validated() -> None:
+    package = _package()
+    package.graph.value(1).runtime_object_id = 10
+    package.graph.value(3).runtime_object_id = 11
+    package.graph.op(1).effects = Effects(
+        aliases=(
+            AliasEffect(3, 1, "same_object"),
+            AliasEffect(3, 2, "view"),
+            AliasEffect(3, 1, "future_alias"),
+        )
+    )
+
+    errors = _errors(package)
+    assert any("different runtime_object_id" in error for error in errors)
+    assert any("view alias does not share one storage_id" in error for error in errors)
+    assert any("unknown alias relationship 'future_alias'" in error for error in errors)
+
+
+def test_duplicate_mutation_and_alias_effects_are_rejected() -> None:
+    package = _package()
+    mutation = StorageMutation(storage_id=1, version_before=0, version_after=1)
+    alias = AliasEffect(3, 1, "unknown_alias")
+    package.graph.op(1).effects = Effects(
+        mutated_storages=(mutation, mutation), aliases=(alias, alias)
+    )
+
+    errors = _errors(package)
+    assert any("mutated more than once" in error for error in errors)
+    assert any("duplicate alias effect" in error for error in errors)
 
 
 # -- invariant 3: execution order ------------------------------------------
@@ -213,6 +290,33 @@ def test_invariant_7_mutation_must_advance_version() -> None:
                                           version_after=3),)
     )
     assert any("does not advance version" in e for e in _errors(package))
+
+
+def test_invariant_7_mutation_cannot_skip_generations() -> None:
+    package = _package()
+    package.graph.operators[0].effects = Effects(
+        mutated_storages=(
+            StorageMutation(storage_id=1, version_before=7, version_after=9),
+        )
+    )
+
+    errors = _errors(package)
+    assert any("skips generations (7 -> 9)" in error for error in errors)
+    assert any("does not match observed version (0 != 7)" in error for error in errors)
+
+
+def test_invariant_7_mutation_must_be_connected_to_tensor_input() -> None:
+    package = _package()
+    package.graph.operators[0].effects = Effects(
+        mutated_storages=(
+            StorageMutation(storage_id=99, version_before=0, version_after=1),
+        )
+    )
+
+    assert any(
+        "storage:99 mutation is not connected to a tensor input" in error
+        for error in _errors(package)
+    )
 
 
 def test_invariant_7_mutation_effect_advances_high_water_without_tensor_result() -> None:
@@ -331,6 +435,18 @@ def test_invariant_10_missing_payload(tmp_path: Path) -> None:
     assert any("missing payload" in e for e in _errors(TracePackage.load(tmp_path / "trace")))
 
 
+def test_invariant_10_payload_cannot_escape_trace_root(tmp_path: Path) -> None:
+    package = _package()
+    package.graph.value(1).capture = CaptureInfo(
+        mode="full", payload="../outside.irtensor"
+    )
+    package.save(tmp_path / "trace")
+    (tmp_path / "outside.irtensor").write_bytes(b"not part of the trace")
+
+    errors = _errors(TracePackage.load(tmp_path / "trace"))
+    assert any("payload path escapes trace package" in error for error in errors)
+
+
 def test_invariant_10_payload_shape_must_match(tmp_path: Path) -> None:
     import numpy as np
 
@@ -346,6 +462,39 @@ def test_invariant_10_payload_shape_must_match(tmp_path: Path) -> None:
 
     errors = _errors(TracePackage.load(root))
     assert any("shape" in e for e in errors), errors
+
+
+def test_invariant_10_payload_header_must_match_value_metadata(tmp_path: Path) -> None:
+    import struct
+
+    import numpy as np
+
+    from inferref.ir.dtypes import dtype_code
+    from inferref.tensor import codec
+
+    package = _package()
+    root = tmp_path / "trace"
+    package.save(root)
+    payload = root / "tensors" / "v1.irtensor"
+    codec.write_array(payload, np.zeros((2, 2), np.float32))
+    blob = bytearray(payload.read_bytes())
+    struct.pack_into("<H", blob, 8, dtype_code("int32"))
+    struct.pack_into("<I", blob, 10, 0)
+    struct.pack_into("<Q", blob, 18, 3)
+    struct.pack_into("<2q", blob, 50, 1, 2)
+    struct.pack_into("<q", blob, 66, 4)
+    payload.write_bytes(blob)
+    package.graph.value(1).capture = CaptureInfo(
+        mode="full", payload="tensors/v1.irtensor"
+    )
+    package.save(root)
+
+    errors = _errors(TracePackage.load(root))
+    assert any("payload dtype int32 != value dtype float32" in error for error in errors)
+    assert any("logical_numel 3" in error for error in errors)
+    assert any("not marked canonical contiguous" in error for error in errors)
+    assert any("payload stride" in error for error in errors)
+    assert any("payload storage_offset 4" in error for error in errors)
 
 
 # -- IR §46 forward compatibility ------------------------------------------

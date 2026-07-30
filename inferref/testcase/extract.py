@@ -16,6 +16,7 @@ can consume without reopening the model or rerunning PyTorch::
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass, field
@@ -58,10 +59,17 @@ class ExtractedTestcase:
     missing_payload_details: list[dict[str, Any]] = field(default_factory=list)
     #: Non-portable opaque arguments (IR §41).
     non_portable: list[str] = field(default_factory=list)
+    #: Externally visible storage writes for which the trace has no post-state
+    #: value. Such a testcase cannot validate the side effect.
+    unobservable_mutations: list[dict[str, int]] = field(default_factory=list)
 
     @property
     def reproducible(self) -> bool:
-        return not self.missing_payloads and not self.non_portable
+        return (
+            not self.missing_payloads
+            and not self.non_portable
+            and not self.unobservable_mutations
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +81,7 @@ class ExtractedTestcase:
             "missing_payloads": self.missing_payloads,
             "missing_payload_details": self.missing_payload_details,
             "non_portable": self.non_portable,
+            "unobservable_mutations": self.unobservable_mutations,
         }
 
 
@@ -135,12 +144,49 @@ def _copy_payload(
         return False
     if package.root is None:
         return False
-    source = Path(package.root) / value.capture.payload
+    try:
+        source = package.tensor_payload_path(value.capture.payload)
+    except ValueError:
+        return False
     if not source.is_file():
         return False
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
     return True
+
+
+def _payload_stems(labels: Sequence[str]) -> list[str]:
+    """Return unique path-safe stems while preserving labels in the manifest."""
+
+    reserved = {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+    used: set[str] = set()
+    stems: list[str] = []
+    for position, label in enumerate(labels):
+        head = label.split(".", 1)[0].upper()
+        safe = (
+            bool(label)
+            and label not in (".", "..")
+            and not label.endswith((".", " "))
+            and all(ch.isalnum() or ch in "._-" for ch in label)
+            and head not in reserved
+        )
+        if safe and label not in used:
+            stem = label
+        else:
+            digest = hashlib.sha256(label.encode("utf-8")).hexdigest()[:10]
+            stem = f"value_{position}_{digest}"
+        while stem in used:
+            stem = f"{stem}_{position}"
+        used.add(stem)
+        stems.append(stem)
+    return stems
 
 
 def _missing_payload_detail(
@@ -170,10 +216,16 @@ def _missing_payload_detail(
         detail["reason"] = "payload_not_referenced"
     elif package.root is None:
         detail["reason"] = "trace_root_unavailable"
-    elif not (Path(package.root) / capture.payload).is_file():
-        detail["reason"] = "payload_file_missing"
-    else:  # Defensive: _copy_payload() may gain another failure condition.
-        detail["reason"] = "payload_unavailable"
+    else:
+        try:
+            source = package.tensor_payload_path(capture.payload)
+        except ValueError:
+            detail["reason"] = "unsafe_payload_path"
+            return detail
+        if not source.is_file():
+            detail["reason"] = "payload_file_missing"
+        else:  # Defensive: _copy_payload() may gain another failure condition.
+            detail["reason"] = "payload_unavailable"
     return detail
 
 
@@ -202,6 +254,8 @@ def format_missing_payload(detail: dict[str, Any]) -> str:
         )
     if reason == "payload_file_missing":
         return f"{prefix}: referenced payload file is missing from the trace"
+    if reason == "unsafe_payload_path":
+        return f"{prefix}: payload path escapes the trace package"
     if reason == "value_not_found":
         return f"{prefix}: value record is missing from the trace"
     return f"{prefix}: payload is unavailable ({reason})"
@@ -263,7 +317,7 @@ def extract_operator(
         name=name or op.canonical_name,
         node_ids=[op_id],
         input_ids=graph.op_input_value_ids(op),
-        output_ids=graph.op_output_value_ids(op),
+        output_ids=graph.produced_value_ids(op),
         origin={"trace": str(package.root or ""), "operator_id": op_id},
         operators=[op],
         input_names=input_names,
@@ -320,6 +374,8 @@ def _write_testcase(
 
     input_names = _resolve_names(package, input_ids, input_names, "input")
     output_names = _resolve_names(package, output_ids, output_names, "output")
+    input_stems = _payload_stems(input_names)
+    output_stems = _payload_stems(output_names)
 
     for position, value_id in enumerate(input_ids):
         label = input_names[position]
@@ -330,7 +386,7 @@ def _write_testcase(
             )
             continue
         value = graph.value(value_id)
-        relative = f"inputs/{label}.irtensor"
+        relative = f"inputs/{input_stems[position]}.irtensor"
         ok = _copy_payload(package, value, output / relative)
         if not ok:
             result.missing_payloads.append(value_id)
@@ -359,7 +415,7 @@ def _write_testcase(
             )
             continue
         value = graph.value(value_id)
-        relative = f"reference/{label}.irtensor"
+        relative = f"reference/{output_stems[position]}.irtensor"
         ok = _copy_payload(package, value, output / relative)
         if not ok:
             result.missing_payloads.append(value_id)
@@ -383,28 +439,67 @@ def _write_testcase(
         for arg in list(op.positional_args) + list(op.keyword_args.values()):
             _collect_non_portable(arg, result.non_portable)
         source = package.source(op.source_id)
-        node_records.append(
-            {
-                "id": op.id,
-                "execution_index": op.execution_index,
-                "canonical_name": op.canonical_name,
-                "positional_args": [_describe_argument(a) for a in op.positional_args],
-                "keyword_args": {
-                    k: _describe_argument(v) for k, v in op.keyword_args.items()
-                },
-                "result": _describe_argument(op.result) if op.result else None,
-                "module_path": package.module_path(op.module_stack) or None,
-                "source": (
-                    {
-                        "file": source.primary.file,
-                        "line": source.primary.line,
-                        "function": source.primary.function,
-                    }
-                    if source and source.primary
-                    else None
-                ),
-            }
-        )
+        node_record = {
+            "id": op.id,
+            "execution_index": op.execution_index,
+            "canonical_name": op.canonical_name,
+            "positional_args": [_describe_argument(a) for a in op.positional_args],
+            "keyword_args": {
+                k: _describe_argument(v) for k, v in op.keyword_args.items()
+            },
+            "result": _describe_argument(op.result) if op.result else None,
+            "module_path": package.module_path(op.module_stack) or None,
+            "source": (
+                {
+                    "file": source.primary.file,
+                    "line": source.primary.line,
+                    "function": source.primary.function,
+                }
+                if source and source.primary
+                else None
+            ),
+        }
+        if op.effects:
+            node_record["effects"] = op.effects.to_dict()
+        node_records.append(node_record)
+
+    input_storage_ids = {
+        graph.value(value_id).storage_id
+        for value_id in input_ids
+        if graph.has_value(value_id) and graph.value(value_id).storage_id is not None
+    }
+    output_states = {
+        (graph.value(value_id).storage_id, graph.value(value_id).storage_version)
+        for value_id in output_ids
+        if graph.has_value(value_id)
+    }
+    final_mutations: dict[int, Any] = {}
+    for op in operators:
+        for mutation in op.effects.mutated_storages:
+            if mutation.storage_id in input_storage_ids:
+                final_mutations[mutation.storage_id] = mutation
+    for mutation in final_mutations.values():
+        if (mutation.storage_id, mutation.version_after) not in output_states:
+            result.unobservable_mutations.append(mutation.to_dict())
+
+    referenced_value_ids: set[int] = set(input_ids) | set(output_ids)
+    for op in operators:
+        referenced_value_ids.update(graph.op_input_value_ids(op))
+        referenced_value_ids.update(graph.op_output_value_ids(op))
+        for alias in op.effects.aliases:
+            referenced_value_ids.add(alias.input_value_id)
+            referenced_value_ids.add(alias.output_value_id)
+    manifest_values = [
+        {
+            "id": value.id,
+            **_tensor_metadata(value),
+            "role": value.role,
+            "qualified_name": value.qualified_name,
+            "producer": value.producer,
+        }
+        for value in graph.values
+        if value.id in referenced_value_ids
+    ]
 
     manifest = {
         "format": TESTCASE_FORMAT,
@@ -415,6 +510,7 @@ def _write_testcase(
         "inputs": manifest_inputs,
         "outputs": manifest_outputs,
         "nodes": node_records,
+        "values": manifest_values,
     }
     if result.non_portable:
         # IR §41: say so explicitly rather than shipping a testcase that cannot run.
@@ -422,6 +518,8 @@ def _write_testcase(
     if result.missing_payloads:
         manifest["missing_payloads"] = sorted(set(result.missing_payloads))
         manifest["missing_payload_details"] = result.missing_payload_details
+    if result.unobservable_mutations:
+        manifest["unobservable_mutations"] = result.unobservable_mutations
 
     (output / "testcase.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -437,6 +535,9 @@ def _tensor_metadata(value: TensorValueRecord) -> dict[str, Any]:
         "stride": list(value.stride),
         "storage_offset": value.storage_offset_elements,
         "contiguous": value.contiguous,
+        "runtime_object_id": value.runtime_object_id,
+        "storage_id": value.storage_id,
+        "storage_version": value.storage_version,
     }
 
 
@@ -489,6 +590,13 @@ def _render_readme(manifest: dict[str, Any]) -> str:
                 lines.append(
                     "> Some tensor payloads were not captured. Re-trace with "
                     "`--capture-tensors all`."
+                )
+        if manifest.get("unobservable_mutations"):
+            for mutation in manifest["unobservable_mutations"]:
+                lines.append(
+                    "> Mutation of storage:"
+                    f"{mutation['storage_id']} to version {mutation['version_after']} "
+                    "has no captured post-state output."
                 )
         lines.append("")
 

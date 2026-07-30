@@ -272,7 +272,25 @@ def compare_testcase(
     for output in manifest.get("outputs", ()):
         name = output.get("name", "output")
         value_id = output.get("value_id")
-        reference_path = testcase_dir / output["payload"]
+        reference_payload = output.get("payload")
+        if not reference_payload:
+            capture = output.get("capture") or {}
+            comparison = TensorComparison(
+                name=name,
+                status=STATUS_MISSING,
+                message=(
+                    "reference payload is unavailable"
+                    f" (capture mode {capture.get('mode', 'unknown')})"
+                ),
+                value_id=value_id,
+            )
+            _annotate_from_testcase(comparison, output)
+            report.comparisons.append(comparison)
+            if first_failure:
+                report.stopped_early = True
+                break
+            continue
+        reference_path = testcase_dir / reference_payload
 
         actual_path: Path | None = None
         if name in engine_map:
@@ -448,8 +466,8 @@ def compare_traces(
                 _actual_value_id, actual_payload = counterpart
                 comparison = _compare_one_file(
                     name,
-                    reference_dir / value.capture.payload,
-                    actual_dir / actual_payload,
+                    ref_pkg.tensor_payload_path(value.capture.payload),
+                    act_pkg.tensor_payload_path(actual_payload),
                     policy=policy,
                     ignore_stride=ignore_stride,
                     strict_layout=strict_layout,

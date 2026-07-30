@@ -21,9 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from inferref.ir.dtypes import dtype_itemsize, is_known_dtype
+from inferref.ir.dtypes import dtype_itemsize, dtype_name_from_code, is_known_dtype
+from inferref.ir.operator import ALIAS_RELATIONSHIPS
 from inferref.ir.package import TracePackage
 from inferref.ir.values import walk_tensor_refs
+from inferref.ir.version import TENSOR_FORMAT_VERSION
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,7 @@ def validate_package(
     """
     issues: list[ValidationIssue] = []
     graph = package.graph
+    _check_unique_ids(package, issues)
     graph.reindex()
 
     _check_reference_integrity(package, issues)
@@ -75,6 +78,32 @@ def validate_package(
 # -- 1 & 2: reference integrity -------------------------------------------
 
 
+def _check_unique_ids(pkg: TracePackage, issues: list[ValidationIssue]) -> None:
+    """Reject duplicate record ids before ``Graph.reindex`` can hide them."""
+
+    groups = (
+        (pkg.graph.operators, 1, "operator"),
+        (pkg.graph.values, 2, "value"),
+        (pkg.modules, 1, "module"),
+        (pkg.sources, 1, "source"),
+        (pkg.regions, 8, "region"),
+        (pkg.storages, 7, "storage"),
+    )
+    for records, invariant, kind in groups:
+        seen: set[int] = set()
+        for record in records:
+            if record.id in seen:
+                issues.append(
+                    ValidationIssue(
+                        invariant,
+                        "error",
+                        f"duplicate {kind} id {record.id}",
+                        f"{kind}:{record.id}",
+                    )
+                )
+            seen.add(record.id)
+
+
 def _check_reference_integrity(pkg: TracePackage, issues: list[ValidationIssue]) -> None:
     graph = pkg.graph
     module_ids = {m.id for m in pkg.modules}
@@ -82,7 +111,14 @@ def _check_reference_integrity(pkg: TracePackage, issues: list[ValidationIssue])
 
     for op in graph.operators:
         where = f"op:{op.id} {op.canonical_name}"
-        for vid in graph.op_input_value_ids(op) + graph.op_output_value_ids(op):
+        input_ids = graph.op_input_value_ids(op)
+        output_ids = graph.op_output_value_ids(op)
+        input_storage_ids = {
+            graph.value(value_id).storage_id
+            for value_id in input_ids
+            if graph.has_value(value_id) and graph.value(value_id).storage_id is not None
+        }
+        for vid in input_ids + output_ids:
             if not graph.has_value(vid):
                 issues.append(
                     ValidationIssue(2, "error", f"references missing value:{vid}", where)
@@ -96,7 +132,28 @@ def _check_reference_integrity(pkg: TracePackage, issues: list[ValidationIssue])
                 issues.append(
                     ValidationIssue(1, "error", f"references missing module:{mid}", where)
                 )
+        seen_mutations: set[int] = set()
         for mutation in op.effects.mutated_storages:
+            if mutation.storage_id not in input_storage_ids:
+                issues.append(
+                    ValidationIssue(
+                        7,
+                        "error",
+                        f"storage:{mutation.storage_id} mutation is not connected "
+                        "to a tensor input",
+                        where,
+                    )
+                )
+            if mutation.storage_id in seen_mutations:
+                issues.append(
+                    ValidationIssue(
+                        7,
+                        "error",
+                        f"storage:{mutation.storage_id} is mutated more than once by one operator",
+                        where,
+                    )
+                )
+            seen_mutations.add(mutation.storage_id)
             if mutation.version_after <= mutation.version_before:
                 issues.append(
                     ValidationIssue(
@@ -107,12 +164,94 @@ def _check_reference_integrity(pkg: TracePackage, issues: list[ValidationIssue])
                         where,
                     )
                 )
+            elif mutation.version_after != mutation.version_before + 1:
+                issues.append(
+                    ValidationIssue(
+                        7,
+                        "error",
+                        f"storage:{mutation.storage_id} mutation skips generations "
+                        f"({mutation.version_before} -> {mutation.version_after})",
+                        where,
+                    )
+                )
+        seen_aliases: set[tuple[int, int, str]] = set()
         for alias in op.effects.aliases:
+            alias_key = (
+                alias.output_value_id,
+                alias.input_value_id,
+                alias.relationship,
+            )
+            if alias_key in seen_aliases:
+                issues.append(
+                    ValidationIssue(2, "error", f"duplicate alias effect {alias_key}", where)
+                )
+            seen_aliases.add(alias_key)
+            if alias.relationship not in ALIAS_RELATIONSHIPS:
+                issues.append(
+                    ValidationIssue(
+                        2,
+                        "error",
+                        f"unknown alias relationship {alias.relationship!r}",
+                        where,
+                    )
+                )
             for vid in (alias.output_value_id, alias.input_value_id):
                 if not graph.has_value(vid):
                     issues.append(
                         ValidationIssue(2, "error", f"alias references missing value:{vid}", where)
                     )
+            if alias.output_value_id not in output_ids:
+                issues.append(
+                    ValidationIssue(
+                        2,
+                        "error",
+                        f"alias output value:{alias.output_value_id} is not an output of the operator",
+                        where,
+                    )
+                )
+            if alias.input_value_id not in input_ids:
+                issues.append(
+                    ValidationIssue(
+                        2,
+                        "error",
+                        f"alias input value:{alias.input_value_id} is not an input of the operator",
+                        where,
+                    )
+                )
+            if not (
+                graph.has_value(alias.output_value_id)
+                and graph.has_value(alias.input_value_id)
+            ):
+                continue
+            output = graph.value(alias.output_value_id)
+            input_ = graph.value(alias.input_value_id)
+            if (
+                alias.relationship == "same_object"
+                and output.runtime_object_id is not None
+                and input_.runtime_object_id is not None
+                and output.runtime_object_id != input_.runtime_object_id
+            ):
+                issues.append(
+                    ValidationIssue(
+                        2,
+                        "error",
+                        "same_object alias has different runtime_object_id values",
+                        where,
+                    )
+                )
+            if alias.relationship in ("shared_storage", "view") and (
+                output.storage_id is None
+                or input_.storage_id is None
+                or output.storage_id != input_.storage_id
+            ):
+                issues.append(
+                    ValidationIssue(
+                        2,
+                        "error",
+                        f"{alias.relationship} alias does not share one storage_id",
+                        where,
+                    )
+                )
 
     for io in list(graph.inputs) + list(graph.outputs):
         for ref in walk_tensor_refs(io.value):
@@ -290,13 +429,14 @@ def _check_storage_versions(pkg: TracePackage, issues: list[ValidationIssue]) ->
 
         for mutation in op.effects.mutated_storages:
             seen = high_water.get(mutation.storage_id)
-            if seen is not None and mutation.version_before < seen:
+            if seen is not None and mutation.version_before != seen:
                 issues.append(
                     ValidationIssue(
                         7,
                         "error",
                         f"storage:{mutation.storage_id} mutation version_before "
-                        f"went backwards ({seen} -> {mutation.version_before}) "
+                        f"does not match observed version "
+                        f"({seen} != {mutation.version_before}) "
                         f"at execution_index "
                         f"{op.execution_index}",
                         f"op:{op.id}",
@@ -365,7 +505,11 @@ def _check_payloads(pkg: TracePackage, issues: list[ValidationIssue]) -> None:
         if capture.mode != "full" or not capture.payload:
             continue
         where = f"value:{value.id}"
-        path = Path(pkg.root) / capture.payload
+        try:
+            path = pkg.tensor_payload_path(capture.payload)
+        except ValueError as exc:
+            issues.append(ValidationIssue(10, "error", str(exc), where))
+            continue
         if not path.is_file():
             issues.append(
                 ValidationIssue(10, "error", f"missing payload {capture.payload}", where)
@@ -384,36 +528,109 @@ def _check_payloads(pkg: TracePackage, issues: list[ValidationIssue]) -> None:
                 )
             )
             continue
-        hsize, payload_nbytes, shape = header
+        try:
+            header_dtype = dtype_name_from_code(header.dtype_code)
+        except ValueError as exc:
+            issues.append(ValidationIssue(10, "error", str(exc), where))
+            continue
 
-        if payload_nbytes != expected:
+        if header.version != TENSOR_FORMAT_VERSION:
             issues.append(
                 ValidationIssue(
                     10,
                     "error",
-                    f"payload declares {payload_nbytes} bytes, expected {expected} "
+                    f"unsupported .irtensor version {header.version}",
+                    where,
+                )
+            )
+        expected_hsize = 48 + 16 * len(header.shape)
+        if header.header_size != expected_hsize:
+            issues.append(
+                ValidationIssue(
+                    10,
+                    "error",
+                    f"header_size {header.header_size} does not match rank "
+                    f"{len(header.shape)} (expected {expected_hsize})",
+                    where,
+                )
+            )
+        if header.reserved != 0:
+            issues.append(
+                ValidationIssue(10, "error", "reserved header field is not zero", where)
+            )
+        if not header.flags & 1:
+            issues.append(
+                ValidationIssue(
+                    10, "error", "payload is not marked canonical contiguous", where
+                )
+            )
+        if header_dtype != value.dtype:
+            issues.append(
+                ValidationIssue(
+                    10,
+                    "error",
+                    f"payload dtype {header_dtype} != value dtype {value.dtype}",
+                    where,
+                )
+            )
+        if header.logical_numel != value.logical_numel:
+            issues.append(
+                ValidationIssue(
+                    10,
+                    "error",
+                    f"payload logical_numel {header.logical_numel} != value "
+                    f"logical_numel {value.logical_numel}",
+                    where,
+                )
+            )
+        if header.payload_nbytes != expected:
+            issues.append(
+                ValidationIssue(
+                    10,
+                    "error",
+                    f"payload declares {header.payload_nbytes} bytes, expected {expected} "
                     f"({value.logical_numel} x {value.dtype})",
                     where,
                 )
             )
-        if shape != tuple(value.shape):
+        if header.shape != tuple(value.shape):
             issues.append(
                 ValidationIssue(
                     10,
                     "error",
-                    f"payload {capture.payload} has shape {list(shape)} but value "
+                    f"payload {capture.payload} has shape {list(header.shape)} but value "
                     f"declares {list(value.shape)}",
                     where,
                 )
             )
+        if header.stride != tuple(value.stride):
+            issues.append(
+                ValidationIssue(
+                    10,
+                    "error",
+                    f"payload stride {list(header.stride)} != value stride "
+                    f"{list(value.stride)}",
+                    where,
+                )
+            )
+        if header.storage_offset != value.storage_offset_elements:
+            issues.append(
+                ValidationIssue(
+                    10,
+                    "error",
+                    f"payload storage_offset {header.storage_offset} != value "
+                    f"storage_offset {value.storage_offset_elements}",
+                    where,
+                )
+            )
         actual_size = path.stat().st_size
-        if actual_size < hsize + payload_nbytes:
+        if actual_size < header.header_size + header.payload_nbytes:
             issues.append(
                 ValidationIssue(
                     10,
                     "error",
                     f"payload truncated: file is {actual_size} bytes, header needs "
-                    f"{hsize + payload_nbytes}",
+                    f"{header.header_size + header.payload_nbytes}",
                     where,
                 )
             )
@@ -423,8 +640,22 @@ def _check_payloads(pkg: TracePackage, issues: list[ValidationIssue]) -> None:
 _IRTENSOR_FIXED = struct.Struct("<4sHHHIHHQQ")
 
 
-def _read_irtensor_header(path: Path) -> tuple[int, int, tuple[int, ...]] | None:
-    """Read ``(header_size, payload_nbytes, shape)`` from an ``.irtensor``.
+@dataclass(frozen=True)
+class _IRTensorHeader:
+    version: int
+    header_size: int
+    dtype_code: int
+    flags: int
+    reserved: int
+    logical_numel: int
+    payload_nbytes: int
+    shape: tuple[int, ...]
+    stride: tuple[int, ...]
+    storage_offset: int
+
+
+def _read_irtensor_header(path: Path) -> _IRTensorHeader | None:
+    """Read the complete metadata header from an ``.irtensor``.
 
     Implemented with :mod:`struct` alone so that validation stays usable in a
     stdlib-only environment.
@@ -434,15 +665,30 @@ def _read_irtensor_header(path: Path) -> tuple[int, int, tuple[int, ...]] | None
             fixed = handle.read(_IRTENSOR_FIXED.size)
             if len(fixed) < _IRTENSOR_FIXED.size:
                 return None
-            magic, _version, hsize, _dtype, _flags, rank, _res, _numel, nbytes = (
+            magic, version, hsize, dtype, flags, rank, reserved, numel, nbytes = (
                 _IRTENSOR_FIXED.unpack(fixed)
             )
             if magic != b"IRTN":
                 return None
-            shape_raw = handle.read(8 * rank)
-            if len(shape_raw) < 8 * rank:
+            metadata_raw = handle.read(16 * rank + 8)
+            if len(metadata_raw) < 16 * rank + 8:
                 return None
-            shape = struct.unpack(f"<{rank}q", shape_raw) if rank else ()
+            shape = struct.unpack_from(f"<{rank}q", metadata_raw, 0) if rank else ()
+            stride = (
+                struct.unpack_from(f"<{rank}q", metadata_raw, 8 * rank) if rank else ()
+            )
+            (storage_offset,) = struct.unpack_from("<q", metadata_raw, 16 * rank)
     except OSError:
         return None
-    return hsize, nbytes, tuple(shape)
+    return _IRTensorHeader(
+        version=version,
+        header_size=hsize,
+        dtype_code=dtype,
+        flags=flags,
+        reserved=reserved,
+        logical_numel=numel,
+        payload_nbytes=nbytes,
+        shape=tuple(shape),
+        stride=tuple(stride),
+        storage_offset=storage_offset,
+    )

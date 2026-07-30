@@ -21,6 +21,7 @@ Reading tensor *payloads* requires numpy, but that lives in
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,17 @@ REGIONS_FILE = "regions.json"
 STORAGES_FILE = "storages.json"
 TENSORS_DIR = "tensors"
 REPORTS_DIR = "reports"
+
+
+def _resolve_package_path(root: Path, relative: str) -> Path:
+    relative_path = Path(relative)
+    if relative_path.is_absolute():
+        raise ValueError(f"payload path must be relative: {relative}")
+    resolved_root = root.resolve()
+    resolved = (resolved_root / relative_path).resolve()
+    if not resolved.is_relative_to(resolved_root):
+        raise ValueError(f"payload path escapes trace package: {relative}")
+    return resolved
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -100,10 +112,10 @@ class TracePackage:
         return innermost.path if innermost else ""
 
     def tensor_payload_path(self, relative: str) -> Path:
-        """Resolve a ``capture.payload`` reference to an absolute path."""
+        """Resolve a payload path without allowing it to escape the package."""
         if self.root is None:
             raise ValueError("trace package has no root directory; cannot resolve payload")
-        return self.root / relative
+        return _resolve_package_path(self.root, relative)
 
     # -- I/O --------------------------------------------------------------
 
@@ -111,6 +123,19 @@ class TracePackage:
         """Write the package to ``root`` (creating it if needed)."""
         root = Path(root)
         root.mkdir(parents=True, exist_ok=True)
+        if self.root is not None and self.root.resolve() != root.resolve():
+            copied: set[str] = set()
+            for value in self.graph.values:
+                payload = value.capture.payload
+                if value.capture.mode != "full" or not payload or payload in copied:
+                    continue
+                source = self.tensor_payload_path(payload)
+                if not source.is_file():
+                    continue
+                destination = _resolve_package_path(root, payload)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, destination)
+                copied.add(payload)
         _write_json(root / MANIFEST_FILE, self.manifest.to_dict())
         _write_json(root / GRAPH_FILE, self.graph.to_dict())
         _write_json(root / MODULES_FILE, {"modules": [m.to_dict() for m in self.modules]})

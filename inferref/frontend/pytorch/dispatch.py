@@ -42,6 +42,27 @@ from inferref.ir.values import (
 from inferref.frontend.pytorch.identity import Identity, torch_dtype_name
 
 
+# These operators mutate a Tensor object's metadata, not the bytes in its
+# backing storage. Their output still gets a fresh immutable TraceValue with
+# updated layout/object metadata, but aliases observing the same storage must
+# not be advanced to a fictitious storage generation.
+_METADATA_ONLY_WRITES = frozenset(
+    {
+        "aten::as_strided_",
+        "aten::detach_",
+        "aten::resize_",
+        "aten::resize_as_",
+        "aten::set_",
+        "aten::squeeze_",
+        "aten::swapaxes_",
+        "aten::swapdims_",
+        "aten::t_",
+        "aten::transpose_",
+        "aten::unsqueeze_",
+    }
+)
+
+
 def canonical_parts(func: Any) -> tuple[str, str, str]:
     """Split an ``OpOverload`` into ``(namespace, op, overload)`` (IR §23)."""
     schema = getattr(func, "_schema", None)
@@ -116,6 +137,13 @@ def iter_written_tensors(
         else:
             continue
         yield from iter_tensors(bound)
+
+
+def mutates_storage_bytes(func: Any) -> bool:
+    """Whether a schema-declared write changes backing-storage contents."""
+
+    schema = getattr(func, "_schema", None)
+    return schema is None or schema.name not in _METADATA_ONLY_WRITES
 
 
 def _scalar_value(obj: Any) -> Value:
@@ -307,7 +335,11 @@ class InferRefDispatchMode(TorchDispatchMode):
         seen_storages: set[int] = set()
         for target, storage_before in written_targets:
             storage_after = identity.storage_id_of(target)
-            if storage_after == storage_before and storage_before not in seen_storages:
+            if (
+                mutates_storage_bytes(func)
+                and storage_after == storage_before
+                and storage_before not in seen_storages
+            ):
                 seen_storages.add(storage_before)
                 written_storages.append(storage_before)
 

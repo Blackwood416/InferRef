@@ -15,6 +15,7 @@ import torch
 
 import inferref
 from inferref.ir.package import TracePackage
+from inferref.ir.tensor_value import CaptureInfo
 from inferref.ir.validate import validate_package
 from inferref.region.boundary import derive_boundary, nodes_between
 from inferref.region.manager import (
@@ -154,6 +155,164 @@ def test_testcase_explains_capture_limit_degradation(
     readme = (tmp_path / "limited" / "README.md").read_text(encoding="utf-8")
     assert "max_capture_elements=4" in readme
     assert "logical_numel=6" in readme
+
+
+def test_mutation_only_operator_exports_post_state_outputs(
+    trace_dir: Path, tmp_path: Path
+) -> None:
+    """A ``None`` return must not hide externally visible tensor-list writes."""
+    tensors = [torch.arange(3, dtype=torch.float32), torch.arange(2, dtype=torch.float32)]
+    with torch.no_grad(), inferref.trace(
+        output=trace_dir, capture_tensors="all", source_map=False, module_map=False
+    ) as session:
+        for index, tensor in enumerate(tensors):
+            session.mark_input(f"x{index}", tensor)
+        torch._foreach_add_(tensors, 2.0)
+        for index, tensor in enumerate(tensors):
+            session.mark_output(f"y{index}", tensor)
+
+    package = TracePackage.load(trace_dir)
+    op = next(
+        candidate
+        for candidate in package.graph.ops_in_execution_order()
+        if candidate.canonical_name == "aten._foreach_add_.Scalar"
+    )
+    result = extract_operator(package, op.id, tmp_path / "foreach")
+    manifest = json.loads(
+        (tmp_path / "foreach" / "testcase.json").read_text(encoding="utf-8")
+    )
+
+    assert result.reproducible
+    assert len(manifest["inputs"]) == 2
+    assert len(manifest["outputs"]) == 2
+    assert manifest["nodes"][0]["result"]["kind"] == "none"
+    assert len(manifest["nodes"][0]["effects"]["mutated_storages"]) == 2
+    for input_entry, output_entry in zip(manifest["inputs"], manifest["outputs"]):
+        before = codec.read(result.path / input_entry["payload"]).as_comparable()
+        after = codec.read(result.path / output_entry["payload"]).as_comparable()
+        assert np.array_equal(after, before + 2.0)
+
+
+def test_unobserved_mutation_is_not_claimed_reproducible(
+    trace_dir: Path, tmp_path: Path
+) -> None:
+    tensor = torch.arange(3, dtype=torch.float32)
+    with torch.no_grad(), inferref.trace(
+        output=trace_dir, capture_tensors="all", source_map=False, module_map=False
+    ) as session:
+        session.mark_input("x", tensor)
+        torch._foreach_add_([tensor], 1.0)
+
+    package = TracePackage.load(trace_dir)
+    op = next(
+        candidate
+        for candidate in package.graph.ops_in_execution_order()
+        if candidate.canonical_name == "aten._foreach_add_.Scalar"
+    )
+    result = extract_operator(package, op.id, tmp_path / "unobserved")
+    manifest = json.loads(
+        (result.path / "testcase.json").read_text(encoding="utf-8")
+    )
+
+    assert not result.reproducible
+    assert manifest["reproducible"] is False
+    assert manifest["unobservable_mutations"]
+    assert "no captured post-state output" in (result.path / "README.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_boundary_labels_cannot_escape_testcase_directory(
+    traced: TracePackage, tmp_path: Path
+) -> None:
+    mm = next(
+        op for op in traced.graph.ops_in_execution_order()
+        if op.canonical_name == "aten.mm.default"
+    )
+    root = tmp_path / "safe"
+    result = extract_operator(
+        traced,
+        mm.id,
+        root,
+        input_names=["../escape", "CON"],
+        output_names=["nested/output"],
+    )
+    manifest = json.loads((root / "testcase.json").read_text(encoding="utf-8"))
+
+    assert result.reproducible
+    assert [entry["name"] for entry in manifest["inputs"]] == ["../escape", "CON"]
+    assert manifest["outputs"][0]["name"] == "nested/output"
+    for entry in manifest["inputs"] + manifest["outputs"]:
+        payload = (root / entry["payload"]).resolve()
+        assert payload.is_relative_to(root.resolve())
+        assert payload.is_file()
+    assert not (tmp_path / "escape.irtensor").exists()
+
+
+def test_extraction_refuses_payload_outside_trace_root(
+    traced: TracePackage, tmp_path: Path
+) -> None:
+    mm = next(
+        op for op in traced.graph.ops_in_execution_order()
+        if op.canonical_name == "aten.mm.default"
+    )
+    escaped_value = traced.graph.value(traced.graph.op_input_value_ids(mm)[0])
+    escaped_value.capture = CaptureInfo(mode="full", payload="../outside.irtensor")
+    (traced.root.parent / "outside.irtensor").write_bytes(b"secret")
+
+    result = extract_operator(traced, mm.id, tmp_path / "blocked")
+    manifest = json.loads((result.path / "testcase.json").read_text(encoding="utf-8"))
+
+    assert not result.reproducible
+    assert any(
+        detail["reason"] == "unsafe_payload_path"
+        for detail in manifest["missing_payload_details"]
+    )
+    assert not any(path.read_bytes() == b"secret" for path in result.path.rglob("*.irtensor"))
+
+
+def test_region_manifest_materialises_effect_produced_internal_alias(
+    trace_dir: Path, tmp_path: Path
+) -> None:
+    base = torch.zeros(4, dtype=torch.float32)
+    source = torch.ones(2, dtype=torch.float32)
+    with torch.no_grad(), inferref.trace(
+        output=trace_dir, capture_tensors="all", source_map=False, module_map=False
+    ) as session:
+        session.mark_input("base", base)
+        session.mark_input("source", source)
+        target = base[:2]
+        target.copy_(source)
+        session.mark_output("out", base + 1)
+
+    package = TracePackage.load(trace_dir)
+    copy = next(
+        op for op in package.graph.ops_in_execution_order()
+        if op.canonical_name == "aten.copy_.default"
+    )
+    add = next(
+        op for op in package.graph.ops_in_execution_order()
+        if op.canonical_name == "aten.add.Tensor"
+    )
+    region = create_region(package, "write_then_read", [copy.id, add.id])
+    result = extract_region(package, region, tmp_path / "write-read")
+    manifest = json.loads((result.path / "testcase.json").read_text(encoding="utf-8"))
+
+    copy_result_ids = set(package.graph.op_output_value_ids(copy))
+    add_input_ids = set(package.graph.op_input_value_ids(add))
+    internal_effect_ids = add_input_ids - set(region.inputs) - copy_result_ids
+    mutation = copy.effects.mutated_storages[0]
+    values = {entry["id"]: entry for entry in manifest["values"]}
+
+    assert result.reproducible
+    assert internal_effect_ids
+    assert internal_effect_ids <= values.keys()
+    assert any(
+        values[value_id]["storage_id"] == mutation.storage_id
+        and values[value_id]["storage_version"] == mutation.version_after
+        for value_id in internal_effect_ids
+    )
+    assert all("storage_id" in entry and "storage_version" in entry for entry in manifest["inputs"])
 
 
 # -- criterion 9: a multi-op RoPE reference region --------------------------

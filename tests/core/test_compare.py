@@ -274,6 +274,37 @@ def test_testcase_comparison_detects_missing_output(tmp_path: Path) -> None:
     assert report.first_failure.status == STATUS_MISSING
 
 
+def test_testcase_comparison_reports_missing_reference_payload(tmp_path: Path) -> None:
+    testcase = tmp_path / "tc"
+    testcase.mkdir()
+    (testcase / "testcase.json").write_text(
+        json.dumps(
+            {
+                "format": "inferref-testcase",
+                "format_version": "0.1",
+                "name": "hash-only",
+                "inputs": [],
+                "outputs": [
+                    {
+                        "name": "out",
+                        "value_id": 7,
+                        "payload": None,
+                        "capture": {"mode": "hash"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = compare_testcase(testcase, tmp_path / "engine")
+
+    assert report.status == STATUS_FAIL
+    assert report.first_failure.status == STATUS_MISSING
+    assert report.first_failure.value_id == 7
+    assert "capture mode hash" in report.first_failure.message
+
+
 def test_first_failure_stops_early(tmp_path: Path) -> None:
     good = np.zeros(3, dtype=np.float32)
     _make_testcase(tmp_path / "tc", {"a": good, "b": good, "c": good})

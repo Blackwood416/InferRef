@@ -187,6 +187,46 @@ def test_rejects_rank_mismatch() -> None:
         codec.encode(dtype="float32", shape=(2, 2), stride=(1,), payload=b"\x00" * 16)
 
 
+def test_rejects_negative_dimensions_at_encode_and_decode() -> None:
+    with pytest.raises(codec.IRTensorError, match="negative dimension"):
+        codec.encode(dtype="float32", shape=(-1, -2), stride=(2, 1), payload=b"\x00" * 8)
+
+    blob = bytearray(
+        codec.encode(
+            dtype="float32",
+            shape=(1, 2),
+            stride=(2, 1),
+            payload=np.zeros(2, dtype="<f4").tobytes(),
+        )
+    )
+    struct.pack_into("<q", blob, 34, -1)
+    with pytest.raises(codec.IRTensorError, match="negative dimension"):
+        codec.decode(bytes(blob))
+
+
+def test_decode_rejects_shape_numel_mismatch() -> None:
+    blob = bytearray(
+        codec.encode(
+            dtype="float32",
+            shape=(2, 2),
+            stride=(2, 1),
+            payload=np.zeros(4, dtype="<f4").tobytes(),
+        )
+    )
+    struct.pack_into("<Q", blob, 18, 3)
+    with pytest.raises(codec.IRTensorError, match="shape product"):
+        codec.decode(bytes(blob))
+
+
+def test_write_array_normalises_big_endian_to_little_endian(tmp_path) -> None:
+    values = np.array([1.0, 2.0], dtype=">f4")
+    path = codec.write_array(tmp_path / "big-endian.irtensor", values)
+    decoded = codec.read(path)
+
+    assert decoded.dtype == "float32"
+    assert np.array_equal(decoded.data, np.array([1.0, 2.0], dtype="<f4"))
+
+
 def test_rejects_unknown_dtype_code() -> None:
     blob = bytearray(codec.encode(dtype="float32", shape=(1,), stride=(1,),
                                   payload=np.zeros(1, "<f4").tobytes()))
