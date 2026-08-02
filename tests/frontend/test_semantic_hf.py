@@ -61,14 +61,14 @@ def test_real_llama_classes_are_recognised(hf_trace: TracePackage) -> None:
 
     # And they resolved from the real classes, not from something incidental.
     evidence = " ".join(d.evidence for d in detections)
-    for class_name in (
-        "LlamaDecoderLayer",
-        "LlamaAttention",
-        "LlamaRMSNorm",
-        "LlamaMLP",
-        "LlamaRotaryEmbedding",
+    for alternatives in (
+        ("LlamaDecoderLayer",),
+        ("LlamaAttention", "LlamaSdpaAttention"),
+        ("LlamaRMSNorm",),
+        ("LlamaMLP",),
+        ("LlamaRotaryEmbedding",),
     ):
-        assert class_name in evidence, class_name
+        assert any(name in evidence for name in alternatives), alternatives
 
 
 def test_real_rope_is_found_by_source_function(hf_trace: TracePackage) -> None:

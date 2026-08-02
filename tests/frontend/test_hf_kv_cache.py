@@ -14,11 +14,13 @@ import inspect
 import json
 from collections import defaultdict
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
+from packaging.version import Version
 
 import inferref
 from inferref.ir.package import TracePackage
@@ -30,6 +32,11 @@ from inferref.testcase.extract import extract_region
 transformers = pytest.importorskip(
     "transformers", reason="real-model KV-cache tests need the hf extra"
 )
+if Version(version("transformers")) < Version("5.14.1"):
+    pytest.skip(
+        "modern Llama cache contract is tested with transformers>=5.14.1",
+        allow_module_level=True,
+    )
 cache_utils = pytest.importorskip("transformers.cache_utils")
 DynamicCache = getattr(cache_utils, "DynamicCache", None)
 StaticCache = getattr(cache_utils, "StaticCache", None)
@@ -150,6 +157,10 @@ def hf_cache_run(tmp_path_factory) -> HFCacheRun:
         )
 
     static_cache = _new_static_cache(config, max_cache_len=8)
+    prefill_position = torch.arange(prefill_ids.shape[1], dtype=torch.long)
+    decode_position = torch.arange(
+        prefill_ids.shape[1], input_ids.shape[1], dtype=torch.long
+    )
     trace_dir = tmp_path_factory.mktemp("hf-kv-cache") / "trace"
     with torch.no_grad(), inferref.trace(
         output=trace_dir,
@@ -160,6 +171,7 @@ def hf_cache_run(tmp_path_factory) -> HFCacheRun:
         static_prefill = model(
             input_ids=prefill_ids,
             past_key_values=static_cache,
+            cache_position=prefill_position,
             use_cache=True,
         )
         session.mark_output("prefill_logits", static_prefill.logits)
@@ -168,6 +180,7 @@ def hf_cache_run(tmp_path_factory) -> HFCacheRun:
         static_decode = model(
             input_ids=decode_ids,
             past_key_values=static_cache,
+            cache_position=decode_position,
             use_cache=True,
         )
         session.mark_output("decode_logits", static_decode.logits)

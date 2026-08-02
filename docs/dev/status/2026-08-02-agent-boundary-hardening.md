@@ -62,7 +62,7 @@ termination status, and comparison data.
 
 The HF matrix no longer conflates all Transformers support:
 
-- `transformers==4.40.*` asserts and runs generic Llama/cache coverage;
+- `transformers==4.40.*` asserts and runs real Llama tracing/semantic coverage;
 - `transformers==5.14.1` is the fixed Qwen3.5-tested floor;
 - floating latest gives upstream early warning;
 - capability assertions fail before pytest, so missing Qwen3.5 classes cannot
@@ -83,6 +83,8 @@ full local suite                         360 passed, 5 skipped
 adapter adversarial + validator subset    15 passed
 codec/validator/agent/compare subset       89 passed
 WSL Agent/path cross-platform subset       24 passed, 1 skipped
+Torch 2.1 + Transformers 4.40 floor       347 passed, 9 skipped
+Transformers 5.14 cache/hybrid subset      13 passed
 changed-file Ruff F/I checks                 passed
 workflow YAML parsing                        passed
 ```
@@ -90,7 +92,9 @@ workflow YAML parsing                        passed
 Four skips are the new CUDA contract on a CPU-only host; the existing official
 Qwen3.5 weight test remains opt-in. Windows symlink and junction containment
 tests passed locally. Linux containment and all new CI matrix legs still require
-the remote Actions run.
+the remote Actions run. Modern Llama cache-shape and Qwen3.5 hybrid-cache tests
+are explicitly scoped to the 5.14.1 tested floor; Transformers 4.40 has a
+different StaticCache calling and mutation contract.
 
 ## Remaining trust boundary
 

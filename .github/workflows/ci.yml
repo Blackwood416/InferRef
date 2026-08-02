@@ -80,7 +80,7 @@ jobs:
   frontend:
     name: >-
       Frontend · ${{ matrix.os }} · py${{ matrix.python }} · torch ${{ matrix.torch }}${{
-      matrix.hf && ' + transformers' || '' }}
+      matrix.hf && format(' + transformers {0}', matrix.transformers) || '' }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.torch == 'nightly' }}
     strategy:
@@ -118,6 +118,7 @@ jobs:
               # Oldest version the frontend claims to support. TorchDispatchMode
               # and StorageWeakRef are private APIs, so the floor is asserted by
               # test rather than by trust.
+              pip install "numpy<2"
               pip install "torch==2.1.*" --index-url https://download.pytorch.org/whl/cpu
               ;;
             current)
@@ -146,8 +147,7 @@ jobs:
         shell: python
         run: |
           from transformers import LlamaConfig, LlamaForCausalLM
-          from transformers.cache_utils import DynamicCache, StaticCache
-          print("generic Llama and cache APIs are available")
+          print("generic Llama model APIs are available")
 
       - name: Assert Qwen3.5 capability
         if: startsWith(matrix.hf_suite, 'qwen35-')
@@ -166,9 +166,7 @@ jobs:
 
       - name: Run required generic HF tests
         if: matrix.hf_suite == 'generic-min'
-        run: >-
-          python -m pytest tests/frontend/test_hf_kv_cache.py
-          tests/frontend/test_semantic_hf.py -q
+        run: python -m pytest tests/frontend/test_semantic_hf.py -q
 
       - name: Run required Qwen3.5 hybrid-cache tests
         if: startsWith(matrix.hf_suite, 'qwen35-')
