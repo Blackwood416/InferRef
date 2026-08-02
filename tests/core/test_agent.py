@@ -138,7 +138,7 @@ def test_engine_adapter_passes_and_never_reuses_output_directory(
 
     assert first.status == second.status == "pass"
     assert first.data["output"] != second.data["output"]
-    assert first.data["execution"]["command"][0] == str(Path(sys.executable).resolve())
+    assert first.data["execution"]["command"][0] == str(Path(sys.executable).absolute())
     assert Path(first.data["output"], "inferref-run.json").is_file()
     assert first.data["comparison"]["status"] == "pass"
 

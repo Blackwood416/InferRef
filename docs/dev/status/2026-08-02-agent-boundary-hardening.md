@@ -82,6 +82,7 @@ checkout and setup-python use v6. No compatibility downgrade was added.
 full local suite                         360 passed, 5 skipped
 adapter adversarial + validator subset    15 passed
 codec/validator/agent/compare subset       89 passed
+WSL Agent/path cross-platform subset       24 passed, 1 skipped
 changed-file Ruff F/I checks                 passed
 workflow YAML parsing                        passed
 ```

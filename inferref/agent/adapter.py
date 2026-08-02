@@ -60,7 +60,9 @@ def execute_adapter(
     command, configured_env = adapter.expand(
         testcase=testcase_path,
         output=output_path,
-        python=Path(sys.executable).resolve(),
+        # Resolving a POSIX venv executable follows its symlink to the base
+        # interpreter and silently loses the venv's site-packages.
+        python=Path(sys.executable).absolute(),
     )
     environment = os.environ.copy()
     environment.update(configured_env)
@@ -269,6 +271,13 @@ def _wait_with_limits(
         _terminate_process_tree(process)
     else:
         process.wait()
+        if os.name != "nt":
+            # The direct child may exit successfully after spawning a daemon.
+            # The adapter contract never permits descendants to outlive a run.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         if any(capture.exceeded.is_set() for capture in captures):
             status = "output_limit"
         elif _artifact_bytes(output_path) > max_artifact_bytes:
