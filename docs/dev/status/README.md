@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-08-02 | [Agent boundary CI green](2026-08-02-agent-boundary-ci-green.md) | 18/18 Actions jobs; Windows/Linux path/process controls; HF 4.40 + Qwen 5.14/latest |
 | 2026-08-02 | [Agent boundary hardening](2026-08-02-agent-boundary-hardening.md) | MCP roots; testcase validator; streamed limits + Job/process-group cleanup; HF/GPU CI; 360 tests |
 | 2026-08-02 | [Agent repair evaluation](2026-08-02-agent-repair-evaluation.md) | Bounded RoPE repair benchmark; CLI/MCP FAIL→one-file fix→PASS; 328 tests |
 | 2026-08-02 | [Agent integration vertical slice](2026-08-02-agent-integration-v0.3.md) | Agent envelope; trusted adapter runner; CLI + MCP v2; 325 tests |
