@@ -1,0 +1,366 @@
+{
+  "format": "inferref-agent-evaluation-attestation",
+  "format_version": "0.1",
+  "generated_at": "2026-08-02T14:58:59.615438+00:00",
+  "commit": "e63492eacc48b3e2f43d5cdadd58b1dc3f4a7730",
+  "benchmark": {
+    "id": "rope-half-rotation-sign",
+    "format": "inferref-agent-evaluation",
+    "format_version": "0.2",
+    "sha256": "84ef708f9be345b1674555c64125b4633444eb74c71f411d98c1c64d0f4f6c8e",
+    "success_policy": {
+      "required_agent_passes": 2,
+      "visible_status": "pass",
+      "all_holdouts_pass": true,
+      "protected_paths_unchanged": true
+    }
+  },
+  "evaluator_hashes": {
+    "host/adapter.py": "4b4588880c9a26283342630cf67856bfc59a71ffa5efdc2732c16f71299c7281",
+    "host/evaluation.py": "cccd0ef28a9a590b3625d4330e53986d7331c01fd60be0ceb0b0166e1bb5acfa",
+    "host/evaluation_host.py": "2cc2087972535299166ee4c365a96141dec7d5b6d235b7b8d2a1b9c34459a003",
+    "host/evaluation_mcp.py": "8ae4a0b781ec29996a81e5d31ab58424dda2d38e36d7bcec3a892de552b0d573"
+  },
+  "private_report_sha256": "78d2aca6aa1180cb6099711645562f0c5cc8343ce137f3893f8404f8ce7171e9",
+  "status": "pass",
+  "acceptance": {
+    "configured_agents": [
+      "codex",
+      "claude"
+    ],
+    "selected_agents": [
+      "codex",
+      "claude"
+    ],
+    "policy": {
+      "required_agent_passes": 2,
+      "visible_status": "pass",
+      "all_holdouts_pass": true,
+      "protected_paths_unchanged": true
+    },
+    "required_passes": 2,
+    "passed": 2
+  },
+  "agents": [
+    {
+      "agent": "codex",
+      "requested_model": "gpt-5.6-sol",
+      "resolved_model": null,
+      "cli_version": "codex-cli 0.146.0",
+      "status": "pass",
+      "classification": "pass",
+      "duration_ms": 39465.465,
+      "engine_runs": 1,
+      "final_engine_sha256": "b54e4093af5addc24735031ffc3ed39abb6d1e6f71f9b75fb17e27cd5e490a66",
+      "historical_visible_passed": true,
+      "final_visible": {
+        "case": {
+          "id": "visible",
+          "seed": 20260802,
+          "shape": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        "status": "pass",
+        "duration_ms": 294.627,
+        "first_failure": null,
+        "input_changes": []
+      },
+      "holdouts": [
+        {
+          "case": {
+            "id": "holdout-dim4",
+            "seed": 20260811,
+            "shape": [
+              1,
+              2,
+              3,
+              4
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 294.272,
+          "first_failure": null,
+          "input_changes": []
+        },
+        {
+          "case": {
+            "id": "holdout-dim12",
+            "seed": 20260817,
+            "shape": [
+              1,
+              1,
+              5,
+              12
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 295.669,
+          "first_failure": null,
+          "input_changes": []
+        },
+        {
+          "case": {
+            "id": "holdout-batch-heads",
+            "seed": 20260823,
+            "shape": [
+              2,
+              3,
+              5,
+              8
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 297.603,
+          "first_failure": null,
+          "input_changes": []
+        }
+      ],
+      "tool_audit": [
+        {
+          "tool": "inferref_capabilities",
+          "call_index": 1,
+          "engine_runs": 0,
+          "status": "ok",
+          "operation": "capabilities",
+          "diagnostic_codes": []
+        },
+        {
+          "tool": "inferref_context",
+          "call_index": 1,
+          "engine_runs": 0,
+          "status": "ok",
+          "operation": "context",
+          "diagnostic_codes": []
+        },
+        {
+          "tool": "inferref_run_engine",
+          "call_index": 1,
+          "engine_runs": 1,
+          "status": "pass",
+          "operation": "run_engine",
+          "diagnostic_codes": []
+        }
+      ],
+      "engine_patch": "--- engine.py (baseline)\n+++ engine.py\n@@ -17,7 +17,7 @@\n     half = value.shape[-1] // 2\n     first = value[..., :half]\n     second = value[..., half:]\n-    return np.concatenate((second, -first), axis=-1)\n+    return np.concatenate((-second, first), axis=-1)\n \n \n def apply_rope(value: np.ndarray, cos: np.ndarray, sin: np.ndarray) -> np.ndarray:\n",
+      "protected_file_hashes": {
+        "TASK.md": {
+          "before": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89",
+          "after": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89"
+        }
+      },
+      "host_protected_file_hashes": {
+        "benchmark/TASK.md": {
+          "before": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89",
+          "after": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89"
+        },
+        "benchmark/benchmark.json": {
+          "before": "84ef708f9be345b1674555c64125b4633444eb74c71f411d98c1c64d0f4f6c8e",
+          "after": "84ef708f9be345b1674555c64125b4633444eb74c71f411d98c1c64d0f4f6c8e"
+        },
+        "benchmark/engine.py": {
+          "before": "d28218a91ac703057b2f54cd7003411d7440dfe0da6e55995842ebb43d819e1b",
+          "after": "d28218a91ac703057b2f54cd7003411d7440dfe0da6e55995842ebb43d819e1b"
+        },
+        "host/adapter.py": {
+          "before": "4b4588880c9a26283342630cf67856bfc59a71ffa5efdc2732c16f71299c7281",
+          "after": "4b4588880c9a26283342630cf67856bfc59a71ffa5efdc2732c16f71299c7281"
+        },
+        "host/evaluation.py": {
+          "before": "cccd0ef28a9a590b3625d4330e53986d7331c01fd60be0ceb0b0166e1bb5acfa",
+          "after": "cccd0ef28a9a590b3625d4330e53986d7331c01fd60be0ceb0b0166e1bb5acfa"
+        },
+        "host/evaluation_host.py": {
+          "before": "2cc2087972535299166ee4c365a96141dec7d5b6d235b7b8d2a1b9c34459a003",
+          "after": "2cc2087972535299166ee4c365a96141dec7d5b6d235b7b8d2a1b9c34459a003"
+        },
+        "host/evaluation_mcp.py": {
+          "before": "8ae4a0b781ec29996a81e5d31ab58424dda2d38e36d7bcec3a892de552b0d573",
+          "after": "8ae4a0b781ec29996a81e5d31ab58424dda2d38e36d7bcec3a892de552b0d573"
+        }
+      },
+      "raw_transcript_sha256": "065c2b52e1f385c8d0bdc17c2d000e82bea0f7a3689363428f91f2e5f618a822",
+      "raw_stderr_sha256": "65333fb884468b7a0187b780513d5333515eb9c605d611b6324a816dcfc5ea6c",
+      "usage": {
+        "usage.input_tokens": 96373,
+        "usage.cached_input_tokens": 71168,
+        "usage.cache_write_input_tokens": 0,
+        "usage.output_tokens": 397,
+        "usage.reasoning_output_tokens": 25
+      }
+    },
+    {
+      "agent": "claude",
+      "requested_model": "opus",
+      "resolved_model": "deepseek-v4-flash[1m]",
+      "cli_version": "2.1.116 (Claude Code)",
+      "status": "pass",
+      "classification": "pass",
+      "duration_ms": 20713.546,
+      "engine_runs": 2,
+      "final_engine_sha256": "b54e4093af5addc24735031ffc3ed39abb6d1e6f71f9b75fb17e27cd5e490a66",
+      "historical_visible_passed": true,
+      "final_visible": {
+        "case": {
+          "id": "visible",
+          "seed": 20260802,
+          "shape": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        "status": "pass",
+        "duration_ms": 294.913,
+        "first_failure": null,
+        "input_changes": []
+      },
+      "holdouts": [
+        {
+          "case": {
+            "id": "holdout-dim4",
+            "seed": 20260811,
+            "shape": [
+              1,
+              2,
+              3,
+              4
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 294.831,
+          "first_failure": null,
+          "input_changes": []
+        },
+        {
+          "case": {
+            "id": "holdout-dim12",
+            "seed": 20260817,
+            "shape": [
+              1,
+              1,
+              5,
+              12
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 295.671,
+          "first_failure": null,
+          "input_changes": []
+        },
+        {
+          "case": {
+            "id": "holdout-batch-heads",
+            "seed": 20260823,
+            "shape": [
+              2,
+              3,
+              5,
+              8
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 294.948,
+          "first_failure": null,
+          "input_changes": []
+        }
+      ],
+      "tool_audit": [
+        {
+          "tool": "inferref_capabilities",
+          "call_index": 1,
+          "engine_runs": 0,
+          "status": "ok",
+          "operation": "capabilities",
+          "diagnostic_codes": []
+        },
+        {
+          "tool": "inferref_context",
+          "call_index": 1,
+          "engine_runs": 0,
+          "status": "ok",
+          "operation": "context",
+          "diagnostic_codes": []
+        },
+        {
+          "tool": "inferref_run_engine",
+          "call_index": 1,
+          "engine_runs": 1,
+          "status": "fail",
+          "operation": "run_engine",
+          "diagnostic_codes": []
+        },
+        {
+          "tool": "inferref_run_engine",
+          "call_index": 2,
+          "engine_runs": 2,
+          "status": "pass",
+          "operation": "run_engine",
+          "diagnostic_codes": []
+        }
+      ],
+      "engine_patch": "--- engine.py (baseline)\n+++ engine.py\n@@ -17,7 +17,7 @@\n     half = value.shape[-1] // 2\n     first = value[..., :half]\n     second = value[..., half:]\n-    return np.concatenate((second, -first), axis=-1)\n+    return np.concatenate((-second, first), axis=-1)\n \n \n def apply_rope(value: np.ndarray, cos: np.ndarray, sin: np.ndarray) -> np.ndarray:\n",
+      "protected_file_hashes": {
+        "TASK.md": {
+          "before": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89",
+          "after": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89"
+        }
+      },
+      "host_protected_file_hashes": {
+        "benchmark/TASK.md": {
+          "before": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89",
+          "after": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89"
+        },
+        "benchmark/benchmark.json": {
+          "before": "84ef708f9be345b1674555c64125b4633444eb74c71f411d98c1c64d0f4f6c8e",
+          "after": "84ef708f9be345b1674555c64125b4633444eb74c71f411d98c1c64d0f4f6c8e"
+        },
+        "benchmark/engine.py": {
+          "before": "d28218a91ac703057b2f54cd7003411d7440dfe0da6e55995842ebb43d819e1b",
+          "after": "d28218a91ac703057b2f54cd7003411d7440dfe0da6e55995842ebb43d819e1b"
+        },
+        "host/adapter.py": {
+          "before": "4b4588880c9a26283342630cf67856bfc59a71ffa5efdc2732c16f71299c7281",
+          "after": "4b4588880c9a26283342630cf67856bfc59a71ffa5efdc2732c16f71299c7281"
+        },
+        "host/evaluation.py": {
+          "before": "cccd0ef28a9a590b3625d4330e53986d7331c01fd60be0ceb0b0166e1bb5acfa",
+          "after": "cccd0ef28a9a590b3625d4330e53986d7331c01fd60be0ceb0b0166e1bb5acfa"
+        },
+        "host/evaluation_host.py": {
+          "before": "2cc2087972535299166ee4c365a96141dec7d5b6d235b7b8d2a1b9c34459a003",
+          "after": "2cc2087972535299166ee4c365a96141dec7d5b6d235b7b8d2a1b9c34459a003"
+        },
+        "host/evaluation_mcp.py": {
+          "before": "8ae4a0b781ec29996a81e5d31ab58424dda2d38e36d7bcec3a892de552b0d573",
+          "after": "8ae4a0b781ec29996a81e5d31ab58424dda2d38e36d7bcec3a892de552b0d573"
+        }
+      },
+      "raw_transcript_sha256": "cc1b95116cbe9a4357ea9ae67676928d0faaa415cb5f79e7913cf919006ed6d7",
+      "raw_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "usage": {
+        "message.usage.input_tokens": 7970,
+        "message.usage.cache_creation_input_tokens": 0,
+        "message.usage.cache_read_input_tokens": 12544,
+        "message.usage.output_tokens": 0,
+        "total_cost_usd": 0.147905,
+        "usage.input_tokens": 13382,
+        "usage.cache_creation_input_tokens": 0,
+        "usage.cache_read_input_tokens": 64640,
+        "usage.output_tokens": 1947,
+        "usage.cache_creation.ephemeral_1h_input_tokens": 0,
+        "usage.cache_creation.ephemeral_5m_input_tokens": 0,
+        "modelusage.deepseek-v4-flash[1m].inputtokens": 13382,
+        "modelusage.deepseek-v4-flash[1m].outputtokens": 1947,
+        "modelusage.deepseek-v4-flash[1m].cachereadinputtokens": 64640,
+        "modelusage.deepseek-v4-flash[1m].cachecreationinputtokens": 0,
+        "modelusage.deepseek-v4-flash[1m].costusd": 0.147905,
+        "modelusage.deepseek-v4-flash[1m].maxoutputtokens": 32000
+      }
+    }
+  ]
+}
