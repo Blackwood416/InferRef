@@ -13,6 +13,7 @@ import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from inferref.agent.evaluation import (
     RUNS_URI,
     VISIBLE_URI,
     EvaluationBenchmark,
+    EvaluationCase,
     engine_patch,
     execute_case,
     load_audit,
@@ -61,6 +63,7 @@ def evaluate_benchmark(
     driver: Driver | None = None,
     claude_settings: str | Path | None = None,
     claude_model: str | None = None,
+    public_attestation: str | Path | None = None,
 ) -> dict[str, Any]:
     benchmark = EvaluationBenchmark.load(benchmark_path)
     selected = tuple(dict.fromkeys(agents))
@@ -77,6 +80,19 @@ def evaluate_benchmark(
             f"evaluation report directory is not empty: {report_root}"
         )
     report_root.mkdir(parents=True, exist_ok=True)
+    public_attestation_path = (
+        Path(public_attestation).resolve() if public_attestation is not None else None
+    )
+    if public_attestation_path is not None and public_attestation_path.exists():
+        raise FileExistsError(
+            f"public attestation already exists: {public_attestation_path}"
+        )
+    if public_attestation_path is not None:
+        if public_attestation_path.is_relative_to(report_root):
+            raise ValueError(
+                "public attestation must be outside the private report directory"
+            )
+        public_attestation_path.parent.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
     for name in selected:
         model = (
@@ -136,24 +152,103 @@ def evaluate_benchmark(
         (agent_root / "result.json").write_text(
             json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
-    passed = all(item["status"] == "pass" for item in results) and len(results) == 2
+    passed_count = sum(item["status"] == "pass" for item in results)
+    passed = passed_count >= benchmark.success.required_agent_passes
     report = {
         "format": "inferref-agent-evaluation-report",
         "format_version": "0.2",
         "benchmark": benchmark.id,
         "status": "pass" if passed else "fail",
         "acceptance": {
-            "required_agents": ["codex", "claude"],
+            "configured_agents": list(benchmark.drivers),
             "selected_agents": list(selected),
-            "required_passes": 2,
-            "passed": sum(item["status"] == "pass" for item in results),
+            "policy": benchmark.success.to_dict(),
+            "required_passes": benchmark.success.required_agent_passes,
+            "passed": passed_count,
         },
         "agents": results,
     }
-    (report_root / "report.json").write_text(
+    report_path = report_root / "report.json"
+    report_path.write_text(
         json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+    attestation = build_public_attestation(
+        benchmark,
+        report,
+        report_root=report_root,
+        report_path=report_path,
+    )
+    attestation_path = report_root / "attestation.json"
+    _write_new_json(attestation_path, attestation)
+    if public_attestation_path is not None:
+        _write_new_json(public_attestation_path, attestation)
     return report
+
+
+def build_public_attestation(
+    benchmark: EvaluationBenchmark,
+    report: dict[str, Any],
+    *,
+    report_root: Path,
+    report_path: Path,
+) -> dict[str, Any]:
+    agents = []
+    for result in report["agents"]:
+        agent = result["agent"]
+        agent_root = report_root / agent
+        integrity = result["integrity"]
+        agents.append(
+            {
+                "agent": agent,
+                "requested_model": result["model"],
+                "resolved_model": result["process"]["resolved_model"],
+                "cli_version": result["process"]["cli_version"],
+                "status": result["status"],
+                "classification": result["classification"],
+                "duration_ms": result["process"]["duration_ms"],
+                "engine_runs": result["visible"]["runs"],
+                "final_engine_sha256": result["final_engine_sha256"],
+                "historical_visible_passed": result["visible"]["historical_passed"],
+                "final_visible": result["visible"]["final"],
+                "holdouts": result["holdouts"],
+                "tool_audit": [
+                    _public_audit_record(item) for item in result["tool_audit"]
+                ],
+                "engine_patch": result["patch"],
+                "protected_file_hashes": integrity["protected_file_hashes"],
+                "host_protected_file_hashes": integrity["host_protected_file_hashes"],
+                "raw_transcript_sha256": _sha256_or_none(
+                    agent_root / Path(result["process"]["stdout_path"]).name
+                ),
+                "raw_stderr_sha256": _sha256_or_none(
+                    agent_root / Path(result["process"]["stderr_path"]).name
+                ),
+                "usage": result["process"]["usage"],
+            }
+        )
+    host_hashes = _hash_named_files(_protected_host_paths(benchmark))
+    return {
+        "format": "inferref-agent-evaluation-attestation",
+        "format_version": "0.1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "commit": _git_commit(benchmark.directory),
+        "benchmark": {
+            "id": benchmark.id,
+            "format": "inferref-agent-evaluation",
+            "format_version": "0.2",
+            "sha256": _sha256_or_none(benchmark.source),
+            "success_policy": benchmark.success.to_dict(),
+        },
+        "evaluator_hashes": {
+            name: digest
+            for name, digest in host_hashes.items()
+            if name.startswith("host/")
+        },
+        "private_report_sha256": _sha256_or_none(report_path),
+        "status": report["status"],
+        "acceptance": report["acceptance"],
+        "agents": agents,
+    }
 
 
 def assess_candidate(
@@ -204,10 +299,10 @@ def assess_candidate(
         if initial_host_hashes.get(name) != final_host_hashes.get(name)
     )
     visible_runs = [item for item in audit if item.get("tool") == "inferref_run_engine"]
-    visible_pass = any(item.get("status") == "pass" for item in visible_runs)
+    historical_visible_pass = any(item.get("status") == "pass" for item in visible_runs)
 
     classification = "pass"
-    message = "candidate passed visible and hidden evaluation cases"
+    message = "candidate satisfied the benchmark success policy"
     if process.timed_out:
         classification = "infrastructure_failure"
         message = "Agent process exceeded the wall-clock limit"
@@ -223,8 +318,10 @@ def assess_candidate(
         classification = "infrastructure_failure"
         message = "evaluation MCP server produced no audit records"
     elif (
-        protected_changes
-        or host_changes
+        (
+            benchmark.success.protected_paths_unchanged
+            and (protected_changes or host_changes)
+        )
         or integrity_attempts
         or sequence_attempts
         or budget_attempts
@@ -232,26 +329,51 @@ def assess_candidate(
     ):
         classification = "integrity_failure"
         message = "candidate violated editable-path, tool-use, or run-budget policy"
-    elif not visible_pass:
+    elif not historical_visible_pass:
         classification = "agent_failure"
         message = "candidate did not pass the visible case within the run budget"
 
+    candidate_engine = workspace / benchmark.editable_paths[0]
+    final_engine_sha256: str | None = None
+    final_visible: dict[str, Any] | None = None
     holdouts: list[dict[str, Any]] = []
     if classification == "pass":
-        engine = workspace / benchmark.editable_paths[0]
-        for case in benchmark.holdout_cases:
-            outcome = execute_case(
-                case,
-                engine=engine,
-                runs_root=agent_root / "holdout-runs",
+        try:
+            final_engine = candidate_engine.read_bytes()
+        except OSError as exc:
+            classification = "agent_failure"
+            message = f"final candidate engine is unavailable: {exc}"
+        else:
+            final_engine_sha256 = hashlib.sha256(final_engine).hexdigest()
+            final_visible_outcome = _execute_captured_case(
+                benchmark.visible_case,
+                engine_bytes=final_engine,
+                validation_root=agent_root / "final-validation",
+                slot="visible",
             )
-            holdouts.append(_public_case_result(outcome))
-        if any(item["status"] != "pass" for item in holdouts):
-            classification = "overfit_failure"
-            message = "visible case passed but one or more hidden holdouts failed"
+            final_visible = _public_case_result(final_visible_outcome)
+            for index, case in enumerate(benchmark.holdout_cases):
+                outcome = _execute_captured_case(
+                    case,
+                    engine_bytes=final_engine,
+                    validation_root=agent_root / "final-validation",
+                    slot=f"holdout-{index}",
+                )
+                holdouts.append(_public_case_result(outcome))
+            final_results = [final_visible, *holdouts]
+            if any(item["status"] == "integrity_failure" for item in final_results):
+                classification = "integrity_failure"
+                message = "final candidate modified an input-only validation testcase"
+            elif final_visible["status"] != benchmark.success.visible_status:
+                classification = "agent_failure"
+                message = "final candidate failed silent visible revalidation"
+            elif benchmark.success.all_holdouts_pass and any(
+                item["status"] != "pass" for item in holdouts
+            ):
+                classification = "overfit_failure"
+                message = "visible case passed but one or more hidden holdouts failed"
 
     template_engine = benchmark.directory / benchmark.editable_paths[0]
-    candidate_engine = workspace / benchmark.editable_paths[0]
     patch = (
         engine_patch(template_engine, candidate_engine)
         if template_engine.is_file() and candidate_engine.is_file()
@@ -301,9 +423,15 @@ def assess_candidate(
             "budget_exhausted_attempts": len(budget_attempts),
         },
         "tool_audit": audit,
+        "final_engine_sha256": final_engine_sha256,
         "visible": {
             "runs": len(visible_runs),
-            "passed": visible_pass,
+            "historical_passed": historical_visible_pass,
+            "final": final_visible,
+            "passed": (
+                final_visible is not None
+                and final_visible["status"] == benchmark.success.visible_status
+            ),
         },
         "holdouts": holdouts,
         "patch": patch,
@@ -679,6 +807,24 @@ def _candidate_prompt(benchmark: EvaluationBenchmark) -> str:
     )
 
 
+def _execute_captured_case(
+    case: EvaluationCase,
+    *,
+    engine_bytes: bytes,
+    validation_root: Path,
+    slot: str,
+) -> dict[str, Any]:
+    candidate_root = validation_root / "candidates" / slot
+    candidate_root.mkdir(parents=True, exist_ok=False)
+    engine = candidate_root / "engine.py"
+    engine.write_bytes(engine_bytes)
+    return execute_case(
+        case,
+        engine=engine,
+        runs_root=validation_root / "runs" / slot,
+    )
+
+
 def _public_case_result(outcome: dict[str, Any]) -> dict[str, Any]:
     comparison = outcome.get("comparison") or {}
     return {
@@ -686,6 +832,7 @@ def _public_case_result(outcome: dict[str, Any]) -> dict[str, Any]:
         "status": outcome.get("status"),
         "duration_ms": outcome.get("execution", {}).get("duration_ms"),
         "first_failure": comparison.get("first_failure"),
+        "input_changes": outcome.get("integrity", {}).get("input_changes", []),
     }
 
 
@@ -707,6 +854,47 @@ def _hash_named_files(paths: dict[str, Path]) -> dict[str, str | None]:
         name: hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
         for name, path in paths.items()
     }
+
+
+def _sha256_or_none(path: Path) -> str | None:
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
+def _public_audit_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: record.get(key)
+        for key in (
+            "tool",
+            "call_index",
+            "engine_runs",
+            "status",
+            "operation",
+            "diagnostic_codes",
+        )
+    }
+
+
+def _git_commit(cwd: Path) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            shell=False,
+            timeout=10,
+            text=True,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    commit = completed.stdout.strip()
+    return commit if completed.returncode == 0 and len(commit) == 40 else None
+
+
+def _write_new_json(path: Path, payload: dict[str, Any]) -> None:
+    with path.open("x", encoding="utf-8") as stream:
+        stream.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
 
 def _bounded_text(path: Path, limit: int = 65_536) -> str:

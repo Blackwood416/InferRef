@@ -567,6 +567,7 @@ def cmd_agent_evaluate(args: argparse.Namespace) -> int:
         report_dir=args.report_dir,
         claude_settings=args.claude_settings,
         claude_model=args.claude_model,
+        public_attestation=args.public_attestation,
     )
     summary = (
         f"agent evaluation: {report['status']} "
@@ -904,6 +905,10 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument(
         "--claude-model",
         help="Claude Code model override, useful with a custom provider settings file",
+    )
+    q.add_argument(
+        "--public-attestation",
+        help="write a fresh redacted attestation JSON outside the private report directory",
     )
     _add_json(q)
     q.set_defaults(func=cmd_agent_evaluate)

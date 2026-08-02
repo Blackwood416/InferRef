@@ -233,6 +233,12 @@ not add production MCP operations. A blind repair benchmark declares:
   "drivers": {
     "codex": {"model": "gpt-5.6-sol"},
     "claude": {"model": "opus"}
+  },
+  "success": {
+    "required_agent_passes": 2,
+    "visible_status": "pass",
+    "all_holdouts_pass": true,
+    "protected_paths_unchanged": true
   }
 }
 ```
@@ -241,9 +247,24 @@ The candidate sees opaque `eval://` identifiers through tools with the ordinary
 InferRef MCP names and response envelope. Reference arrays are not materialized;
 only input payloads are staged for the candidate engine. The MCP proxy records
 required tool use and rejects calls beyond `max_engine_runs`. After visible PASS,
-the host runs every holdout without further Agent access.
+the historical MCP result is used only as evidence that the Agent completed the
+required interaction. After the Agent exits, the host silently executes the final
+candidate against the visible case and every holdout. All acceptance results must
+therefore describe one final `engine.py`.
 
 The evaluator snapshots the workspace, allows changes only to `editable_paths`,
-and distinguishes infrastructure, Agent, integrity, and overfit failures. A dual
-Agent pilot passes only when both configured drivers pass visible and hidden
-cases. This is oracle isolation and integrity checking, not a general OS sandbox.
+and distinguishes infrastructure, Agent, integrity, and overfit failures. The
+`success` object is required, parsed, validated, and controls the overall pass
+threshold plus final visible, holdout, and protected-path requirements.
+
+Evaluation “blindness” is specifically candidate-input blindness, in-memory oracle
+isolation, and holdouts hidden from the Agent workspace. Holdout metadata remains
+public, evaluator and Agent share an OS user, and final-state hashes cannot detect
+reads or modify-then-restore behavior. This is not an adversarial secrecy or OS
+sandbox claim.
+
+The evaluator may emit a redacted `inferref-agent-evaluation-attestation` v0.1.
+It contains the commit, benchmark/evaluator hashes, model and CLI versions, tool
+audit, final patch, final visible/holdout verdicts, raw transcript hashes, and
+available usage. It excludes transcript text, reasoning, credentials, reference
+payloads, and absolute local paths.

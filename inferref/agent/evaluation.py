@@ -94,6 +94,46 @@ class AgentDriverSpec:
 
 
 @dataclass(frozen=True)
+class EvaluationSuccessPolicy:
+    required_agent_passes: int
+    visible_status: str
+    all_holdouts_pass: bool
+    protected_paths_unchanged: bool
+
+    @classmethod
+    def from_dict(cls, data: Any, *, configured_agents: int) -> EvaluationSuccessPolicy:
+        if not isinstance(data, dict):
+            raise AgentProtocolError("success must be an object")
+        required = _bounded_integer(
+            data,
+            "required_agent_passes",
+            minimum=1,
+            maximum=configured_agents,
+        )
+        visible_status = _required_string(data, "visible_status")
+        if visible_status != "pass":
+            raise AgentProtocolError("success.visible_status must be 'pass' in v0.2")
+        return cls(
+            required_agent_passes=required,
+            visible_status=visible_status,
+            all_holdouts_pass=_required_bool(
+                data, "all_holdouts_pass", where="success"
+            ),
+            protected_paths_unchanged=_required_bool(
+                data, "protected_paths_unchanged", where="success"
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "required_agent_passes": self.required_agent_passes,
+            "visible_status": self.visible_status,
+            "all_holdouts_pass": self.all_holdouts_pass,
+            "protected_paths_unchanged": self.protected_paths_unchanged,
+        }
+
+
+@dataclass(frozen=True)
 class EvaluationBenchmark:
     source: Path
     id: str
@@ -107,6 +147,7 @@ class EvaluationBenchmark:
     visible_case: EvaluationCase
     holdout_cases: tuple[EvaluationCase, ...]
     drivers: dict[str, AgentDriverSpec]
+    success: EvaluationSuccessPolicy
 
     @classmethod
     def load(cls, path: str | Path) -> EvaluationBenchmark:
@@ -173,6 +214,9 @@ class EvaluationBenchmark:
             drivers[name] = AgentDriverSpec(
                 name=name, model=_required_string(entry, "model")
             )
+        success = EvaluationSuccessPolicy.from_dict(
+            data.get("success"), configured_agents=len(drivers)
+        )
         return cls(
             source=source,
             id=identifier,
@@ -186,6 +230,7 @@ class EvaluationBenchmark:
             visible_case=visible,
             holdout_cases=holdouts,
             drivers=drivers,
+            success=success,
         )
 
     @property
@@ -709,4 +754,11 @@ def _bounded_integer(
         or not minimum <= value <= maximum
     ):
         raise AgentProtocolError(f"{name} must be an integer in [{minimum}, {maximum}]")
+    return value
+
+
+def _required_bool(data: dict[str, Any], name: str, *, where: str) -> bool:
+    value = data.get(name)
+    if not isinstance(value, bool):
+        raise AgentProtocolError(f"{where}.{name} must be a boolean")
     return value

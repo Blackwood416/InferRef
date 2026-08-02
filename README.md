@@ -139,9 +139,15 @@ wire contract and threat boundary are in
 Evaluation v0.2 runs real coding Agents in independent disposable workspaces. A
 workspace contains only `TASK.md` and the editable `engine.py`; the MCP proxy
 uses `eval://` URIs and keeps reference arrays inside the host evaluator. The
-candidate engine receives input-only `.irtensor` files. Passing the visible case
-is followed by three host-only shape/seed holdouts, so copying one output or
-overfitting one head dimension cannot pass.
+candidate engine receives input-only `.irtensor` files. After the Agent exits,
+the host silently reruns the final `engine.py` against the visible case and three
+holdouts, so a historical PASS from an earlier patch cannot be combined with a
+different final patch.
+
+Here, “blind” means candidate-input blind, oracle-isolated, and hidden from the
+Agent workspace. It does not mean adversarially secret: holdout metadata is in the
+public benchmark, the processes share one OS user, and hashes detect final-state
+changes rather than reads or modify-then-restore behavior.
 
 The manual dual-Agent gate uses fresh Codex and Claude sessions and requires both
 to pass within four engine runs:
@@ -150,6 +156,7 @@ to pass within four engine runs:
 inferref agent evaluate examples/agent_eval/rope_sign/benchmark.json \
   --agents codex,claude \
   --report-dir .scratch/agent-eval/rope-sign \
+  --public-attestation docs/dev/attestations/rope-sign.json \
   --json
 ```
 
@@ -159,12 +166,18 @@ select its concrete model with `--claude-model MODEL`. The evaluator records the
 requested and resolved model but never copies the settings path or contents into
 the report or benchmark manifest.
 
-The host writes bounded CLI output, MCP call audit, patch, integrity checks,
-visible/holdout results, duration, and available usage/cost fields under the
-report directory. Full model event streams remain untracked. Ordinary CI uses a
-deterministic fake Agent to test this evaluator; it does not spend model tokens
-or claim autonomous repair. The machine-readable contract lives in
+The private report contains bounded CLI output. The redacted attestation contains
+commit and evaluator hashes, model/CLI versions, tool order, final patch,
+visible/holdout results, transcript hashes, duration, and available usage/cost,
+but no reasoning, credentials, reference payloads, or absolute local paths. Full
+model event streams remain untracked. Ordinary CI uses a deterministic fake Agent
+to test this evaluator; it does not spend model tokens or claim autonomous repair.
+The machine-readable contract lives in
 [`benchmark.json`](examples/agent_eval/rope_sign/benchmark.json).
+
+This pilot proves protocol usability, not that InferRef diagnostics improve an
+Agent over ordinary tests. That claim requires a controlled full-diagnostics vs
+PASS/FAIL-only vs no-InferRef ablation using the same benchmark and models.
 
 ## Semantic analysis
 

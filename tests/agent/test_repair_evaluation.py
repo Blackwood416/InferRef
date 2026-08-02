@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,7 @@ from inferref.agent.evaluation_host import (
     parse_agent_usage,
 )
 from inferref.agent.evaluation_mcp import create_evaluation_server
+from inferref.agent.protocol import AgentProtocolError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARK_PATH = REPO_ROOT / "examples" / "agent_eval" / "rope_sign" / "benchmark.json"
@@ -104,8 +106,33 @@ def test_v02_contract_and_workspace_hide_host_assets(tmp_path: Path) -> None:
     assert benchmark.max_engine_runs == 4
     assert benchmark.drivers["codex"].model == "gpt-5.6-sol"
     assert benchmark.drivers["claude"].model == "opus"
+    assert benchmark.success.required_agent_passes == 2
+    assert benchmark.success.visible_status == "pass"
+    assert benchmark.success.all_holdouts_pass is True
+    assert benchmark.success.protected_paths_unchanged is True
     assert {path.name for path in workspace.iterdir()} == {"engine.py", "TASK.md"}
     assert "reference" not in " ".join(path.as_posix() for path in workspace.rglob("*"))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("required_agent_passes", 0),
+        ("visible_status", "fail"),
+        ("all_holdouts_pass", "yes"),
+        ("protected_paths_unchanged", None),
+    ],
+)
+def test_success_policy_rejects_malformed_values(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    manifest = json.loads(BENCHMARK_PATH.read_text(encoding="utf-8"))
+    manifest["success"][field] = value
+    path = tmp_path / "benchmark.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(AgentProtocolError):
+        EvaluationBenchmark.load(path)
 
 
 def test_candidate_input_view_never_materializes_reference_payloads(
@@ -225,9 +252,99 @@ def test_fake_dual_agent_evaluation_passes_visible_and_holdouts(tmp_path: Path) 
     assert report["acceptance"]["passed"] == 2
     for agent in report["agents"]:
         assert agent["classification"] == "pass"
-        assert agent["visible"] == {"runs": 2, "passed": True}
+        assert agent["visible"]["runs"] == 2
+        assert agent["visible"]["historical_passed"] is True
+        assert agent["visible"]["final"]["status"] == "pass"
+        assert agent["visible"]["passed"] is True
+        assert agent["final_engine_sha256"]
         assert len(agent["holdouts"]) == 3
         assert all(case["status"] == "pass" for case in agent["holdouts"])
+
+
+def test_final_engine_is_revalidated_after_historical_visible_pass(
+    tmp_path: Path,
+) -> None:
+    benchmark = _benchmark()
+    workspace = prepare_workspace(benchmark, tmp_path / "workspace")
+    initial = workspace_hashes(workspace)
+    audit_path = tmp_path / "audit.jsonl"
+    session = EvaluationSession(benchmark, workspace, tmp_path / "session", audit_path)
+    _exercise_required_tools(session, repair=True)
+
+    engine = workspace / "engine.py"
+    source = engine.read_text(encoding="utf-8")
+    source = source.replace(
+        FIXED,
+        "if value.shape == (1, 2, 4, 8):\n"
+        "        return np.concatenate((second, -first), axis=-1)\n"
+        "    " + FIXED,
+    )
+    engine.write_text(source, encoding="utf-8")
+
+    result = assess_candidate(
+        benchmark,
+        agent="fake",
+        model="fake",
+        workspace=workspace,
+        agent_root=tmp_path / "agent",
+        process=_process(tmp_path),
+        initial_hashes=initial,
+        final_hashes=workspace_hashes(workspace),
+        audit=load_audit(audit_path),
+    )
+
+    assert result["visible"]["historical_passed"] is True
+    assert result["visible"]["final"]["status"] == "mismatch"
+    assert result["visible"]["passed"] is False
+    assert all(case["status"] == "pass" for case in result["holdouts"])
+    assert result["classification"] == "agent_failure"
+
+
+def test_success_policy_controls_required_agent_passes(tmp_path: Path) -> None:
+    manifest = json.loads(BENCHMARK_PATH.read_text(encoding="utf-8"))
+    manifest["success"]["required_agent_passes"] = 1
+    benchmark_path = tmp_path / "benchmark.json"
+    benchmark_path.write_text(json.dumps(manifest), encoding="utf-8")
+    for name in ("engine.py", "TASK.md"):
+        (tmp_path / name).write_bytes((BENCHMARK_PATH.parent / name).read_bytes())
+
+    report = evaluate_benchmark(
+        benchmark_path,
+        agents=("codex",),
+        report_dir=tmp_path / "report",
+        driver=_fake_repair_driver,
+    )
+
+    assert report["status"] == "pass"
+    assert report["acceptance"]["required_passes"] == 1
+    assert report["acceptance"]["policy"] == manifest["success"]
+
+
+def test_public_attestation_omits_private_transcript_and_paths(tmp_path: Path) -> None:
+    public_path = tmp_path / "public" / "attestation.json"
+    report_root = tmp_path / "private-report"
+    report = evaluate_benchmark(
+        BENCHMARK_PATH,
+        agents=("codex", "claude"),
+        report_dir=report_root,
+        driver=_fake_repair_driver,
+        public_attestation=public_path,
+    )
+
+    attestation = json.loads(public_path.read_text(encoding="utf-8"))
+    assert attestation == json.loads(
+        (report_root / "attestation.json").read_text(encoding="utf-8")
+    )
+    assert attestation["status"] == report["status"] == "pass"
+    assert attestation["benchmark"]["success_policy"] == _benchmark().success.to_dict()
+    assert all(agent["engine_patch"] for agent in attestation["agents"])
+    assert all(agent["final_engine_sha256"] for agent in attestation["agents"])
+    assert all(agent["raw_transcript_sha256"] for agent in attestation["agents"])
+    rendered = json.dumps(attestation)
+    assert str(tmp_path) not in rendered
+    assert '"prompt"' not in rendered
+    assert '"stdout"' not in rendered
+    assert "thinking" not in rendered
 
 
 def test_visible_only_patch_is_classified_as_overfit(tmp_path: Path) -> None:
@@ -263,6 +380,23 @@ def test_visible_only_patch_is_classified_as_overfit(tmp_path: Path) -> None:
     assert result["visible"]["passed"] is True
     assert result["classification"] == "overfit_failure"
     assert any(case["status"] != "pass" for case in result["holdouts"])
+
+    relaxed = replace(
+        benchmark,
+        success=replace(benchmark.success, all_holdouts_pass=False),
+    )
+    relaxed_result = assess_candidate(
+        relaxed,
+        agent="fake",
+        model="fake",
+        workspace=workspace,
+        agent_root=tmp_path / "relaxed-agent",
+        process=_process(tmp_path),
+        initial_hashes=initial,
+        final_hashes=workspace_hashes(workspace),
+        audit=load_audit(tmp_path / "audit.jsonl"),
+    )
+    assert relaxed_result["classification"] == "pass"
 
 
 @pytest.mark.parametrize(
