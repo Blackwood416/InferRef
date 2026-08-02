@@ -134,30 +134,36 @@ Adapter JSON is executable configuration: InferRef uses an argv array and
 wire contract and threat boundary are in
 [InferRef Agent Protocol v0.1](docs/spec/InferRef_Agent_Protocol_v0.1.md).
 
-### Agent repair protocol evaluation
+### Blind Agent repair evaluation
 
-The checked-in RoPE benchmark creates a disposable Agent-visible workspace with
-a numerically incorrect engine, trusted adapter, task, and standalone testcase.
-The trusted reference generator remains outside that workspace, so the candidate
-cannot solve the task by reading the implementation that produced the answer:
+Evaluation v0.2 runs real coding Agents in independent disposable workspaces. A
+workspace contains only `TASK.md` and the editable `engine.py`; the MCP proxy
+uses `eval://` URIs and keeps reference arrays inside the host evaluator. The
+candidate engine receives input-only `.irtensor` files. Passing the visible case
+is followed by three host-only shape/seed holdouts, so copying one output or
+overfitting one head dimension cannot pass.
+
+The manual dual-Agent gate uses fresh Codex and Claude sessions and requires both
+to pass within four engine runs:
 
 ```bash
-python examples/agent_eval/rope_sign/prepare.py \
-  --workspace .scratch/agent-eval-rope
-
-inferref agent context .scratch/agent-eval-rope/testcase --json
-inferref agent run .scratch/agent-eval-rope/testcase \
-  --adapter .scratch/agent-eval-rope/adapter.json \
-  --runs-dir .scratch/agent-eval-rope-runs --json
+inferref agent evaluate examples/agent_eval/rope_sign/benchmark.json \
+  --agents codex,claude \
+  --report-dir .scratch/agent-eval/rope-sign \
+  --json
 ```
 
-Give the Agent only `.scratch/agent-eval-rope/` and an MCP server whose read/write
-roots are limited to that workspace and a separate run directory. The protocol
-harness permits edits only to `engine.py` and at most four runs. The baseline must
-report a structured numerical `fail`; success requires `inferref_run_engine` to
-return `pass` without changing the adapter, task, or testcase. This automated
-harness applies a known oracle edit; it validates the repair protocol, not an
-Agent's autonomous repair ability. The machine-readable contract lives in
+When Claude Code must use a local provider configuration, pass it only at run
+time with `--claude-settings /path/to/settings.json`. A custom provider can also
+select its concrete model with `--claude-model MODEL`. The evaluator records the
+requested and resolved model but never copies the settings path or contents into
+the report or benchmark manifest.
+
+The host writes bounded CLI output, MCP call audit, patch, integrity checks,
+visible/holdout results, duration, and available usage/cost fields under the
+report directory. Full model event streams remain untracked. Ordinary CI uses a
+deterministic fake Agent to test this evaluator; it does not spend model tokens
+or claim autonomous repair. The machine-readable contract lives in
 [`benchmark.json`](examples/agent_eval/rope_sign/benchmark.json).
 
 ## Semantic analysis

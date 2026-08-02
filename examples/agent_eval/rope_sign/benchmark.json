@@ -1,24 +1,14 @@
 {
   "format": "inferref-agent-evaluation",
-  "format_version": "0.1",
+  "format_version": "0.2",
   "id": "rope-half-rotation-sign",
   "title": "Repair a RoPE half-rotation kernel",
   "task": "TASK.md",
   "workspace_template": [
     "engine.py",
-    "adapter.json",
     "TASK.md"
   ],
-  "setup": {
-    "command": [
-      "python",
-      "prepare.py",
-      "--output",
-      "{workspace}/testcase"
-    ],
-    "trusted": true
-  },
-  "agent": {
+  "candidate": {
     "editable_paths": [
       "engine.py"
     ],
@@ -27,15 +17,45 @@
       "inferref_context",
       "inferref_run_engine"
     ],
-    "max_iterations": 4
+    "max_engine_runs": 4,
+    "max_wall_seconds": 900
+  },
+  "cases": {
+    "visible": {
+      "id": "visible",
+      "seed": 20260802,
+      "shape": [1, 2, 4, 8]
+    },
+    "holdouts": [
+      {
+        "id": "holdout-dim4",
+        "seed": 20260811,
+        "shape": [1, 2, 3, 4]
+      },
+      {
+        "id": "holdout-dim12",
+        "seed": 20260817,
+        "shape": [1, 1, 5, 12]
+      },
+      {
+        "id": "holdout-batch-heads",
+        "seed": 20260823,
+        "shape": [2, 3, 5, 8]
+      }
+    ]
+  },
+  "drivers": {
+    "codex": {
+      "model": "gpt-5.6-sol"
+    },
+    "claude": {
+      "model": "opus"
+    }
   },
   "success": {
-    "operation": "run_engine",
-    "status": "pass",
+    "required_agent_passes": 2,
+    "visible_status": "pass",
+    "all_holdouts_pass": true,
     "protected_paths_unchanged": true
-  },
-  "expected_baseline": {
-    "status": "fail",
-    "first_failure": "q_embed"
   }
 }

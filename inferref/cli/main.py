@@ -10,7 +10,7 @@
     ├── validate
     ├── testcase {extract, dedup}
     ├── region   {list, create, detect, delete}
-    ├── agent    {capabilities, context, extract, compare, run}
+    ├── agent    {capabilities, context, extract, compare, run, evaluate}
     └── export
 
 Built on :mod:`argparse` so that the reader/comparator side installs with numpy
@@ -26,8 +26,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from inferref.ir.package import TracePackage
 from inferref.ir.version import INFERREF_VERSION
@@ -556,6 +557,25 @@ def cmd_agent_run(args: argparse.Namespace) -> int:
     return _agent_emit(response, args)
 
 
+def cmd_agent_evaluate(args: argparse.Namespace) -> int:
+    from inferref.agent.evaluation_host import evaluate_benchmark
+
+    agents = tuple(item.strip() for item in args.agents.split(",") if item.strip())
+    report = evaluate_benchmark(
+        args.benchmark,
+        agents=agents,
+        report_dir=args.report_dir,
+        claude_settings=args.claude_settings,
+        claude_model=args.claude_model,
+    )
+    summary = (
+        f"agent evaluation: {report['status']} "
+        f"({report['acceptance']['passed']}/{report['acceptance']['required_passes']})"
+    )
+    _emit(report, summary, args.json)
+    return EXIT_OK if report["status"] == "pass" else EXIT_FAIL
+
+
 # -- export ----------------------------------------------------------------
 
 
@@ -861,6 +881,32 @@ def build_parser() -> argparse.ArgumentParser:
     _add_agent_compare_options(q)
     _add_json(q)
     q.set_defaults(func=cmd_agent_run)
+
+    q = asub.add_parser(
+        "evaluate",
+        help="run a manual blind repair benchmark with external coding Agents",
+    )
+    q.add_argument("benchmark", help="InferRef Agent evaluation v0.2 manifest")
+    q.add_argument(
+        "--agents",
+        default="codex,claude",
+        help="comma-separated configured Agent drivers (default: codex,claude)",
+    )
+    q.add_argument(
+        "--report-dir",
+        required=True,
+        help="fresh host-side report directory",
+    )
+    q.add_argument(
+        "--claude-settings",
+        help="local Claude Code settings override (path and contents are not reported)",
+    )
+    q.add_argument(
+        "--claude-model",
+        help="Claude Code model override, useful with a custom provider settings file",
+    )
+    _add_json(q)
+    q.set_defaults(func=cmd_agent_evaluate)
 
     # export
     p = sub.add_parser("export", help="export a trace as a single JSON document")

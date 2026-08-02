@@ -202,45 +202,48 @@ The first 0.3 vertical slice is complete when all of the following hold:
 5. Repeated runs cannot consume stale output from an earlier invocation.
 6. CI covers Core plus MCP without installing PyTorch.
 
-## 8. Agent evaluation fixture v0.1
+## 8. Agent evaluation fixture v0.2
 
-An Agent repair benchmark may declare this host-side record:
+Evaluation is a host-side layer over Agent protocol v0.1. It deliberately does
+not add production MCP operations. A blind repair benchmark declares:
 
 ```json
 {
   "format": "inferref-agent-evaluation",
-  "format_version": "0.1",
+  "format_version": "0.2",
   "id": "rope-half-rotation-sign",
   "task": "TASK.md",
-  "workspace_template": ["engine.py", "adapter.json", "TASK.md"],
-  "setup": {
-    "command": ["python", "prepare.py", "--output", "{workspace}/testcase"],
-    "trusted": true
-  },
-  "agent": {
+  "workspace_template": ["engine.py", "TASK.md"],
+  "candidate": {
     "editable_paths": ["engine.py"],
-    "required_tools": ["inferref_context", "inferref_run_engine"],
-    "max_iterations": 4
+    "required_tools": [
+      "inferref_capabilities",
+      "inferref_context",
+      "inferref_run_engine"
+    ],
+    "max_engine_runs": 4,
+    "max_wall_seconds": 900
   },
-  "success": {
-    "operation": "run_engine",
-    "status": "pass",
-    "protected_paths_unchanged": true
+  "cases": {
+    "visible": {"id": "visible", "seed": 20260802, "shape": [1, 2, 4, 8]},
+    "holdouts": [
+      {"id": "dim4", "seed": 20260811, "shape": [1, 2, 3, 4]}
+    ]
+  },
+  "drivers": {
+    "codex": {"model": "gpt-5.6-sol"},
+    "claude": {"model": "opus"}
   }
 }
 ```
 
-This record is consumed by an evaluation host, not by the candidate Agent. Setup
-commands are trusted executable configuration and run before Agent access. A host
-should copy only `workspace_template` plus generated artifacts into a disposable
-workspace; the reference generator, evaluator state, and any oracle repair remain
-outside it.
+The candidate sees opaque `eval://` identifiers through tools with the ordinary
+InferRef MCP names and response envelope. Reference arrays are not materialized;
+only input payloads are staged for the candidate engine. The MCP proxy records
+required tool use and rejects calls beyond `max_engine_runs`. After visible PASS,
+the host runs every holdout without further Agent access.
 
-The host must snapshot every path outside `editable_paths`, enforce the iteration
-budget, and accept success only when the declared InferRef operation returns the
-declared status and protected paths are unchanged. A benchmark should also declare
-its expected baseline so CI proves that the initial candidate really fails; an
-always-passing benchmark evaluates nothing.
-
-Evaluation format v0.1 does not claim process sandboxing. Filesystem isolation and
-write enforcement remain responsibilities of the host running the coding Agent.
+The evaluator snapshots the workspace, allows changes only to `editable_paths`,
+and distinguishes infrastructure, Agent, integrity, and overfit failures. A dual
+Agent pilot passes only when both configured drivers pass visible and hidden
+cases. This is oracle isolation and integrity checking, not a general OS sandbox.
