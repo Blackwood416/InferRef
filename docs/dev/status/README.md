@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-08-02 | [Agent integration vertical slice](2026-08-02-agent-integration-v0.3.md) | Agent envelope; trusted adapter runner; CLI + MCP v2; 325 tests |
 | 2026-07-30 | [Testcase and effect hardening](2026-07-30-testcase-effect-hardening.md) | Metadata/content split; self-contained effects; codec agreement; 314 tests |
 | 2026-07-30 | [Foundation reviewer hardening](2026-07-30-foundation-review-hardening.md) | Empty-storage identity; storage rebinding; mutation validation; opaque op ordering; 292 tests |
 | 2026-07-30 | [Qwen3.5 hybrid-cache validation](2026-07-30-qwen35-hybrid-cache-validation.md) | Official 0.8B weights; DeltaNet state + full-attention KV cache; 284 tests |

@@ -92,6 +92,46 @@ First mismatching element:
 The producer operator, module path, region and source line are recorded into `testcase.json` at
 extraction time, so the report stays actionable even though the engine never saw the model.
 
+## Agent integration
+
+InferRef 0.3 exposes one structured workflow through Python, CLI JSON, and an
+optional local MCP stdio server. The CLI can discover its contract and execute a
+trusted engine adapter without requiring an Agent to parse human-readable output:
+
+```bash
+inferref agent capabilities --json
+inferref agent context trace/ --json
+inferref agent extract trace/ --region "RoPE@layers.0.self_attn" \
+  -o repro/rope --input-names cos,sin,query,key \
+  --output-names q_embed,k_embed --json
+inferref agent run repro/rope \
+  --adapter examples/engine_sim/rope_numpy.adapter.json \
+  --runs-dir inferref-runs --json
+```
+
+Every response has a versioned envelope with `status`, `data`, `diagnostics`, and
+`next_actions`. A numerical mismatch is `fail`; an adapter process or output error
+is `error`, so an Agent cannot confuse a kernel bug with a broken test invocation.
+Each run receives a unique output directory and writes an `inferref-run.json`
+execution record.
+
+Install and start the MCP transport with:
+
+```bash
+pip install -e ".[agent]"
+inferref-mcp
+```
+
+For a local MCP host, configure the `inferref-mcp` executable from this virtual
+environment as a stdio server. The tools are `inferref_capabilities`,
+`inferref_context`, `inferref_extract_testcase`, `inferref_compare_outputs`, and
+`inferref_run_engine`.
+
+Adapter JSON is executable configuration: InferRef uses an argv array and
+`shell=False`, but the configured process must still be trusted. The complete
+wire contract and threat boundary are in
+[InferRef Agent Protocol v0.1](docs/spec/InferRef_Agent_Protocol_v0.1.md).
+
 ## Semantic analysis
 
 Semantic labels are annotation over an authoritative physical trace, never a replacement for it
@@ -193,6 +233,8 @@ inferref trace run_model.py --scope model.layers.0 -o trace/ -- --batch 4
 | `inferref testcase dedup` | Group executions into unique signatures (SPEC §24) |
 | `inferref region detect` | Find semantic regions automatically (SPEC §17) |
 | `inferref region create/list/delete` | Reference regions (SPEC §37) |
+| `inferref agent capabilities/context` | Versioned discovery and artifact context |
+| `inferref agent extract/compare/run` | Structured Agent and engine-adapter loop |
 | `inferref export` | Whole trace as one JSON document |
 
 Every command supports `--json` for agent and CI consumption (SPEC §42). `compare` exits non-zero
@@ -226,6 +268,7 @@ cpp/build/inferref_compare ref.irtensor actual.irtensor
 | `inferref/region/` | stdlib | Region boundary derivation (IR §34) |
 | `inferref/semantic/` | stdlib | Semantic detectors (SPEC §17, §56) |
 | `inferref/inspect/` | stdlib | Text views and coverage analysis |
+| `inferref/agent/` | stdlib + optional MCP | Agent envelope, engine adapter, MCP transport |
 | `inferref/cli/` | stdlib | argparse CLI; imports torch only for `trace` |
 | `inferref/frontend/pytorch/` | torch | Dispatcher-level runtime tracer |
 | `cpp/include/inferref/` | — | Header-only C++ reader + comparator |

@@ -10,6 +10,7 @@
     ├── validate
     ├── testcase {extract, dedup}
     ├── region   {list, create, detect, delete}
+    ├── agent    {capabilities, context, extract, compare, run}
     └── export
 
 Built on :mod:`argparse` so that the reader/comparator side installs with numpy
@@ -474,6 +475,87 @@ def cmd_region_detect(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+# -- agent -----------------------------------------------------------------
+
+
+def _agent_exit(status: str) -> int:
+    if status in {"ok", "pass"}:
+        return EXIT_OK
+    if status == "fail":
+        return EXIT_FAIL
+    return EXIT_USAGE
+
+
+def _agent_emit(response: Any, args: argparse.Namespace) -> int:
+    payload = response.to_dict()
+    text = f"{response.operation}: {response.status}"
+    if response.diagnostics:
+        text += "\n" + "\n".join(
+            f"  {item.get('severity', 'info')}: {item.get('message', '')}"
+            for item in response.diagnostics
+        )
+    _emit(payload, text, args.json)
+    return _agent_exit(response.status)
+
+
+def cmd_agent_capabilities(args: argparse.Namespace) -> int:
+    from inferref.agent import capabilities
+
+    return _agent_emit(capabilities(), args)
+
+
+def cmd_agent_context(args: argparse.Namespace) -> int:
+    from inferref.agent import context
+
+    return _agent_emit(context(args.artifact), args)
+
+
+def cmd_agent_extract(args: argparse.Namespace) -> int:
+    from inferref.agent import extract_testcase
+
+    response = extract_testcase(
+        args.trace,
+        args.output,
+        region=args.region,
+        op_id=args.op,
+        name=args.name,
+        input_names=args.input_names.split(",") if args.input_names else None,
+        output_names=args.output_names.split(",") if args.output_names else None,
+    )
+    return _agent_emit(response, args)
+
+
+def cmd_agent_compare(args: argparse.Namespace) -> int:
+    from inferref.agent import compare_outputs
+
+    response = compare_outputs(
+        args.testcase,
+        args.engine_output,
+        atol=args.atol,
+        rtol=args.rtol,
+        ignore_stride=args.ignore_stride,
+        strict_layout=args.strict_layout,
+        first_failure=args.first_failure,
+    )
+    return _agent_emit(response, args)
+
+
+def cmd_agent_run(args: argparse.Namespace) -> int:
+    from inferref.agent import run_engine
+
+    response = run_engine(
+        args.testcase,
+        args.adapter,
+        args.runs_dir,
+        atol=args.atol,
+        rtol=args.rtol,
+        ignore_stride=args.ignore_stride,
+        strict_layout=args.strict_layout,
+        first_failure=args.first_failure,
+    )
+    return _agent_emit(response, args)
+
+
 # -- export ----------------------------------------------------------------
 
 
@@ -730,6 +812,56 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json(q)
     q.set_defaults(func=cmd_region_detect)
 
+    # agent
+    p = sub.add_parser(
+        "agent",
+        help="stable JSON workflow for coding agents and MCP hosts",
+    )
+    asub = p.add_subparsers(dest="agent_command", metavar="<subcommand>")
+
+    q = asub.add_parser("capabilities", help="discover the Agent protocol and operations")
+    _add_json(q)
+    q.set_defaults(func=cmd_agent_capabilities)
+
+    q = asub.add_parser("context", help="summarise a trace or testcase for an agent")
+    q.add_argument("artifact", help="trace or testcase directory")
+    _add_json(q)
+    q.set_defaults(func=cmd_agent_context)
+
+    q = asub.add_parser("extract", help="extract a portable operator/region testcase")
+    q.add_argument("trace", help="trace package directory")
+    selection = q.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--op", type=int, help="operator id to extract")
+    selection.add_argument("--region", help="region name or id to extract")
+    q.add_argument("-o", "--output", required=True, help="output testcase directory")
+    q.add_argument("--name", help="testcase name")
+    q.add_argument("--input-names", help="comma-separated boundary input names")
+    q.add_argument("--output-names", help="comma-separated boundary output names")
+    _add_json(q)
+    q.set_defaults(func=cmd_agent_extract)
+
+    q = asub.add_parser("compare", help="compare engine outputs with a testcase")
+    q.add_argument("testcase", help="standalone testcase directory")
+    q.add_argument("engine_output", help="engine output directory")
+    _add_agent_compare_options(q)
+    _add_json(q)
+    q.set_defaults(func=cmd_agent_compare)
+
+    q = asub.add_parser(
+        "run",
+        help="execute a trusted engine adapter and compare its output",
+    )
+    q.add_argument("testcase", help="standalone testcase directory")
+    q.add_argument("--adapter", required=True, help="trusted adapter JSON file")
+    q.add_argument(
+        "--runs-dir",
+        default="inferref-runs",
+        help="parent directory for fresh per-run outputs",
+    )
+    _add_agent_compare_options(q)
+    _add_json(q)
+    q.set_defaults(func=cmd_agent_run)
+
     # export
     p = sub.add_parser("export", help="export a trace as a single JSON document")
     p.add_argument("trace", help="trace package directory")
@@ -737,6 +869,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_export)
 
     return parser
+
+
+def _add_agent_compare_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--atol", type=float, help="absolute tolerance override")
+    parser.add_argument("--rtol", type=float, help="relative tolerance override")
+    parser.add_argument(
+        "--ignore-stride",
+        action="store_true",
+        help="do not report stride/storage-offset differences",
+    )
+    parser.add_argument(
+        "--strict-layout",
+        action="store_true",
+        help="treat stride/storage-offset differences as failures",
+    )
+    parser.add_argument(
+        "--all-failures",
+        dest="first_failure",
+        action="store_false",
+        help="compare all outputs instead of stopping at the first failure",
+    )
+    parser.set_defaults(first_failure=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

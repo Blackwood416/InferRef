@@ -47,6 +47,34 @@ jobs:
       - name: Run core suite
         run: python -m pytest tests/core -q
 
+  # MCP is an optional transport. This job proves that installing it does not
+  # pull PyTorch into the framework-neutral Agent/IR/codec path.
+  agent:
+    name: Agent + MCP (no PyTorch) · ubuntu · py3.12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install core and Agent transport
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,agent]"
+
+      - name: Assert PyTorch really is absent
+        shell: python
+        run: |
+          import importlib.util, sys
+          if importlib.util.find_spec("torch") is not None:
+              sys.exit("torch is installed; Agent integration must remain framework-neutral")
+          print("confirmed: torch is not installed")
+
+      - name: Run core and Agent suites
+        run: python -m pytest tests/core tests/agent -q
+
   # The frontend is allowed to break against a new PyTorch; the Trace IR is not.
   # That is why this matrix is separate and why `nightly` does not gate merges.
   frontend:
