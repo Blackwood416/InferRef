@@ -78,6 +78,9 @@ visible-only overfit rejection, oracle isolation, run-budget enforcement, requir
 tool order, protected-file and staged-input tampering, timeout/malformed output,
 and Codex/Claude JSON event parsing.
 
+GitHub Actions: [CI run 30751247531](https://github.com/Blackwood416/InferRef/actions/runs/30751247531),
+19/19 jobs passed on commit `6f7476d`.
+
 ## Known gaps
 
 - The real 2/2 gate remains open until a fresh Claude Code provider request reaches
