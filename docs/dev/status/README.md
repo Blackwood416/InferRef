@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-08-02 | [Real dual-Agent repair pilot PASS](2026-08-02-real-agent-pilot-pass.md) | Codex + DeepSeek/Claude Code 2/2; visible 2/2; hidden 6/6; no integrity violations |
 | 2026-08-02 | [Real Agent repair pilot v0.2](2026-08-02-real-agent-pilot-v02.md) | Blind harness complete; Codex PASS; Claude provider limited; gate 1/2; CI 19/19 |
 | 2026-08-02 | [Adversarial input and resource hardening](2026-08-02-adversarial-input-hardening.md) | Total testcase validation; bounded artifact traversal; Windows fixed HF; 374 tests; 19/19 Actions |
 | 2026-08-02 | [Agent boundary CI green](2026-08-02-agent-boundary-ci-green.md) | 18/18 Actions jobs; Windows/Linux path/process controls; HF 4.40 + Qwen 5.14/latest |
