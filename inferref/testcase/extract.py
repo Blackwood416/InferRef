@@ -21,7 +21,7 @@ import json
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 from inferref.ir.operator import OperatorRecord
 from inferref.ir.package import TracePackage
@@ -489,13 +489,18 @@ def _write_testcase(
         for alias in op.effects.aliases:
             referenced_value_ids.add(alias.input_value_id)
             referenced_value_ids.add(alias.output_value_id)
+    selected_op_ids = {op.id for op in operators}
     manifest_values = [
         {
             "id": value.id,
             **_tensor_metadata(value),
             "role": value.role,
             "qualified_name": value.qualified_name,
-            "producer": value.producer,
+            # A standalone testcase cannot reference a producer outside its
+            # projected node set. Boundary provenance remains on inputs/outputs.
+            "producer": (
+                value.producer if value.producer in selected_op_ids else None
+            ),
         }
         for value in graph.values
         if value.id in referenced_value_ids

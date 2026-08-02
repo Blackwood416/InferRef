@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -37,20 +38,39 @@ codec.write_array(output / "out.irtensor", np.asarray(result, dtype=np.float32))
 
 def _make_testcase(root: Path) -> Path:
     values = np.arange(6, dtype=np.float32).reshape(2, 3)
-    codec.write_array(root / "inputs" / "x.irtensor", values)
-    codec.write_array(root / "reference" / "out.irtensor", values + 1.0)
+    input_path = codec.write_array(root / "inputs" / "x.irtensor", values)
+    output_path = codec.write_array(
+        root / "reference" / "out.irtensor", values + 1.0
+    )
+    input_metadata = codec.read(input_path).to_metadata()
+    output_metadata = codec.read(output_path).to_metadata()
     manifest = {
         "format": "inferref-testcase",
         "format_version": "0.1",
         "name": "agent-add-one",
         "reproducible": True,
         "origin": {"kind": "test"},
-        "inputs": [{"name": "x", "value_id": 1, "payload": "inputs/x.irtensor"}],
+        "inputs": [
+            {
+                "name": "x",
+                "value_id": 1,
+                "payload": "inputs/x.irtensor",
+                **input_metadata,
+            }
+        ],
         "outputs": [
-            {"name": "out", "value_id": 2, "payload": "reference/out.irtensor"}
+            {
+                "name": "out",
+                "value_id": 2,
+                "payload": "reference/out.irtensor",
+                **output_metadata,
+            }
         ],
         "nodes": [],
-        "values": [],
+        "values": [
+            {"id": 1, **input_metadata},
+            {"id": 2, **output_metadata},
+        ],
     }
     (root / "testcase.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
@@ -62,13 +82,18 @@ def _make_adapter(
     *,
     mode: str | None = None,
     command: list[str] | None = None,
+    timeout_seconds: float = 30,
+    max_output_chars: int = 65_536,
+    max_artifact_bytes: int = 1_073_741_824,
 ) -> Path:
     payload = {
         "format": ENGINE_ADAPTER_FORMAT,
         "format_version": ENGINE_ADAPTER_VERSION,
         "name": "test-engine",
         "command": command or ["{python}", str(script), "{testcase}", "{output}"],
-        "timeout_seconds": 30,
+        "timeout_seconds": timeout_seconds,
+        "max_output_chars": max_output_chars,
+        "max_artifact_bytes": max_artifact_bytes,
     }
     if mode is not None:
         payload["environment"] = {"INFERREF_ENGINE_MODE": mode}
@@ -139,6 +164,145 @@ def test_engine_process_error_is_structured_and_persisted(tmp_path: Path) -> Non
     assert response.data["execution"]["exit_code"] == 17
     assert "deliberate adapter failure" in response.data["execution"]["stderr"]
     assert Path(response.data["output"], "inferref-run.json").is_file()
+
+
+def test_stdout_flood_hits_hard_limit_without_unbounded_capture(tmp_path: Path) -> None:
+    testcase = _make_testcase(tmp_path / "testcase")
+    script = tmp_path / "flood.py"
+    script.write_text(
+        "import os\nwhile True:\n    os.write(1, b'x' * 65536)\n",
+        encoding="utf-8",
+    )
+    adapter = _make_adapter(
+        tmp_path,
+        script,
+        command=["{python}", str(script), "{testcase}", "{output}"],
+        max_output_chars=4096,
+    )
+
+    response = run_engine(testcase, adapter, tmp_path / "runs")
+
+    assert response.status == "error"
+    assert response.data["status"] == "output_limit"
+    execution = response.data["execution"]
+    assert execution["stdout_bytes"] > 4096
+    assert len(execution["stdout"].encode()) < 4300
+    assert (
+        Path(response.data["output"], execution["stdout_path"]).stat().st_size
+        == 4096
+    )
+
+
+def test_timeout_terminates_descendant_process(tmp_path: Path) -> None:
+    testcase = _make_testcase(tmp_path / "testcase")
+    marker = tmp_path / "descendant-survived"
+    script = tmp_path / "spawn_child.py"
+    script.write_text(
+        """import subprocess, sys, time
+marker = sys.argv[3]
+code = ("import pathlib,sys,time; time.sleep(1.5); "
+        "pathlib.Path(sys.argv[1]).write_text('alive')")
+subprocess.Popen([sys.executable, "-c", code, marker],
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+time.sleep(60)
+""",
+        encoding="utf-8",
+    )
+    adapter = _make_adapter(
+        tmp_path,
+        script,
+        command=[
+            "{python}",
+            str(script),
+            "{testcase}",
+            "{output}",
+            str(marker),
+        ],
+        timeout_seconds=0.25,
+    )
+
+    response = run_engine(testcase, adapter, tmp_path / "runs")
+    deadline = time.monotonic() + 2.5
+    while time.monotonic() < deadline and not marker.exists():
+        time.sleep(0.05)
+
+    assert response.status == "error"
+    assert response.data["status"] == "timeout"
+    assert not marker.exists()
+
+
+def test_normal_exit_also_cleans_up_descendants(tmp_path: Path) -> None:
+    testcase = _make_testcase(tmp_path / "testcase")
+    marker = tmp_path / "detached-descendant-survived"
+    script = tmp_path / "exit_with_child.py"
+    script.write_text(
+        """import json, pathlib, subprocess, sys
+import numpy as np
+from inferref.tensor import codec
+marker = sys.argv[3]
+code = ("import pathlib,sys,time; time.sleep(1.5); "
+        "pathlib.Path(sys.argv[1]).write_text('alive')")
+subprocess.Popen([sys.executable, "-c", code, marker],
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+testcase = pathlib.Path(sys.argv[1])
+output = pathlib.Path(sys.argv[2])
+manifest = json.loads((testcase / "testcase.json").read_text())
+value = codec.read(testcase / manifest["inputs"][0]["payload"]).as_comparable()
+codec.write_array(output / "out.irtensor", np.asarray(value + 1, dtype=np.float32))
+""",
+        encoding="utf-8",
+    )
+    adapter = _make_adapter(
+        tmp_path,
+        script,
+        command=[
+            "{python}",
+            str(script),
+            "{testcase}",
+            "{output}",
+            str(marker),
+        ],
+    )
+
+    response = run_engine(testcase, adapter, tmp_path / "runs")
+    deadline = time.monotonic() + 2.5
+    while time.monotonic() < deadline and not marker.exists():
+        time.sleep(0.05)
+
+    assert response.status == "pass"
+    assert not marker.exists()
+    expected_strategy = (
+        "windows_job_object" if sys.platform == "win32" else "posix_process_group"
+    )
+    assert response.data["execution"]["process_tree_strategy"] == expected_strategy
+
+
+def test_artifact_growth_is_detected_during_execution(tmp_path: Path) -> None:
+    testcase = _make_testcase(tmp_path / "testcase")
+    script = tmp_path / "large_artifact.py"
+    script.write_text(
+        """import pathlib, sys, time
+output = pathlib.Path(sys.argv[2])
+with (output / "huge.bin").open("wb") as stream:
+    while True:
+        stream.write(b'x' * 65536)
+        stream.flush()
+        time.sleep(0.005)
+""",
+        encoding="utf-8",
+    )
+    adapter = _make_adapter(
+        tmp_path,
+        script,
+        command=["{python}", str(script), "{testcase}", "{output}"],
+        max_artifact_bytes=131_072,
+    )
+
+    response = run_engine(testcase, adapter, tmp_path / "runs")
+
+    assert response.status == "error"
+    assert response.data["status"] == "artifact_limit"
+    assert response.data["execution"]["artifact_bytes"] > 131_072
 
 
 def test_invalid_adapter_command_is_rejected_without_running(tmp_path: Path) -> None:

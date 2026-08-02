@@ -19,14 +19,16 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from inferref.compare.layout import LayoutDiff, diff_layout
 from inferref.compare.metrics import Metrics, compute_metrics
 from inferref.compare.tolerance import TolerancePolicy
 from inferref.ir.package import TracePackage
+from inferref.ir.paths import resolve_contained_path
 from inferref.tensor import codec
 from inferref.tensor.codec import TensorView
+from inferref.testcase.validate import require_valid_testcase
 
 STATUS_PASS = "pass"
 STATUS_FAIL = "fail"
@@ -215,30 +217,28 @@ def compare_tensors(
 # -- testcase vs engine output --------------------------------------------
 
 
-def _load_testcase_manifest(path: Path) -> dict[str, Any]:
-    manifest = path / "testcase.json"
-    if not manifest.is_file():
-        raise FileNotFoundError(f"missing testcase.json in {path}")
-    return json.loads(manifest.read_text(encoding="utf-8"))
-
-
 def _engine_candidates(engine_dir: Path, name: str, value_id: Any) -> list[Path]:
     """Filenames an engine might plausibly have written for one output.
 
     Supports the SPEC §22 ``tensor_<value_id>.irtensor`` convention as well as
     name-based files, so an engine can emit whichever is more natural.
     """
-    candidates = [
-        engine_dir / f"{name}.irtensor",
-        engine_dir / "outputs" / f"{name}.irtensor",
+    relatives = [
+        f"{name}.irtensor",
+        f"outputs/{name}.irtensor",
     ]
     if value_id is not None:
-        candidates += [
-            engine_dir / f"tensor_{value_id}.irtensor",
-            engine_dir / f"v{int(value_id):08d}.irtensor",
-            engine_dir / "outputs" / f"tensor_{value_id}.irtensor",
+        relatives += [
+            f"tensor_{value_id}.irtensor",
+            f"v{int(value_id):08d}.irtensor",
+            f"outputs/tensor_{value_id}.irtensor",
         ]
-    return candidates
+    return [
+        resolve_contained_path(
+            engine_dir, relative, kind=f"engine output {name!r} candidate path"
+        )
+        for relative in relatives
+    ]
 
 
 def compare_testcase(
@@ -255,18 +255,37 @@ def compare_testcase(
     engine_dir = Path(engine_dir)
     policy = policy or TolerancePolicy()
 
-    manifest = _load_testcase_manifest(testcase_dir)
+    validation = require_valid_testcase(testcase_dir)
+    manifest = validation.manifest
     report = ComparisonReport(
         reference=str(testcase_dir), actual=str(engine_dir), tolerance=policy.to_dict()
     )
 
     # An engine may declare its outputs explicitly; otherwise we probe filenames.
-    engine_manifest_path = engine_dir / "manifest.json"
+    engine_manifest_path = resolve_contained_path(
+        engine_dir, "manifest.json", kind="engine output manifest path"
+    )
     engine_map: dict[str, str] = {}
     if engine_manifest_path.is_file():
         engine_manifest = json.loads(engine_manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(engine_manifest, dict):
+            raise ValueError("engine output manifest root must be a JSON object")
+        if not isinstance(engine_manifest.get("outputs", []), list):
+            raise ValueError("engine output manifest outputs must be an array")
         for entry in engine_manifest.get("outputs", ()):
+            if not isinstance(entry, dict):
+                raise ValueError("engine output manifest entries must be objects")
             if "name" in entry and "payload" in entry:
+                if not isinstance(entry["name"], str) or not isinstance(
+                    entry["payload"], str
+                ):
+                    raise ValueError(
+                        "engine output manifest name and payload must be strings"
+                    )
+                if entry["name"] in engine_map:
+                    raise ValueError(
+                        f"duplicate engine output name {entry['name']!r}"
+                    )
                 engine_map[entry["name"]] = entry["payload"]
 
     for output in manifest.get("outputs", ()):
@@ -290,11 +309,19 @@ def compare_testcase(
                 report.stopped_early = True
                 break
             continue
-        reference_path = testcase_dir / reference_payload
+        reference_path = resolve_contained_path(
+            testcase_dir,
+            reference_payload,
+            kind=f"testcase output {name!r} payload path",
+        )
 
         actual_path: Path | None = None
         if name in engine_map:
-            actual_path = engine_dir / engine_map[name]
+            actual_path = resolve_contained_path(
+                engine_dir,
+                engine_map[name],
+                kind=f"engine output {name!r} payload path",
+            )
         else:
             for candidate in _engine_candidates(engine_dir, name, value_id):
                 if candidate.is_file():

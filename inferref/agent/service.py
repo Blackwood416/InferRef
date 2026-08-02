@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -29,6 +28,7 @@ from inferref.ir.version import (
     TESTCASE_FORMAT_VERSION,
 )
 from inferref.testcase.extract import ExtractionError, extract_operator, extract_region
+from inferref.testcase.validate import validate_testcase
 
 
 def capabilities() -> AgentResponse:
@@ -99,7 +99,7 @@ def context(path: str | Path) -> AgentResponse:
             return _trace_context(root)
         testcase_path = root / "testcase.json"
         if testcase_path.is_file():
-            return _testcase_context(root, testcase_path)
+            return _testcase_context(root)
         return AgentResponse.error(
             operation,
             f"{root} is neither a trace package nor an InferRef testcase",
@@ -242,7 +242,7 @@ def run_engine(
     strict_layout: bool = False,
     first_failure: bool = True,
 ) -> AgentResponse:
-    """Execute a trusted adapter and compare in one bounded Agent operation."""
+    """Execute a trusted adapter with timeout/output controls, then compare."""
 
     operation = "run_engine"
     try:
@@ -362,27 +362,11 @@ def _trace_context(root: Path) -> AgentResponse:
     )
 
 
-def _testcase_context(root: Path, manifest_path: Path) -> AgentResponse:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict):
-        raise AgentProtocolError("testcase manifest root must be a JSON object")
-    if manifest.get("format") != TESTCASE_FORMAT:
-        raise AgentProtocolError(f"not an InferRef testcase: {root}")
-    if manifest.get("format_version") != TESTCASE_FORMAT_VERSION:
-        raise AgentProtocolError(
-            f"unsupported testcase format_version {manifest.get('format_version')!r}"
-        )
-    reproducible = bool(manifest.get("reproducible", True))
-    missing = manifest.get("missing_payload_details") or []
-    diagnostics = tuple(
-        {
-            "severity": "error",
-            "code": detail.get("reason", "missing_payload"),
-            "message": f"Boundary value {detail.get('value_id')} has no runnable payload.",
-            "detail": detail,
-        }
-        for detail in missing
-    )
+def _testcase_context(root: Path) -> AgentResponse:
+    validation = validate_testcase(root)
+    manifest = validation.manifest
+    reproducible = validation.reproducible
+    diagnostics = tuple(issue.to_dict() for issue in validation.issues)
     action = (
         {
             "operation": "run_engine",
@@ -396,13 +380,14 @@ def _testcase_context(root: Path, manifest_path: Path) -> AgentResponse:
     )
     return AgentResponse(
         operation="context",
-        status="ok" if reproducible else "fail",
+        status="error" if not validation.valid else ("ok" if reproducible else "fail"),
         data={
             "artifact": "testcase",
             "path": str(root),
             "name": manifest.get("name", ""),
             "format_version": manifest.get("format_version"),
             "reproducible": reproducible,
+            "validation": validation.to_dict(),
             "origin": manifest.get("origin") or {},
             "inputs": manifest.get("inputs") or [],
             "outputs": manifest.get("outputs") or [],
@@ -410,7 +395,7 @@ def _testcase_context(root: Path, manifest_path: Path) -> AgentResponse:
             "values": manifest.get("values") or [],
         },
         diagnostics=diagnostics,
-        next_actions=(action,),
+        next_actions=(action,) if validation.valid else (),
     )
 
 

@@ -22,7 +22,10 @@ dependencies = [
 # The tracer depends on private APIs (TorchDispatchMode, StorageWeakRef) and on
 # `named_parameters(remove_duplicate=...)`, so the floor is asserted by test.
 torch = ["torch>=2.1"]
+# Generic Llama/cache integration is tested at the declared 4.40 floor.
 hf = ["torch>=2.1", "transformers>=4.40"]
+# Qwen3.5 is a separately tested capability; 5.14.1 is the verified floor.
+qwen35 = ["torch>=2.1", "transformers>=5.14.1"]
 agent = ["mcp>=2,<3"]
 dev = ["pytest>=7.0"]
 

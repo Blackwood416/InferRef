@@ -68,6 +68,31 @@ class IRTensorError(ValueError):
     """Raised when an ``.irtensor`` file is malformed or unsupported."""
 
 
+@dataclass(frozen=True)
+class TensorHeader:
+    """Validated ``.irtensor`` metadata without loading its payload."""
+
+    dtype: str
+    shape: tuple[int, ...]
+    stride: tuple[int, ...]
+    storage_offset: int
+    flags: int
+    tensor_format_version: int
+    header_size: int
+    logical_numel: int
+    payload_nbytes: int
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "dtype": self.dtype,
+            "shape": list(self.shape),
+            "stride": list(self.stride),
+            "storage_offset": self.storage_offset,
+            "numel": self.logical_numel,
+            "nbytes": self.payload_nbytes,
+        }
+
+
 @dataclass
 class TensorView:
     """A decoded ``.irtensor``.
@@ -259,6 +284,75 @@ def read(path: str | Path) -> TensorView:
     """Read and decode one ``.irtensor`` from ``path``."""
     path = Path(path)
     return decode(path.read_bytes(), path=path)
+
+
+def read_header(path: str | Path) -> TensorHeader:
+    """Validate and read metadata without materialising the tensor payload."""
+
+    path = Path(path)
+    with path.open("rb") as stream:
+        fixed = stream.read(_FIXED.size)
+        if len(fixed) < _FIXED.size:
+            raise IRTensorError(
+                f"file too short to be an .irtensor ({len(fixed)} bytes)"
+            )
+        magic, version, hsize, dcode, flags, rank, reserved, numel, nbytes = (
+            _FIXED.unpack(fixed)
+        )
+        if magic != MAGIC:
+            raise IRTensorError(f"bad magic {magic!r}, expected {MAGIC!r}")
+        if version != TENSOR_FORMAT_VERSION:
+            raise IRTensorError(
+                f"unsupported .irtensor version {version}; this build reads "
+                f"version {TENSOR_FORMAT_VERSION}"
+            )
+        expected_hsize = header_size_for_rank(rank)
+        if hsize != expected_hsize:
+            raise IRTensorError(
+                f"header_size {hsize} does not match rank {rank} "
+                f"(expected {expected_hsize})"
+            )
+        if reserved != 0:
+            raise IRTensorError(f"reserved header field must be zero, got {reserved}")
+        if not flags & FLAG_CANONICAL_CONTIGUOUS:
+            raise IRTensorError("payload is not marked canonical contiguous")
+        metadata = stream.read(hsize - _FIXED.size)
+        if len(metadata) < hsize - _FIXED.size:
+            raise IRTensorError(f"truncated metadata header in {path}")
+
+    shape = struct.unpack_from(f"<{rank}q", metadata, 0) if rank else ()
+    stride = struct.unpack_from(f"<{rank}q", metadata, 8 * rank) if rank else ()
+    (storage_offset,) = struct.unpack_from("<q", metadata, 16 * rank)
+    if any(dim < 0 for dim in shape):
+        raise IRTensorError(f"negative dimension in shape {shape}")
+    shape_numel = 1
+    for dim in shape:
+        shape_numel *= dim
+    if shape_numel != numel:
+        raise IRTensorError(
+            f"logical_numel {numel} inconsistent with shape product {shape_numel}"
+        )
+    dtype = dtype_name_from_code(dcode)
+    if numel * dtype_itemsize(dtype) != nbytes:
+        raise IRTensorError(
+            f"payload_nbytes {nbytes} inconsistent with {numel} x {dtype}"
+        )
+    actual_size = path.stat().st_size
+    if actual_size < hsize + nbytes:
+        raise IRTensorError(
+            f"truncated: need {hsize + nbytes} bytes, have {actual_size}"
+        )
+    return TensorHeader(
+        dtype=dtype,
+        shape=tuple(shape),
+        stride=tuple(stride),
+        storage_offset=int(storage_offset),
+        flags=int(flags),
+        tensor_format_version=int(version),
+        header_size=int(hsize),
+        logical_numel=int(numel),
+        payload_nbytes=int(nbytes),
+    )
 
 
 def read_stream(stream: BinaryIO) -> TensorView:

@@ -78,6 +78,14 @@ Loads a trusted adapter, creates a fresh output directory, executes it, and then
 compares the result. Process/timeout/output-protocol failures return `error`;
 numerical disagreement returns `fail`; agreement returns `pass`.
 
+`compare_outputs` and `run_engine` share the same standalone testcase validator.
+Execution requires a structurally valid and computed-reproducible testcase; a
+manifest's `reproducible: true` is not trusted by itself. Validation checks unique
+boundary names, contained and existing payloads, header metadata agreement,
+node/value/effect references, and declared non-portable or unobservable state.
+Tensor validation reads only the `.irtensor` header and file size, not the full
+payload.
+
 ## 4. Engine adapter v0.1
 
 An adapter is JSON executable configuration:
@@ -97,7 +105,8 @@ An adapter is JSON executable configuration:
   "cwd": ".",
   "environment": {},
   "timeout_seconds": 60,
-  "max_output_chars": 65536
+  "max_output_chars": 65536,
+  "max_artifact_bytes": 1073741824
 }
 ```
 
@@ -117,9 +126,14 @@ The adapter must reference `{testcase}` and `{output}`. InferRef also supplies
 `INFERREF_TESTCASE` and `INFERREF_OUTPUT` to the child environment. Literal braces
 inside an argument must be escaped as `{{` and `}}`.
 
-Each run writes `inferref-run.json` beside the engine outputs. The record contains
-the expanded argv, working directory, exit code, bounded persisted stdout/stderr, duration,
-adapter metadata, comparison, and final run status. Configured environment names
+Each run writes `inferref-run.json` beside the engine outputs. Stdout and stderr
+are streamed to separate files with a hard per-stream byte limit. Crossing that
+limit, the wall-clock timeout, or the monitored artifact-size limit terminates
+the process tree and produces `output_limit`, `timeout`, or `artifact_limit`.
+Windows uses a kill-on-close Job Object; POSIX uses a dedicated session/process
+group. Descendants are cleaned up after normal parent exit as well as failures.
+The record contains the expanded argv, working directory, exit code, bounded
+persisted stdout/stderr, duration, adapter metadata, comparison, and final run status. Configured environment names
 are recorded but their values are redacted because they may contain credentials.
 InferRef never reuses a run directory, preventing stale engine output from
 producing a false pass. Secrets should be passed through environment variables,
@@ -129,10 +143,12 @@ not command arguments, because the expanded argv is intentionally recorded.
 
 An adapter names a process to execute and is therefore trusted code even though no
 shell is involved. Hosts must only expose adapters approved by the user or engine
-workspace. InferRef 0.3.0 does not sandbox child processes or restrict their file
-access. The child output is captured in memory before the persisted record is
-truncated; adapters that emit unbounded output are outside the current resource
-model.
+workspace. The adapter runner is timeout/output-controlled, not a general-purpose
+sandbox: it bounds stream persistence, monitors run artifacts, and cleans up the
+spawned process tree, but it does not impose CPU, memory, GPU, syscall, network,
+or filesystem-access limits. Artifact monitoring can detect and terminate growth;
+only an OS/container quota can guarantee that a hostile process never transiently
+exceeds the configured byte limit.
 
 ## 5. MCP transport
 
@@ -149,6 +165,12 @@ pip install "inferref[agent]"
 - `inferref_extract_testcase`
 - `inferref_compare_outputs`
 - `inferref_run_engine`
+
+The host configures repeatable `--read-root` and `--write-root` arguments when
+starting the server. Every trace, testcase, adapter, engine-output, extraction,
+and run path is resolved against those roots before an operation begins. Payload
+paths inside trace, testcase, and engine manifests must be relative and remain
+contained after symlink/junction resolution.
 
 The server uses the official MCP Python SDK v2. Tool return values are the response
 envelope above, so MCP and `inferref agent ... --json` have the same semantics.

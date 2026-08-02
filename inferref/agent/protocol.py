@@ -77,6 +77,7 @@ class EngineAdapter:
     cwd: str | None = None
     environment: Mapping[str, str] = field(default_factory=dict)
     max_output_chars: int = 65_536
+    max_artifact_bytes: int = 1_073_741_824
     source: Path | None = field(default=None, compare=False)
 
     @classmethod
@@ -118,6 +119,14 @@ class EngineAdapter:
             ) from exc
         if max_output < 1_024:
             raise AgentProtocolError("adapter max_output_chars must be at least 1024")
+        try:
+            max_artifacts = int(data.get("max_artifact_bytes", 1_073_741_824))
+        except (TypeError, ValueError) as exc:
+            raise AgentProtocolError(
+                "adapter max_artifact_bytes must be an integer"
+            ) from exc
+        if max_artifacts < 1_024:
+            raise AgentProtocolError("adapter max_artifact_bytes must be at least 1024")
         cwd = data.get("cwd")
         if cwd is not None and not isinstance(cwd, str):
             raise AgentProtocolError("adapter cwd must be a string or null")
@@ -137,6 +146,7 @@ class EngineAdapter:
             cwd=cwd,
             environment=dict(environment),
             max_output_chars=max_output,
+            max_artifact_bytes=max_artifacts,
             source=source,
         )
         adapter._validate_placeholders()
@@ -182,6 +192,7 @@ class EngineAdapter:
             # which variables were configured, never their contents.
             "environment_keys": sorted(self.environment),
             "max_output_chars": self.max_output_chars,
+            "max_artifact_bytes": self.max_artifact_bytes,
             "source": str(self.source) if self.source else None,
         }
 

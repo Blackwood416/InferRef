@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import stat
 import subprocess
 import sys
+import threading
 import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,7 +19,10 @@ from typing import Any
 from inferref.agent.protocol import AgentProtocolError, EngineAdapter
 from inferref.compare.compare import compare_testcase
 from inferref.compare.tolerance import TolerancePolicy
-from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_FORMAT_VERSION
+from inferref.testcase.validate import require_valid_testcase
+
+_STREAM_CHUNK_BYTES = 64 * 1024
+_RESOURCE_POLL_SECONDS = 0.02
 
 
 def execute_adapter(
@@ -31,21 +38,12 @@ def execute_adapter(
     """Execute one trusted adapter in a fresh output directory and compare it."""
 
     testcase_path = Path(testcase).resolve()
-    manifest_path = testcase_path / "testcase.json"
-    if not manifest_path.is_file():
-        raise AgentProtocolError(f"testcase manifest does not exist: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict):
-        raise AgentProtocolError("testcase manifest root must be a JSON object")
-    if manifest.get("format") != TESTCASE_FORMAT:
-        raise AgentProtocolError(f"not an InferRef testcase: {testcase_path}")
-    if manifest.get("format_version") != TESTCASE_FORMAT_VERSION:
+    validation = require_valid_testcase(testcase_path)
+    if not validation.reproducible:
+        blockers = ", ".join(issue.code for issue in validation.issues) or "unknown"
         raise AgentProtocolError(
-            f"unsupported testcase format_version {manifest.get('format_version')!r}"
-        )
-    if not manifest.get("reproducible", True):
-        raise AgentProtocolError(
-            "testcase is not independently reproducible; inspect its missing payload diagnostics"
+            "testcase is not independently reproducible after validation "
+            f"(blockers: {blockers})"
         )
 
     cwd = adapter.working_directory()
@@ -75,36 +73,68 @@ def execute_adapter(
         "cwd": str(cwd),
         "timeout_seconds": adapter.timeout_seconds,
     }
+    stdout_capture = _StreamCapture(
+        output_path / "inferref-stdout.log", adapter.max_output_chars
+    )
+    stderr_capture = _StreamCapture(
+        output_path / "inferref-stderr.log", adapter.max_output_chars
+    )
+    process: subprocess.Popen[bytes] | None = None
+    windows_job: int | None = None
     try:
-        completed = subprocess.run(
+        popen_options: dict[str, Any] = {}
+        if os.name == "nt":
+            popen_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_options["start_new_session"] = True
+        process = subprocess.Popen(
             command,
             cwd=cwd,
             env=environment,
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=adapter.timeout_seconds,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             shell=False,
-            check=False,
+            **popen_options,
         )
+        if os.name == "nt":
+            windows_job = _assign_windows_kill_job(process)
+        stdout_capture.start(process.stdout)
+        stderr_capture.start(process.stderr)
+        process_status = _wait_with_limits(
+            process,
+            deadline=time.monotonic() + adapter.timeout_seconds,
+            output_path=output_path,
+            max_artifact_bytes=adapter.max_artifact_bytes,
+            captures=(stdout_capture, stderr_capture),
+            windows_job=windows_job,
+        )
+        windows_job = None
+        stdout_capture.join()
+        stderr_capture.join()
         execution.update(
             {
-                "status": "completed",
-                "exit_code": completed.returncode,
-                "stdout": _bounded(completed.stdout, adapter.max_output_chars),
-                "stderr": _bounded(completed.stderr, adapter.max_output_chars),
-            }
-        )
-    except subprocess.TimeoutExpired as exc:
-        execution.update(
-            {
-                "status": "timeout",
-                "exit_code": None,
-                "stdout": _bounded(_as_text(exc.stdout), adapter.max_output_chars),
-                "stderr": _bounded(_as_text(exc.stderr), adapter.max_output_chars),
+                "status": process_status,
+                "exit_code": process.returncode,
+                "stdout": stdout_capture.text(),
+                "stderr": stderr_capture.text(),
+                "stdout_path": stdout_capture.path.name,
+                "stderr_path": stderr_capture.path.name,
+                "stdout_bytes": stdout_capture.observed_bytes,
+                "stderr_bytes": stderr_capture.observed_bytes,
+                "max_output_bytes_per_stream": adapter.max_output_chars,
+                "artifact_bytes": _artifact_bytes(output_path),
+                "max_artifact_bytes": adapter.max_artifact_bytes,
+                "process_tree_strategy": (
+                    "windows_job_object" if os.name == "nt" else "posix_process_group"
+                ),
             }
         )
     except OSError as exc:
+        if windows_job is not None:
+            _close_windows_job(windows_job)
+            windows_job = None
+        if process is not None and process.poll() is None:
+            _terminate_process_tree(process)
         execution.update(
             {
                 "status": "error",
@@ -123,7 +153,9 @@ def execute_adapter(
         "execution": execution,
         "comparison": None,
     }
-    if execution["status"] != "completed" or execution["exit_code"] != 0:
+    if execution["status"] != "completed":
+        result["status"] = execution["status"]
+    elif execution["exit_code"] != 0:
         result["status"] = "execution_error"
     else:
         try:
@@ -152,17 +184,248 @@ def execute_adapter(
     return result
 
 
-def _bounded(value: str, limit: int) -> str:
-    if len(value) <= limit:
+@dataclass
+class _StreamCapture:
+    path: Path
+    limit: int
+    exceeded: threading.Event = field(default_factory=threading.Event)
+    observed_bytes: int = 0
+    _thread: threading.Thread | None = field(default=None, init=False)
+
+    def start(self, stream: Any) -> None:
+        self._thread = threading.Thread(
+            target=self._consume,
+            args=(stream,),
+            name=f"inferref-capture-{self.path.name}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def join(self) -> None:
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def text(self) -> str:
+        if not self.path.is_file():
+            return ""
+        value = self.path.read_bytes().decode("utf-8", errors="replace")
+        if self.exceeded.is_set():
+            value += (
+                f"\n... stream exceeded hard limit of {self.limit} byte(s); "
+                "process tree terminated ...\n"
+            )
         return value
-    half = max(1, (limit - 80) // 2)
-    omitted = len(value) - 2 * half
-    return value[:half] + f"\n... {omitted} character(s) omitted ...\n" + value[-half:]
+
+    def _consume(self, stream: Any) -> None:
+        remaining = self.limit
+        with self.path.open("wb") as output:
+            while True:
+                chunk = stream.read(_STREAM_CHUNK_BYTES)
+                if not chunk:
+                    break
+                self.observed_bytes += len(chunk)
+                if remaining:
+                    accepted = chunk[:remaining]
+                    output.write(accepted)
+                    output.flush()
+                    remaining -= len(accepted)
+                if self.observed_bytes > self.limit:
+                    self.exceeded.set()
+            stream.close()
 
 
-def _as_text(value: str | bytes | None) -> str:
-    if value is None:
-        return ""
-    return (
-        value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
-    )
+def _wait_with_limits(
+    process: subprocess.Popen[bytes],
+    *,
+    deadline: float,
+    output_path: Path,
+    max_artifact_bytes: int,
+    captures: tuple[_StreamCapture, _StreamCapture],
+    windows_job: int | None,
+) -> str:
+    status = "completed"
+    while process.poll() is None:
+        if any(capture.exceeded.is_set() for capture in captures):
+            status = "output_limit"
+            break
+        if _artifact_bytes(output_path) > max_artifact_bytes:
+            status = "artifact_limit"
+            break
+        if time.monotonic() >= deadline:
+            status = "timeout"
+            break
+        time.sleep(_RESOURCE_POLL_SECONDS)
+
+    if windows_job is not None:
+        # Closing a kill-on-close Job Object also removes descendants that
+        # outlive a normally exiting direct child.
+        _close_windows_job(windows_job)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+    elif status != "completed":
+        _terminate_process_tree(process)
+    else:
+        process.wait()
+        if any(capture.exceeded.is_set() for capture in captures):
+            status = "output_limit"
+        elif _artifact_bytes(output_path) > max_artifact_bytes:
+            status = "artifact_limit"
+    return status
+
+
+def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+                shell=False,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            process.kill()
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+        # The direct child may have exited while a descendant ignored SIGTERM.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def _assign_windows_kill_job(process: subprocess.Popen[bytes]) -> int:
+    """Put the child in a kill-on-close Job Object (Windows only)."""
+
+    import ctypes
+    from ctypes import wintypes
+
+    class BasicLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_longlong),
+            ("PerJobUserTimeLimit", ctypes.c_longlong),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class ExtendedLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", BasicLimitInformation),
+            ("IoInfo", IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.CreateJobObjectW(None, None)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    info = ExtendedLimitInformation()
+    info.BasicLimitInformation.LimitFlags = 0x00002000
+    if not kernel32.SetInformationJobObject(
+        handle, 9, ctypes.byref(info), ctypes.sizeof(info)
+    ):
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(handle)
+        raise ctypes.WinError(error)
+    if not kernel32.AssignProcessToJobObject(handle, wintypes.HANDLE(process._handle)):
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(handle)
+        raise ctypes.WinError(error)
+    return int(handle)
+
+
+def _close_windows_job(handle: int) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CloseHandle(wintypes.HANDLE(handle))
+
+
+def _artifact_bytes(root: Path) -> int:
+    total = 0
+    pending = [root]
+    visited: set[tuple[int, int]] = set()
+    while pending:
+        directory = pending.pop()
+        try:
+            directory_stat = directory.stat()
+        except OSError:
+            continue
+        identity = (directory_stat.st_dev, directory_stat.st_ino)
+        if identity in visited:
+            continue
+        visited.add(identity)
+        try:
+            entries = tuple(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                entry_stat = entry.lstat()
+                attributes = getattr(entry_stat, "st_file_attributes", 0)
+                is_reparse_point = bool(
+                    attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+                )
+                if stat.S_ISLNK(entry_stat.st_mode) or is_reparse_point:
+                    total += entry_stat.st_size
+                elif stat.S_ISDIR(entry_stat.st_mode):
+                    pending.append(entry)
+                else:
+                    total += entry_stat.st_size
+            except OSError:
+                continue
+    return total

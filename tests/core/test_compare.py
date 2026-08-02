@@ -245,9 +245,14 @@ def _make_testcase(root: Path, outputs: dict[str, np.ndarray]) -> None:
                 "name": "t", "inputs": [], "outputs": []}
     for name, array in outputs.items():
         relative = f"reference/{name}.irtensor"
-        codec.write_array(root / relative, array)
+        path = codec.write_array(root / relative, array)
         manifest["outputs"].append(
-            {"name": name, "value_id": None, "payload": relative}
+            {
+                "name": name,
+                "value_id": None,
+                "payload": relative,
+                **codec.read(path).to_metadata(),
+            }
         )
     (root / "testcase.json").write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -292,6 +297,7 @@ def test_testcase_comparison_reports_missing_reference_payload(tmp_path: Path) -
                         "capture": {"mode": "hash"},
                     }
                 ],
+                "values": [{"id": 7}],
             }
         ),
         encoding="utf-8",
@@ -334,6 +340,62 @@ def test_engine_manifest_is_honoured(tmp_path: Path) -> None:
 
     report = compare_testcase(tmp_path / "tc", tmp_path / "engine")
     assert report.status == STATUS_PASS
+
+
+def test_testcase_reference_payload_cannot_escape_directory(tmp_path: Path) -> None:
+    testcase = tmp_path / "tc"
+    _make_testcase(testcase, {"out": np.ones(4, dtype=np.float32)})
+    manifest_path = testcase / "testcase.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["outputs"][0]["payload"] = "../outside.irtensor"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="escapes root"):
+        compare_testcase(testcase, tmp_path / "engine")
+
+
+def test_engine_manifest_payload_cannot_escape_directory(tmp_path: Path) -> None:
+    values = np.ones(4, dtype=np.float32)
+    _make_testcase(tmp_path / "tc", {"out": values})
+    codec.write_array(tmp_path / "outside.irtensor", values)
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "manifest.json").write_text(
+        json.dumps({"outputs": [{"name": "out", "payload": "../outside.irtensor"}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="escapes root"):
+        compare_testcase(tmp_path / "tc", engine)
+
+
+def test_engine_manifest_symlink_cannot_escape_directory(tmp_path: Path) -> None:
+    values = np.ones(4, dtype=np.float32)
+    _make_testcase(tmp_path / "tc", {"out": values})
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    outside = tmp_path / "outside-manifest.json"
+    outside.write_text(json.dumps({"outputs": []}), encoding="utf-8")
+    try:
+        (engine / "manifest.json").symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="escapes root"):
+        compare_testcase(tmp_path / "tc", engine)
+
+
+def test_output_name_cannot_escape_engine_directory_fallback(tmp_path: Path) -> None:
+    values = np.ones(4, dtype=np.float32)
+    _make_testcase(tmp_path / "tc", {"out": values})
+    manifest_path = tmp_path / "tc" / "testcase.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["outputs"][0]["name"] = "../outside"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    codec.write_array(tmp_path / "outside.irtensor", values)
+
+    with pytest.raises(ValueError, match="escapes root"):
+        compare_testcase(tmp_path / "tc", tmp_path / "engine")
 
 
 def test_report_contains_spec_appendix_b_fields(tmp_path: Path) -> None:

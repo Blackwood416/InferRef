@@ -1,0 +1,33 @@
+name: GPU compatibility
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cuda:
+    name: CUDA contract · self-hosted
+    runs-on: [self-hosted, linux, x64, gpu]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install InferRef with PyTorch
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,torch]"
+
+      - name: Require a usable CUDA runtime
+        shell: python
+        run: |
+          import sys, torch
+          print(f"torch {torch.__version__}; CUDA runtime {torch.version.cuda}")
+          print(f"devices: {torch.cuda.device_count()}")
+          if not torch.cuda.is_available():
+              sys.exit("self-hosted GPU runner has no usable CUDA device")
+
+      - name: Run CUDA contract
+        run: python -m pytest tests/frontend/test_cuda_contract.py -q -rs

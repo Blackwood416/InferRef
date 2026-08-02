@@ -1,4 +1,4 @@
-"""End-to-end MCP evaluation of a bounded, one-file engine repair."""
+"""End-to-end MCP evaluation of the one-file repair protocol harness."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def _protected_digest(workspace: Path) -> str:
     return digest.hexdigest()
 
 
-def test_benchmark_contract_is_bounded_and_machine_readable() -> None:
+def test_benchmark_contract_has_machine_readable_iteration_limits() -> None:
     benchmark = json.loads(
         (BENCHMARK_ROOT / "benchmark.json").read_text(encoding="utf-8")
     )
@@ -87,7 +87,9 @@ def test_mcp_diagnostics_support_a_one_file_repair(tmp_path: Path) -> None:
     engine = workspace / benchmark["agent"]["editable_paths"][0]
 
     async def exercise() -> None:
-        async with Client(create_server()) as client:
+        async with Client(
+            create_server(read_roots=[workspace], write_roots=[tmp_path])
+        ) as client:
             capabilities = await client.call_tool("inferref_capabilities", {})
             available = capabilities.structured_content["data"]["mcp_tools"]
             assert set(benchmark["agent"]["required_tools"]) <= set(available)

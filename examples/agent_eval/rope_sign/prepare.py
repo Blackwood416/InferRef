@@ -44,12 +44,20 @@ def build_testcase(output: str | Path) -> Path:
         "k_embed": _apply_rope(key, cos, sin),
     }
     manifest_inputs = []
+    manifest_values = []
     for value_id, (name, value) in enumerate(inputs.items(), start=1):
         relative = f"inputs/{name}.irtensor"
-        codec.write_array(root / relative, value)
+        path = codec.write_array(root / relative, value)
+        metadata = codec.read(path).to_metadata()
         manifest_inputs.append(
-            {"name": name, "value_id": value_id, "payload": relative}
+            {
+                "name": name,
+                "value_id": value_id,
+                "payload": relative,
+                **metadata,
+            }
         )
+        manifest_values.append({"id": value_id, **metadata})
 
     producer = {
         "op_id": 17,
@@ -62,15 +70,18 @@ def build_testcase(output: str | Path) -> Path:
     manifest_outputs = []
     for value_id, (name, value) in enumerate(references.items(), start=101):
         relative = f"reference/{name}.irtensor"
-        codec.write_array(root / relative, value.astype(np.float32))
+        path = codec.write_array(root / relative, value.astype(np.float32))
+        metadata = codec.read(path).to_metadata()
         manifest_outputs.append(
             {
                 "name": name,
                 "value_id": value_id,
                 "payload": relative,
                 "producer": producer,
+                **metadata,
             }
         )
+        manifest_values.append({"id": value_id, "producer": 17, **metadata})
 
     manifest = {
         "format": "inferref-testcase",
@@ -83,8 +94,17 @@ def build_testcase(output: str | Path) -> Path:
         },
         "inputs": manifest_inputs,
         "outputs": manifest_outputs,
-        "nodes": [],
-        "values": [],
+        "nodes": [
+            {
+                "id": 17,
+                "execution_index": 17,
+                "canonical_name": "aten.add.Tensor",
+                "positional_args": [],
+                "keyword_args": {},
+                "result": None,
+            }
+        ],
+        "values": manifest_values,
     }
     (root / "testcase.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"

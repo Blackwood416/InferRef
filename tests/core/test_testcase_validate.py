@@ -1,0 +1,187 @@
+"""Standalone testcase validation is the shared trust boundary."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from inferref.tensor import codec
+from inferref.testcase.validate import TestcaseValidationError as ValidationError
+from inferref.testcase.validate import (
+    require_valid_testcase,
+    validate_testcase,
+)
+
+
+def _make_testcase(root: Path) -> tuple[Path, dict]:
+    payload = codec.write_array(
+        root / "reference" / "out.irtensor", np.arange(4, dtype=np.float32)
+    )
+    metadata = codec.read(payload).to_metadata()
+    manifest = {
+        "format": "inferref-testcase",
+        "format_version": "0.1",
+        "name": "validator-fixture",
+        "reproducible": True,
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "out",
+                "value_id": 2,
+                "payload": "reference/out.irtensor",
+                **metadata,
+            }
+        ],
+        "values": [
+            {"id": 1, "storage_id": 11, **metadata},
+            {"id": 2, "storage_id": 11, **metadata},
+        ],
+        "nodes": [
+            {
+                "id": 7,
+                "positional_args": [{"kind": "tensor", "value_id": 1}],
+                "keyword_args": {},
+                "result": {"kind": "tensor", "value_id": 2},
+                "effects": {
+                    "mutated_storages": [
+                        {
+                            "storage_id": 11,
+                            "version_before": 0,
+                            "version_after": 1,
+                        }
+                    ],
+                    "aliases": [
+                        {"input_value_id": 1, "output_value_id": 2}
+                    ],
+                },
+            }
+        ],
+    }
+    (root / "testcase.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return root, manifest
+
+
+def _write_manifest(root: Path, manifest: dict) -> None:
+    (root / "testcase.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_valid_testcase_is_computed_reproducible(tmp_path: Path, monkeypatch) -> None:
+    root, _ = _make_testcase(tmp_path / "tc")
+    monkeypatch.setattr(
+        codec,
+        "read",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("validator must not materialise payloads")
+        ),
+    )
+
+    result = validate_testcase(root)
+
+    assert result.valid
+    assert result.reproducible
+    assert result.issues == []
+
+
+def test_declared_true_does_not_override_missing_payload(tmp_path: Path) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    manifest["outputs"][0]["payload"] = "reference/missing.irtensor"
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+
+    assert not result.valid
+    assert not result.reproducible
+    assert {issue.code for issue in result.errors} == {"payload_file_missing"}
+    with pytest.raises(ValidationError):
+        require_valid_testcase(root)
+
+
+def test_hash_only_boundary_is_valid_but_not_reproducible(tmp_path: Path) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    manifest["outputs"][0]["payload"] = None
+    manifest["outputs"][0]["capture"] = {"mode": "hash"}
+    _write_manifest(root, manifest)
+
+    result = require_valid_testcase(root)
+
+    assert result.valid
+    assert not result.reproducible
+    assert [issue.code for issue in result.issues] == ["payload_missing"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        (lambda manifest: manifest["outputs"].append(dict(manifest["outputs"][0])),
+         "boundary_name_duplicate"),
+        (lambda manifest: manifest["outputs"][0].update(dtype="float16"),
+         "payload_metadata_mismatch"),
+        (lambda manifest: manifest["nodes"][0]["result"].update(value_id=99),
+         "node_value_unknown"),
+        (lambda manifest: manifest["nodes"][0]["effects"]["aliases"][0].update(
+            output_value_id=99
+        ), "effect_value_unknown"),
+        (lambda manifest: manifest["nodes"][0]["effects"]["mutated_storages"][0].update(
+            storage_id=99
+        ), "effect_storage_unknown"),
+    ],
+)
+def test_schema_and_reference_corruption_is_rejected(
+    tmp_path: Path, mutation, expected_code: str
+) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    mutation(manifest)
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+
+    assert expected_code in {issue.code for issue in result.errors}
+
+
+@pytest.mark.parametrize("payload", ["../secret.irtensor", "C:/secret.irtensor"])
+def test_payload_path_escape_is_rejected(tmp_path: Path, payload: str) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    manifest["outputs"][0]["payload"] = payload
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+
+    assert "payload_path_unsafe" in {issue.code for issue in result.errors}
+
+
+def test_payload_symlink_escape_is_rejected(tmp_path: Path) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    outside = codec.write_array(
+        tmp_path / "outside.irtensor", np.arange(4, dtype=np.float32)
+    )
+    link = root / "reference" / "linked.irtensor"
+    try:
+        link.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+    manifest["outputs"][0]["payload"] = "reference/linked.irtensor"
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+
+    assert "payload_path_unsafe" in {issue.code for issue in result.errors}
+
+
+def test_manifest_symlink_escape_is_rejected(tmp_path: Path) -> None:
+    root, _ = _make_testcase(tmp_path / "tc")
+    outside = tmp_path / "outside.json"
+    manifest_path = root / "testcase.json"
+    outside.write_bytes(manifest_path.read_bytes())
+    manifest_path.unlink()
+    try:
+        manifest_path.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    result = validate_testcase(root)
+
+    assert not result.valid
+    assert {issue.code for issue in result.errors} == {"manifest_path_unsafe"}

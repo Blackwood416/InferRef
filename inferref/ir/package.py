@@ -29,6 +29,7 @@ from typing import Any
 from inferref.ir.graph import Graph
 from inferref.ir.manifest import Manifest
 from inferref.ir.module import ModuleRecord
+from inferref.ir.paths import PathBoundaryError, resolve_contained_path
 from inferref.ir.region import RegionRecord
 from inferref.ir.source import SourceRecord
 from inferref.ir.storage import StorageRecord
@@ -41,17 +42,6 @@ REGIONS_FILE = "regions.json"
 STORAGES_FILE = "storages.json"
 TENSORS_DIR = "tensors"
 REPORTS_DIR = "reports"
-
-
-def _resolve_package_path(root: Path, relative: str) -> Path:
-    relative_path = Path(relative)
-    if relative_path.is_absolute():
-        raise ValueError(f"payload path must be relative: {relative}")
-    resolved_root = root.resolve()
-    resolved = (resolved_root / relative_path).resolve()
-    if not resolved.is_relative_to(resolved_root):
-        raise ValueError(f"payload path escapes trace package: {relative}")
-    return resolved
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -115,7 +105,14 @@ class TracePackage:
         """Resolve a payload path without allowing it to escape the package."""
         if self.root is None:
             raise ValueError("trace package has no root directory; cannot resolve payload")
-        return _resolve_package_path(self.root, relative)
+        try:
+            return resolve_contained_path(
+                self.root, relative, kind="trace payload path"
+            )
+        except PathBoundaryError as exc:
+            raise ValueError(
+                f"payload path escapes trace package: {relative}"
+            ) from exc
 
     # -- I/O --------------------------------------------------------------
 
@@ -123,6 +120,7 @@ class TracePackage:
         """Write the package to ``root`` (creating it if needed)."""
         root = Path(root)
         root.mkdir(parents=True, exist_ok=True)
+        root = root.resolve()
         if self.root is not None and self.root.resolve() != root.resolve():
             copied: set[str] = set()
             for value in self.graph.values:
@@ -132,16 +130,30 @@ class TracePackage:
                 source = self.tensor_payload_path(payload)
                 if not source.is_file():
                     continue
-                destination = _resolve_package_path(root, payload)
+                destination = resolve_contained_path(
+                    root, payload, kind="trace payload path"
+                )
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, destination)
                 copied.add(payload)
-        _write_json(root / MANIFEST_FILE, self.manifest.to_dict())
-        _write_json(root / GRAPH_FILE, self.graph.to_dict())
-        _write_json(root / MODULES_FILE, {"modules": [m.to_dict() for m in self.modules]})
-        _write_json(root / SOURCES_FILE, {"sources": [s.to_dict() for s in self.sources]})
-        _write_json(root / REGIONS_FILE, {"regions": [r.to_dict() for r in self.regions]})
-        _write_json(root / STORAGES_FILE, {"storages": [s.to_dict() for s in self.storages]})
+        _write_json(_metadata_path(root, MANIFEST_FILE), self.manifest.to_dict())
+        _write_json(_metadata_path(root, GRAPH_FILE), self.graph.to_dict())
+        _write_json(
+            _metadata_path(root, MODULES_FILE),
+            {"modules": [m.to_dict() for m in self.modules]},
+        )
+        _write_json(
+            _metadata_path(root, SOURCES_FILE),
+            {"sources": [s.to_dict() for s in self.sources]},
+        )
+        _write_json(
+            _metadata_path(root, REGIONS_FILE),
+            {"regions": [r.to_dict() for r in self.regions]},
+        )
+        _write_json(
+            _metadata_path(root, STORAGES_FILE),
+            {"storages": [s.to_dict() for s in self.storages]},
+        )
         (root / TENSORS_DIR).mkdir(exist_ok=True)
         self.root = root
         return root
@@ -151,7 +163,8 @@ class TracePackage:
         if self.root is None:
             raise ValueError("trace package has no root directory")
         _write_json(
-            self.root / REGIONS_FILE, {"regions": [r.to_dict() for r in self.regions]}
+            _metadata_path(self.root, REGIONS_FILE),
+            {"regions": [r.to_dict() for r in self.regions]},
         )
 
     @classmethod
@@ -161,22 +174,22 @@ class TracePackage:
         Only ``manifest.json`` and ``graph.json`` are required (IR §47); the
         remaining files are optional and default to empty.
         """
-        root = Path(root)
+        root = Path(root).resolve()
         if not root.is_dir():
             raise NotADirectoryError(f"not a trace package directory: {root}")
 
-        manifest_path = root / MANIFEST_FILE
+        manifest_path = _metadata_path(root, MANIFEST_FILE)
         if not manifest_path.is_file():
             raise FileNotFoundError(f"missing {MANIFEST_FILE} in {root}")
         manifest = Manifest.from_dict(_read_json(manifest_path))
 
-        graph_path = root / GRAPH_FILE
+        graph_path = _metadata_path(root, GRAPH_FILE)
         if not graph_path.is_file():
             raise FileNotFoundError(f"missing {GRAPH_FILE} in {root}")
         graph = Graph.from_dict(_read_json(graph_path))
 
         def _optional(name: str, key: str, record_cls: Any) -> list[Any]:
-            path = root / name
+            path = _metadata_path(root, name)
             if not path.is_file():
                 return []
             return [record_cls.from_dict(d) for d in _read_json(path).get(key, ())]
@@ -194,5 +207,16 @@ class TracePackage:
 
 def is_trace_package(path: str | Path) -> bool:
     """Cheap check for whether ``path`` looks like a trace package directory."""
-    path = Path(path)
-    return path.is_dir() and (path / MANIFEST_FILE).is_file() and (path / GRAPH_FILE).is_file()
+    path = Path(path).resolve()
+    if not path.is_dir():
+        return False
+    try:
+        manifest = _metadata_path(path, MANIFEST_FILE)
+        graph = _metadata_path(path, GRAPH_FILE)
+    except PathBoundaryError:
+        return False
+    return manifest.is_file() and graph.is_file()
+
+
+def _metadata_path(root: Path, name: str) -> Path:
+    return resolve_contained_path(root, name, kind=f"trace metadata path {name!r}")

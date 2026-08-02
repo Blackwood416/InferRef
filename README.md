@@ -119,20 +119,22 @@ Install and start the MCP transport with:
 
 ```bash
 pip install -e ".[agent]"
-inferref-mcp
+inferref-mcp --read-root E:/trusted/workspace --write-root E:/trusted/runs
 ```
 
 For a local MCP host, configure the `inferref-mcp` executable from this virtual
 environment as a stdio server. The tools are `inferref_capabilities`,
 `inferref_context`, `inferref_extract_testcase`, `inferref_compare_outputs`, and
-`inferref_run_engine`.
+`inferref_run_engine`. Read and write roots are host policy, not tool arguments;
+requests outside them are rejected. If omitted, both policies default to the
+server's current working directory.
 
 Adapter JSON is executable configuration: InferRef uses an argv array and
 `shell=False`, but the configured process must still be trusted. The complete
 wire contract and threat boundary are in
 [InferRef Agent Protocol v0.1](docs/spec/InferRef_Agent_Protocol_v0.1.md).
 
-### Agent repair evaluation
+### Agent repair protocol evaluation
 
 The checked-in RoPE benchmark creates a disposable Agent-visible workspace with
 a numerically incorrect engine, trusted adapter, task, and standalone testcase.
@@ -149,11 +151,13 @@ inferref agent run .scratch/agent-eval-rope/testcase \
   --runs-dir .scratch/agent-eval-rope-runs --json
 ```
 
-Give the Agent only `.scratch/agent-eval-rope/` and its configured InferRef MCP
-server. It may edit only `engine.py` and has at most four runs. The baseline must
+Give the Agent only `.scratch/agent-eval-rope/` and an MCP server whose read/write
+roots are limited to that workspace and a separate run directory. The protocol
+harness permits edits only to `engine.py` and at most four runs. The baseline must
 report a structured numerical `fail`; success requires `inferref_run_engine` to
-return `pass` without changing the adapter, task, or testcase. The machine-readable
-contract lives in
+return `pass` without changing the adapter, task, or testcase. This automated
+harness applies a known oracle edit; it validates the repair protocol, not an
+Agent's autonomous repair ability. The machine-readable contract lives in
 [`benchmark.json`](examples/agent_eval/rope_sign/benchmark.json).
 
 ## Semantic analysis
