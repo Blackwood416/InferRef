@@ -172,3 +172,46 @@ The first 0.3 vertical slice is complete when all of the following hold:
 4. Process failure cannot be confused with numerical mismatch.
 5. Repeated runs cannot consume stale output from an earlier invocation.
 6. CI covers Core plus MCP without installing PyTorch.
+
+## 8. Agent evaluation fixture v0.1
+
+An Agent repair benchmark may declare this host-side record:
+
+```json
+{
+  "format": "inferref-agent-evaluation",
+  "format_version": "0.1",
+  "id": "rope-half-rotation-sign",
+  "task": "TASK.md",
+  "workspace_template": ["engine.py", "adapter.json", "TASK.md"],
+  "setup": {
+    "command": ["python", "prepare.py", "--output", "{workspace}/testcase"],
+    "trusted": true
+  },
+  "agent": {
+    "editable_paths": ["engine.py"],
+    "required_tools": ["inferref_context", "inferref_run_engine"],
+    "max_iterations": 4
+  },
+  "success": {
+    "operation": "run_engine",
+    "status": "pass",
+    "protected_paths_unchanged": true
+  }
+}
+```
+
+This record is consumed by an evaluation host, not by the candidate Agent. Setup
+commands are trusted executable configuration and run before Agent access. A host
+should copy only `workspace_template` plus generated artifacts into a disposable
+workspace; the reference generator, evaluator state, and any oracle repair remain
+outside it.
+
+The host must snapshot every path outside `editable_paths`, enforce the iteration
+budget, and accept success only when the declared InferRef operation returns the
+declared status and protected paths are unchanged. A benchmark should also declare
+its expected baseline so CI proves that the initial candidate really fails; an
+always-passing benchmark evaluates nothing.
+
+Evaluation format v0.1 does not claim process sandboxing. Filesystem isolation and
+write enforcement remain responsibilities of the host running the coding Agent.

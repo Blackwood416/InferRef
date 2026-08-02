@@ -1,0 +1,41 @@
+{
+  "format": "inferref-agent-evaluation",
+  "format_version": "0.1",
+  "id": "rope-half-rotation-sign",
+  "title": "Repair a RoPE half-rotation kernel",
+  "task": "TASK.md",
+  "workspace_template": [
+    "engine.py",
+    "adapter.json",
+    "TASK.md"
+  ],
+  "setup": {
+    "command": [
+      "python",
+      "prepare.py",
+      "--output",
+      "{workspace}/testcase"
+    ],
+    "trusted": true
+  },
+  "agent": {
+    "editable_paths": [
+      "engine.py"
+    ],
+    "required_tools": [
+      "inferref_capabilities",
+      "inferref_context",
+      "inferref_run_engine"
+    ],
+    "max_iterations": 4
+  },
+  "success": {
+    "operation": "run_engine",
+    "status": "pass",
+    "protected_paths_unchanged": true
+  },
+  "expected_baseline": {
+    "status": "fail",
+    "first_failure": "q_embed"
+  }
+}

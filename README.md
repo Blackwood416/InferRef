@@ -132,6 +132,30 @@ Adapter JSON is executable configuration: InferRef uses an argv array and
 wire contract and threat boundary are in
 [InferRef Agent Protocol v0.1](docs/spec/InferRef_Agent_Protocol_v0.1.md).
 
+### Agent repair evaluation
+
+The checked-in RoPE benchmark creates a disposable Agent-visible workspace with
+a numerically incorrect engine, trusted adapter, task, and standalone testcase.
+The trusted reference generator remains outside that workspace, so the candidate
+cannot solve the task by reading the implementation that produced the answer:
+
+```bash
+python examples/agent_eval/rope_sign/prepare.py \
+  --workspace .scratch/agent-eval-rope
+
+inferref agent context .scratch/agent-eval-rope/testcase --json
+inferref agent run .scratch/agent-eval-rope/testcase \
+  --adapter .scratch/agent-eval-rope/adapter.json \
+  --runs-dir .scratch/agent-eval-rope-runs --json
+```
+
+Give the Agent only `.scratch/agent-eval-rope/` and its configured InferRef MCP
+server. It may edit only `engine.py` and has at most four runs. The baseline must
+report a structured numerical `fail`; success requires `inferref_run_engine` to
+return `pass` without changing the adapter, task, or testcase. The machine-readable
+contract lives in
+[`benchmark.json`](examples/agent_eval/rope_sign/benchmark.json).
+
 ## Semantic analysis
 
 Semantic labels are annotation over an authoritative physical trace, never a replacement for it

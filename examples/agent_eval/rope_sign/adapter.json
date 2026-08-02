@@ -1,0 +1,15 @@
+{
+  "format": "inferref-engine-adapter",
+  "format_version": "0.1",
+  "name": "agent-eval-rope",
+  "command": [
+    "{python}",
+    "engine.py",
+    "{testcase}",
+    "--output",
+    "{output}"
+  ],
+  "cwd": ".",
+  "timeout_seconds": 30,
+  "max_output_chars": 16384
+}
