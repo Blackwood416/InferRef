@@ -129,7 +129,7 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
     storage_ids = {
         entry.get("storage_id")
         for entry in values
-        if isinstance(entry.get("storage_id"), int)
+        if _is_integer(entry.get("storage_id"))
     }
 
     inputs = _boundary(result, manifest, "inputs", value_ids)
@@ -152,11 +152,12 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
         producer = output.get("producer")
         if not isinstance(producer, dict) or producer.get("op_id") is None:
             continue
-        if producer.get("op_id") not in node_ids:
+        producer_id = producer.get("op_id")
+        if not _is_integer(producer_id) or producer_id not in node_ids:
             _error(
                 result,
                 "producer_node_unknown",
-                f"producer op_id {producer.get('op_id')!r} is not in nodes",
+                f"producer op_id {producer_id!r} is not in nodes",
                 f"outputs[{index}].producer.op_id",
             )
 
@@ -215,7 +216,7 @@ def _unique_ids(
     observed: set[int] = set()
     for index, record in enumerate(records):
         identifier = record.get("id")
-        if not isinstance(identifier, int):
+        if not _is_integer(identifier):
             _error(
                 result,
                 "id_invalid",
@@ -261,7 +262,9 @@ def _boundary(
         else:
             observed_names.add(label)
         value_id = record.get("value_id")
-        if value_id is not None and value_id not in value_ids:
+        if value_id is not None and (
+            not _is_integer(value_id) or value_id not in value_ids
+        ):
             _error(
                 result,
                 "boundary_value_unknown",
@@ -349,7 +352,7 @@ def _validate_node_references(
 ) -> None:
     for index, node in enumerate(nodes):
         for where, value_id in _walk_value_references(node, f"nodes[{index}]"):
-            if value_id not in value_ids:
+            if not _is_integer(value_id) or value_id not in value_ids:
                 _error(
                     result,
                     "node_value_unknown",
@@ -367,16 +370,9 @@ def _validate_node_references(
                 f"nodes[{index}].effects",
             )
             continue
-        for effect_name in ("mutated_storages", "aliases"):
-            raw = effects.get(effect_name, [])
-            if not isinstance(raw, list):
-                _error(
-                    result,
-                    "effect_schema_invalid",
-                    f"effects.{effect_name} must be an array",
-                    f"nodes[{index}].effects.{effect_name}",
-                )
-        for effect_index, alias in enumerate(effects.get("aliases", [])):
+        aliases = _effect_array(result, effects, "aliases", index)
+        mutations = _effect_array(result, effects, "mutated_storages", index)
+        for effect_index, alias in enumerate(aliases):
             if not isinstance(alias, dict):
                 _error(
                     result,
@@ -387,7 +383,7 @@ def _validate_node_references(
                 continue
             for field_name in ("input_value_id", "output_value_id"):
                 value_id = alias.get(field_name)
-                if value_id not in value_ids:
+                if not _is_integer(value_id) or value_id not in value_ids:
                     _error(
                         result,
                         "effect_value_unknown",
@@ -397,7 +393,7 @@ def _validate_node_references(
                             f".{field_name}"
                         ),
                     )
-        for effect_index, mutation in enumerate(effects.get("mutated_storages", [])):
+        for effect_index, mutation in enumerate(mutations):
             if not isinstance(mutation, dict):
                 _error(
                     result,
@@ -407,7 +403,7 @@ def _validate_node_references(
                 )
                 continue
             storage_id = mutation.get("storage_id")
-            if storage_id not in storage_ids:
+            if not _is_integer(storage_id) or storage_id not in storage_ids:
                 _error(
                     result,
                     "effect_storage_unknown",
@@ -416,7 +412,7 @@ def _validate_node_references(
                 )
             before = mutation.get("version_before")
             after = mutation.get("version_after")
-            if not isinstance(before, int) or not isinstance(after, int):
+            if not _is_integer(before) or not _is_integer(after):
                 _error(
                     result,
                     "effect_schema_invalid",
@@ -439,7 +435,9 @@ def _validate_value_references(
 ) -> None:
     for index, value in enumerate(values):
         producer = value.get("producer")
-        if producer is not None and producer not in node_ids:
+        if producer is not None and (
+            not _is_integer(producer) or producer not in node_ids
+        ):
             _error(
                 result,
                 "value_producer_unknown",
@@ -458,7 +456,7 @@ def _validate_value_references(
             )
             continue
         for consumer_index, consumer in enumerate(consumers):
-            if consumer not in node_ids:
+            if not _is_integer(consumer) or consumer not in node_ids:
                 _error(
                     result,
                     "value_consumer_unknown",
@@ -476,6 +474,28 @@ def _walk_value_references(value: Any, where: str):
     elif isinstance(value, list):
         for index, item in enumerate(value):
             yield from _walk_value_references(item, f"{where}[{index}]")
+
+
+def _effect_array(
+    result: TestcaseValidationResult,
+    effects: dict[str, Any],
+    name: str,
+    node_index: int,
+) -> list[Any]:
+    raw = effects.get(name, [])
+    if isinstance(raw, list):
+        return raw
+    _error(
+        result,
+        "effect_schema_invalid",
+        f"effects.{name} must be an array",
+        f"nodes[{node_index}].effects.{name}",
+    )
+    return []
+
+
+def _is_integer(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _error(

@@ -37,6 +37,9 @@ class Analysis:
     #: Modules whose operators got no semantic label at all — the work list for
     #: supporting a new model (SPEC §25 "Unsupported patterns").
     unlabelled_modules: list[str] = field(default_factory=list)
+    #: Physical operator classes not covered by any semantic annotation.
+    #: This is diagnostic/trend data, not a semantic truth assertion.
+    unlabelled_operators: dict[str, int] = field(default_factory=dict)
 
     #: Fraction of operators whose source location is known.
     source_coverage: float = 0.0
@@ -68,6 +71,7 @@ class Analysis:
             },
             "semantic_counts": self.semantic_counts,
             "unlabelled_modules": self.unlabelled_modules,
+            "unlabelled_operators": self.unlabelled_operators,
             "regions": self.regions,
             "capture_modes": self.capture_modes,
             "signatures": self.signature_summary,
@@ -88,6 +92,7 @@ def analyze(package: TracePackage) -> Analysis:
     module_counter: Counter[str] = Counter()
     mutating: Counter[str] = Counter()
     semantic_counter: Counter[str] = Counter()
+    unlabelled_operator_counter: Counter[str] = Counter()
     non_portable: set[str] = set()
     sourced = 0
     labelled = 0
@@ -110,6 +115,8 @@ def analyze(package: TracePackage) -> Analysis:
             # Count the innermost (most specific) label only, so a Linear
             # inside an Attention is not double counted.
             semantic_counter[semantic[-1].name] += 1
+        else:
+            unlabelled_operator_counter[op.canonical_name] += 1
         for arg in list(op.positional_args) + list(op.keyword_args.values()):
             if getattr(arg, "kind", None) == "opaque" and not getattr(arg, "portable", True):
                 non_portable.add(op.canonical_name)
@@ -119,6 +126,7 @@ def analyze(package: TracePackage) -> Analysis:
     result.mutating_operators = dict(mutating.most_common())
     result.semantic_counts = dict(semantic_counter.most_common())
     result.unlabelled_modules = sorted(all_modules - labelled_modules)
+    result.unlabelled_operators = dict(unlabelled_operator_counter.most_common())
     result.non_portable_operators = sorted(non_portable)
 
     covered: set[int] = set()
@@ -202,6 +210,11 @@ def render_analysis(analysis: Analysis, *, top: int = 15) -> str:
             lines.append(f"  {path}")
         if len(analysis.unlabelled_modules) > top:
             lines.append(f"  ... and {len(analysis.unlabelled_modules) - top} more")
+    if analysis.unlabelled_operators:
+        lines.append("")
+        lines.append("Unlabelled operators (trend/work list):")
+        for name, count in list(analysis.unlabelled_operators.items())[:top]:
+            lines.append(f"  {count:>6}  {name}")
         lines.append("")
 
     signatures = analysis.signature_summary
@@ -211,7 +224,7 @@ def render_analysis(analysis: Analysis, *, top: int = 15) -> str:
         f"-> {signatures.get('total_signatures', 0)} unique signatures"
     )
     lines.append("")
-    lines.append(f"Top operators (by execution count):")
+    lines.append("Top operators (by execution count):")
     for name, count in list(analysis.operator_counts.items())[:top]:
         entry = signatures.get("by_operator", {}).get(name, {})
         unique = entry.get("signatures", "?")

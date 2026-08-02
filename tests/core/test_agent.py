@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from inferref.agent import capabilities, compare_outputs, context, run_engine
+from inferref.agent.adapter import _scan_artifacts
 from inferref.agent.protocol import ENGINE_ADAPTER_FORMAT, ENGINE_ADAPTER_VERSION
 from inferref.cli.main import EXIT_OK, main
 from inferref.tensor import codec
@@ -85,6 +86,7 @@ def _make_adapter(
     timeout_seconds: float = 30,
     max_output_chars: int = 65_536,
     max_artifact_bytes: int = 1_073_741_824,
+    max_artifact_files: int = 10_000,
 ) -> Path:
     payload = {
         "format": ENGINE_ADAPTER_FORMAT,
@@ -94,6 +96,7 @@ def _make_adapter(
         "timeout_seconds": timeout_seconds,
         "max_output_chars": max_output_chars,
         "max_artifact_bytes": max_artifact_bytes,
+        "max_artifact_files": max_artifact_files,
     }
     if mode is not None:
         payload["environment"] = {"INFERREF_ENGINE_MODE": mode}
@@ -303,6 +306,63 @@ with (output / "huge.bin").open("wb") as stream:
     assert response.status == "error"
     assert response.data["status"] == "artifact_limit"
     assert response.data["execution"]["artifact_bytes"] > 131_072
+
+
+def test_many_small_artifacts_hit_file_limit(tmp_path: Path) -> None:
+    testcase = _make_testcase(tmp_path / "testcase")
+    script = tmp_path / "many_artifacts.py"
+    script.write_text(
+        """import pathlib, sys
+output = pathlib.Path(sys.argv[2])
+index = 0
+while True:
+    (output / f"artifact-{index}.tmp").touch()
+    index += 1
+""",
+        encoding="utf-8",
+    )
+    adapter = _make_adapter(
+        tmp_path,
+        script,
+        command=["{python}", str(script), "{testcase}", "{output}"],
+        max_artifact_files=64,
+    )
+
+    response = run_engine(testcase, adapter, tmp_path / "runs")
+
+    assert response.status == "error"
+    assert response.data["status"] == "artifact_file_limit"
+    execution = response.data["execution"]
+    assert execution["artifact_files"] > 64
+    assert execution["artifact_scan_entries"] >= execution["artifact_files"]
+
+
+def test_artifact_scan_honors_an_expired_deadline(tmp_path: Path) -> None:
+    scan = _scan_artifacts(
+        tmp_path,
+        deadline=time.monotonic() - 1.0,
+        max_bytes=1_024,
+        max_files=16,
+    )
+
+    assert scan.limit == "deadline"
+    assert scan.entries == 0
+
+
+def test_artifact_scan_bounds_directory_only_trees(tmp_path: Path) -> None:
+    for index in range(1_025):
+        (tmp_path / f"directory-{index}").mkdir()
+
+    scan = _scan_artifacts(
+        tmp_path,
+        deadline=time.monotonic() + 30.0,
+        max_bytes=1_024,
+        max_files=16,
+    )
+
+    assert scan.limit == "entries"
+    assert scan.files == 0
+    assert scan.entries == 1_025
 
 
 def test_invalid_adapter_command_is_rejected_without_running(tmp_path: Path) -> None:

@@ -106,7 +106,8 @@ An adapter is JSON executable configuration:
   "environment": {},
   "timeout_seconds": 60,
   "max_output_chars": 65536,
-  "max_artifact_bytes": 1073741824
+  "max_artifact_bytes": 1073741824,
+  "max_artifact_files": 10000
 }
 ```
 
@@ -128,12 +129,17 @@ inside an argument must be escaped as `{{` and `}}`.
 
 Each run writes `inferref-run.json` beside the engine outputs. Stdout and stderr
 are streamed to separate files with a hard per-stream byte limit. Crossing that
-limit, the wall-clock timeout, or the monitored artifact-size limit terminates
-the process tree and produces `output_limit`, `timeout`, or `artifact_limit`.
+limit, the wall-clock timeout, the monitored artifact-size limit, or the artifact
+file/entry limit terminates the process tree and produces `output_limit`,
+`timeout`, `artifact_limit`, or `artifact_file_limit`.
 Windows uses a kill-on-close Job Object; POSIX uses a dedicated session/process
 group. Descendants are cleaned up after normal parent exit as well as failures.
-The record contains the expanded argv, working directory, exit code, bounded
-persisted stdout/stderr, duration, adapter metadata, comparison, and final run status. Configured environment names
+Artifact traversal runs less frequently than process/deadline polling, checks the
+deadline while walking, and has an entry budget so a directory-only file storm
+cannot turn one scan into an unbounded operation. The record contains the expanded
+argv, working directory, exit code, bounded persisted stdout/stderr, artifact
+bytes/files/scan entries, duration, adapter metadata, comparison, and final run
+status. Configured environment names
 are recorded but their values are redacted because they may contain credentials.
 InferRef never reuses a run directory, preventing stale engine output from
 producing a false pass. Secrets should be passed through environment variables,
@@ -144,7 +150,8 @@ not command arguments, because the expanded argv is intentionally recorded.
 An adapter names a process to execute and is therefore trusted code even though no
 shell is involved. Hosts must only expose adapters approved by the user or engine
 workspace. The adapter runner is timeout/output-controlled, not a general-purpose
-sandbox: it bounds stream persistence, monitors run artifacts, and cleans up the
+sandbox: it bounds stream persistence, monitors run artifact bytes and entry
+counts, and cleans up the
 spawned process tree, but it does not impose CPU, memory, GPU, syscall, network,
 or filesystem-access limits. Artifact monitoring can detect and terminate growth;
 only an OS/container quota can guarantee that a hostile process never transiently

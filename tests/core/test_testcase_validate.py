@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 import numpy as np
@@ -185,3 +186,86 @@ def test_manifest_symlink_escape_is_rejected(tmp_path: Path) -> None:
 
     assert not result.valid
     assert {issue.code for issue in result.errors} == {"manifest_path_unsafe"}
+
+
+@pytest.mark.parametrize("effect_name", ["aliases", "mutated_storages"])
+@pytest.mark.parametrize("malformed", [1, "invalid", {}, None])
+def test_non_array_effect_is_structured_error(
+    tmp_path: Path, effect_name: str, malformed
+) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    manifest["nodes"][0]["effects"][effect_name] = malformed
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+
+    assert not result.valid
+    assert "effect_schema_invalid" in {issue.code for issue in result.errors}
+
+
+@pytest.mark.parametrize("effect_name", ["aliases", "mutated_storages"])
+def test_nested_malformed_effect_entries_do_not_escape_validator(
+    tmp_path: Path, effect_name: str
+) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    manifest["nodes"][0]["effects"][effect_name] = [
+        1,
+        "invalid",
+        None,
+        ["nested"],
+        {},
+    ]
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+
+    assert not result.valid
+    assert "effect_schema_invalid" in {issue.code for issue in result.errors}
+
+
+def test_arbitrary_json_manifest_never_leaks_validation_exception(
+    tmp_path: Path,
+) -> None:
+    rng = random.Random(0)
+    root = tmp_path / "fuzz"
+    root.mkdir()
+    manifest_path = root / "testcase.json"
+    keys = (
+        "format",
+        "format_version",
+        "reproducible",
+        "inputs",
+        "outputs",
+        "values",
+        "nodes",
+        "id",
+        "value_id",
+        "producer",
+        "consumers",
+        "effects",
+        "aliases",
+        "mutated_storages",
+        "storage_id",
+        "version_before",
+        "version_after",
+        "kind",
+        "payload",
+    )
+
+    def arbitrary(depth: int):
+        scalars = [None, True, False, rng.randint(-3, 3), rng.random(), "value"]
+        if depth <= 0:
+            return rng.choice(scalars)
+        choice = rng.randrange(3)
+        if choice == 0:
+            return rng.choice(scalars)
+        if choice == 1:
+            return [arbitrary(depth - 1) for _ in range(rng.randrange(5))]
+        return {
+            rng.choice(keys): arbitrary(depth - 1) for _ in range(rng.randrange(6))
+        }
+
+    for _ in range(500):
+        manifest_path.write_text(json.dumps(arbitrary(4)), encoding="utf-8")
+        result = validate_testcase(root)
+        assert result.root == root.resolve()

@@ -23,6 +23,8 @@ from inferref.testcase.validate import require_valid_testcase
 
 _STREAM_CHUNK_BYTES = 64 * 1024
 _RESOURCE_POLL_SECONDS = 0.02
+_ARTIFACT_SCAN_SECONDS = 0.25
+_DEADLINE_CHECK_ENTRIES = 64
 
 
 def execute_adapter(
@@ -102,11 +104,12 @@ def execute_adapter(
             windows_job = _assign_windows_kill_job(process)
         stdout_capture.start(process.stdout)
         stderr_capture.start(process.stderr)
-        process_status = _wait_with_limits(
+        process_status, artifact_scan = _wait_with_limits(
             process,
             deadline=time.monotonic() + adapter.timeout_seconds,
             output_path=output_path,
             max_artifact_bytes=adapter.max_artifact_bytes,
+            max_artifact_files=adapter.max_artifact_files,
             captures=(stdout_capture, stderr_capture),
             windows_job=windows_job,
         )
@@ -124,8 +127,11 @@ def execute_adapter(
                 "stdout_bytes": stdout_capture.observed_bytes,
                 "stderr_bytes": stderr_capture.observed_bytes,
                 "max_output_bytes_per_stream": adapter.max_output_chars,
-                "artifact_bytes": _artifact_bytes(output_path),
+                "artifact_bytes": artifact_scan.total_bytes,
+                "artifact_files": artifact_scan.files,
+                "artifact_scan_entries": artifact_scan.entries,
                 "max_artifact_bytes": adapter.max_artifact_bytes,
+                "max_artifact_files": adapter.max_artifact_files,
                 "process_tree_strategy": (
                     "windows_job_object" if os.name == "nt" else "posix_process_group"
                 ),
@@ -236,26 +242,52 @@ class _StreamCapture:
             stream.close()
 
 
+@dataclass(frozen=True)
+class _ArtifactScan:
+    total_bytes: int = 0
+    files: int = 0
+    entries: int = 0
+    limit: str | None = None
+
+
 def _wait_with_limits(
     process: subprocess.Popen[bytes],
     *,
     deadline: float,
     output_path: Path,
     max_artifact_bytes: int,
+    max_artifact_files: int,
     captures: tuple[_StreamCapture, _StreamCapture],
     windows_job: int | None,
-) -> str:
+) -> tuple[str, _ArtifactScan]:
     status = "completed"
+    artifact_scan = _ArtifactScan()
+    next_artifact_scan = time.monotonic()
     while process.poll() is None:
         if any(capture.exceeded.is_set() for capture in captures):
             status = "output_limit"
             break
-        if _artifact_bytes(output_path) > max_artifact_bytes:
-            status = "artifact_limit"
-            break
-        if time.monotonic() >= deadline:
+        now = time.monotonic()
+        if now >= deadline:
             status = "timeout"
             break
+        if now >= next_artifact_scan:
+            artifact_scan = _scan_artifacts(
+                output_path,
+                deadline=deadline,
+                max_bytes=max_artifact_bytes,
+                max_files=max_artifact_files,
+            )
+            if artifact_scan.limit == "deadline":
+                status = "timeout"
+                break
+            if artifact_scan.limit == "bytes":
+                status = "artifact_limit"
+                break
+            if artifact_scan.limit in ("files", "entries"):
+                status = "artifact_file_limit"
+                break
+            next_artifact_scan = time.monotonic() + _ARTIFACT_SCAN_SECONDS
         time.sleep(_RESOURCE_POLL_SECONDS)
 
     if windows_job is not None:
@@ -280,9 +312,20 @@ def _wait_with_limits(
                 pass
         if any(capture.exceeded.is_set() for capture in captures):
             status = "output_limit"
-        elif _artifact_bytes(output_path) > max_artifact_bytes:
+    if status == "completed":
+        artifact_scan = _scan_artifacts(
+            output_path,
+            deadline=deadline,
+            max_bytes=max_artifact_bytes,
+            max_files=max_artifact_files,
+        )
+        if artifact_scan.limit == "deadline":
+            status = "timeout"
+        elif artifact_scan.limit == "bytes":
             status = "artifact_limit"
-    return status
+        elif artifact_scan.limit in ("files", "entries"):
+            status = "artifact_file_limit"
+    return status, artifact_scan
 
 
 def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
@@ -404,11 +447,24 @@ def _close_windows_job(handle: int) -> None:
     kernel32.CloseHandle(wintypes.HANDLE(handle))
 
 
-def _artifact_bytes(root: Path) -> int:
+def _scan_artifacts(
+    root: Path,
+    *,
+    deadline: float,
+    max_bytes: int,
+    max_files: int,
+) -> _ArtifactScan:
     total = 0
+    files = 0
+    entries_seen = 0
+    # Directory-only trees are bounded too. This permits ordinary nested
+    # layouts while preventing an unbounded walk that contains no file bytes.
+    max_entries = max(1_024, max_files * 2)
     pending = [root]
     visited: set[tuple[int, int]] = set()
     while pending:
+        if time.monotonic() >= deadline:
+            return _ArtifactScan(total, files, entries_seen, "deadline")
         directory = pending.pop()
         try:
             directory_stat = directory.stat()
@@ -418,11 +474,22 @@ def _artifact_bytes(root: Path) -> int:
         if identity in visited:
             continue
         visited.add(identity)
-        try:
-            entries = tuple(directory.iterdir())
-        except OSError:
-            continue
-        for entry in entries:
+        entries = directory.iterdir()
+        while True:
+            try:
+                entry = next(entries)
+            except StopIteration:
+                break
+            except OSError:
+                break
+            entries_seen += 1
+            if entries_seen > max_entries:
+                return _ArtifactScan(total, files, entries_seen, "entries")
+            if (
+                entries_seen % _DEADLINE_CHECK_ENTRIES == 0
+                and time.monotonic() >= deadline
+            ):
+                return _ArtifactScan(total, files, entries_seen, "deadline")
             try:
                 entry_stat = entry.lstat()
                 attributes = getattr(entry_stat, "st_file_attributes", 0)
@@ -430,11 +497,17 @@ def _artifact_bytes(root: Path) -> int:
                     attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
                 )
                 if stat.S_ISLNK(entry_stat.st_mode) or is_reparse_point:
+                    files += 1
                     total += entry_stat.st_size
                 elif stat.S_ISDIR(entry_stat.st_mode):
                     pending.append(entry)
                 else:
+                    files += 1
                     total += entry_stat.st_size
+                if files > max_files:
+                    return _ArtifactScan(total, files, entries_seen, "files")
+                if total > max_bytes:
+                    return _ArtifactScan(total, files, entries_seen, "bytes")
             except OSError:
                 continue
-    return total
+    return _ArtifactScan(total, files, entries_seen)
