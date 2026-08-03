@@ -910,7 +910,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--public-attestation",
         help=(
             "write a fresh formal attestation outside the private report directory; "
-            "requires the built-in Agent runner and a clean, unchanged repository"
+            "runs an isolated built-in Agent worker and requires bound, unchanged evidence"
         ),
     )
     _add_json(q)

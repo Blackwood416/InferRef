@@ -173,21 +173,28 @@ inferref agent evaluate examples/agent_eval/rope_sign/benchmark.json \
 
 When Claude Code must use a local provider configuration, pass it only at run
 time with `--claude-settings /path/to/settings.json`. A custom provider can also
-select its concrete model with `--claude-model MODEL`. The evaluator records the
-requested and resolved model but never copies the settings path or contents into
-the report or benchmark manifest.
+select its concrete model with `--claude-model MODEL`. The evaluator records model
+identity as `requested_only` or `cli_self_reported`, including the evidence source
+and whether a reported value matches the request. This is not provider-signed
+model identity. The settings path and contents are never copied into the report
+or benchmark manifest.
 
 The private report contains bounded CLI output. A formal public attestation can
-only be emitted by the built-in Codex/Claude CLI runner from a clean Git worktree;
-injected drivers produce explicitly labelled development evidence. Attestation
-v0.3 binds repository state both before and after evaluation, the benchmark bytes
-loaded by the evaluator, a manifest/hash of the complete imported `inferref`
-source tree, runtime and distribution metadata, the sealed MCP audit, final patch,
+only be emitted by a fresh `python -I` worker; ordinary Python API runs and
+injected drivers produce explicitly labelled development evidence. The worker
+resolves each Agent command once, uses that exact command for `--version` and
+execution, and hashes every executable component before version detection, after
+version detection, and after the Agent exits. On Windows this binds `node.exe` and
+`codex.js` separately for Codex, and the actual Claude executable for Claude.
+
+Attestation v0.4 binds repository, runtime, distribution, evaluator source and
+benchmark evidence before and after evaluation, plus the Agent command-chain
+hashes, an argv-policy hash, model evidence level, sealed MCP audit, final patch,
 visible/holdout results, transcript hashes, duration, and available usage/cost.
-It excludes reasoning, credentials, reference payloads, and absolute local paths.
-Full model event streams remain untracked. Ordinary CI uses a deterministic fake
-Agent to test this evaluator and produces development evidence; it does not spend
-model tokens or claim autonomous repair.
+It excludes reasoning, credentials, reference payloads, executable absolute paths,
+and local settings paths. Full model event streams remain untracked. Ordinary CI
+uses a deterministic fake Agent to test this evaluator and produces development
+evidence; it does not spend model tokens or claim autonomous repair.
 The machine-readable contract lives in
 [`benchmark.json`](examples/agent_eval/rope_sign/benchmark.json).
 

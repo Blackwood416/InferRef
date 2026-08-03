@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-08-03 | [Agent identity provenance hardening](2026-08-03-agent-identity-provenance.md) | Isolated formal worker; executable-chain hashes; model evidence levels; runtime interval; 435 tests |
 | 2026-08-03 | [Formal attestation v0.3 dual-Agent PASS](2026-08-03-formal-attestation-v03-pass.md) | Built-in runner; clean/unchanged evidence; Codex + DeepSeek/Claude Code 2/2; CI 19/19 |
 | 2026-08-03 | [Agent attestation provenance hardening](2026-08-03-attestation-provenance-hardening.md) | Formal built-in runner only; before/after repository binding; audit FSM; runtime evidence; 426 tests |
 | 2026-08-03 | [Evaluation evidence and container-alias hardening](2026-08-03-evaluation-evidence-hardening.md) | Source manifest; crash-consistent audit; recursive aliases; formal v0.2 Agent gate 2/2; 414 tests |

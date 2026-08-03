@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import shlex
 import shutil
 import signal
 import subprocess
@@ -14,7 +15,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -55,11 +56,78 @@ class AgentProcessResult:
     stderr: str
     usage: dict[str, Any]
     cli_version: str | None = None
-    resolved_model: str | None = None
     transcript_error: str | None = None
+    runner_evidence: dict[str, Any] = field(default_factory=dict)
+    model_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 Driver = Callable[[str, str, EvaluationBenchmark, Path, Path, Path], AgentProcessResult]
+
+
+def _run_formal_worker(
+    benchmark_path: str | Path,
+    *,
+    agents: Sequence[str],
+    report_dir: str | Path,
+    claude_settings: str | Path | None,
+    claude_model: str | None,
+    public_attestation: str | Path,
+) -> dict[str, Any]:
+    """Execute formal evaluation in a fresh isolated Python interpreter."""
+
+    benchmark = EvaluationBenchmark.load(benchmark_path)
+    request = {
+        "benchmark": str(benchmark.source),
+        "agents": list(agents),
+        "report_dir": str(Path(report_dir).resolve()),
+        "public_attestation": str(Path(public_attestation).resolve()),
+        "claude_settings": (
+            str(Path(claude_settings).resolve())
+            if claude_settings is not None
+            else None
+        ),
+        "claude_model": claude_model,
+    }
+    timeout = benchmark.max_wall_seconds * max(1, len(set(agents))) + 180
+    with tempfile.TemporaryDirectory(prefix="inferref-formal-worker-") as temporary:
+        request_path = Path(temporary) / "request.json"
+        request_path.write_text(
+            json.dumps(request, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        try:
+            completed = subprocess.run(
+                [
+                    str(Path(sys.executable).resolve()),
+                    "-I",
+                    "-m",
+                    "inferref.agent.evaluation_worker",
+                    "--request",
+                    str(request_path),
+                ],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                check=False,
+                shell=False,
+                timeout=timeout,
+                text=True,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("formal evaluation worker timed out") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()[:2048]
+        raise RuntimeError(
+            f"formal evaluation worker failed with code {completed.returncode}: {detail}"
+        )
+    report_path = Path(request["report_dir"]) / "report.json"
+    try:
+        report = json.loads(_read_regular_file(report_path))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "formal evaluation worker did not produce a valid report"
+        ) from exc
+    if not isinstance(report, dict):
+        raise TypeError("formal evaluation worker report root is not an object")
+    return report
 
 
 def evaluate_benchmark(
@@ -72,6 +140,42 @@ def evaluate_benchmark(
     claude_model: str | None = None,
     public_attestation: str | Path | None = None,
 ) -> dict[str, Any]:
+    """Run a development evaluation or delegate formal publication to a worker."""
+
+    if public_attestation is not None:
+        if driver is not None:
+            raise ValueError(
+                "formal public attestation requires the isolated built-in Agent worker"
+            )
+        return _run_formal_worker(
+            benchmark_path,
+            agents=agents,
+            report_dir=report_dir,
+            claude_settings=claude_settings,
+            claude_model=claude_model,
+            public_attestation=public_attestation,
+        )
+    return _evaluate_benchmark_core(
+        benchmark_path,
+        agents=agents,
+        report_dir=report_dir,
+        driver=driver,
+        claude_settings=claude_settings,
+        claude_model=claude_model,
+    )
+
+
+def _evaluate_benchmark_core(
+    benchmark_path: str | Path,
+    *,
+    agents: Sequence[str],
+    report_dir: str | Path,
+    driver: Driver | None = None,
+    claude_settings: str | Path | None = None,
+    claude_model: str | None = None,
+    public_attestation: str | Path | None = None,
+    formal_worker_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     benchmark = EvaluationBenchmark.load(benchmark_path)
     selected = tuple(dict.fromkeys(agents))
     if not selected or any(name not in benchmark.drivers for name in selected):
@@ -82,12 +186,18 @@ def evaluate_benchmark(
     public_attestation_path = (
         Path(public_attestation).resolve() if public_attestation is not None else None
     )
-    runner_mode = "builtin_cli" if driver is None else "custom_driver"
-    if public_attestation_path is not None and driver is not None:
-        raise ValueError("formal public attestation requires the built-in Agent driver")
+    if formal_worker_evidence is not None and (
+        public_attestation_path is None or driver is not None
+    ):
+        raise ValueError("formal worker requires built-in drivers and a public output")
+    runner_mode = (
+        "isolated_builtin_cli_worker"
+        if formal_worker_evidence is not None
+        else ("builtin_driver_path" if driver is None else "custom_driver")
+    )
     repository_before = _repository_evidence(benchmark.directory)
     evaluator_source_before = _evaluator_source_manifest()
-    runtime = _runtime_evidence(benchmark.directory)
+    runtime_before = _runtime_evidence(benchmark.directory)
     if public_attestation_path is not None and (
         repository_before["commit"] is None or repository_before["dirty"]
     ):
@@ -173,12 +283,34 @@ def evaluate_benchmark(
         )
     repository_after = _repository_evidence(benchmark.directory)
     evaluator_source_after = _evaluator_source_manifest()
+    runtime_after = _runtime_evidence(benchmark.directory)
     repository_unchanged = repository_after == repository_before
     evaluator_unchanged = evaluator_source_after == evaluator_source_before
+    runtime_unchanged = runtime_after == runtime_before
     benchmark_after_sha256 = _sha256_or_none(benchmark.source)
     benchmark_unchanged = benchmark_after_sha256 == benchmark.source_sha256
+    runner_integrity = (
+        None
+        if driver is not None
+        else all(
+            _runner_evidence_valid(item["process"].get("runner")) for item in results
+        )
+    )
+    model_evidence_valid = (
+        None
+        if driver is not None
+        else all(
+            _model_evidence_valid(item["process"].get("model_evidence"), item["agent"])
+            for item in results
+        )
+    )
     host_unchanged = (
-        repository_unchanged and evaluator_unchanged and benchmark_unchanged
+        repository_unchanged
+        and evaluator_unchanged
+        and benchmark_unchanged
+        and runtime_unchanged
+        and runner_integrity is not False
+        and model_evidence_valid is not False
     )
     passed_count = sum(item["status"] == "pass" for item in results)
     passed = passed_count >= benchmark.success.required_agent_passes and host_unchanged
@@ -200,6 +332,9 @@ def evaluate_benchmark(
             "repository_unchanged": repository_unchanged,
             "evaluator_source_unchanged": evaluator_unchanged,
             "benchmark_source_unchanged": benchmark_unchanged,
+            "runtime_unchanged": runtime_unchanged,
+            "agent_command_chains_unchanged": runner_integrity,
+            "agent_model_evidence_valid": model_evidence_valid,
         },
         "agents": results,
     }
@@ -214,11 +349,17 @@ def evaluate_benchmark(
         and not repository_after["dirty"]
     )
     if public_attestation_path is not None and not (
-        formal_repository_valid and evaluator_unchanged and benchmark_unchanged
+        _formal_worker_evidence_valid(formal_worker_evidence)
+        and formal_repository_valid
+        and evaluator_unchanged
+        and benchmark_unchanged
+        and runtime_unchanged
+        and runner_integrity is True
+        and model_evidence_valid is True
     ):
         raise RuntimeError(
-            "formal public attestation refused because repository, evaluator, or "
-            "benchmark evidence changed during the run"
+            "formal public attestation refused because repository, evaluator, "
+            "benchmark, runtime, or Agent command evidence changed during the run"
         )
     attestation = build_public_attestation(
         benchmark,
@@ -232,7 +373,10 @@ def evaluate_benchmark(
         evaluator_source=evaluator_source_before,
         evaluator_unchanged=evaluator_unchanged,
         benchmark_unchanged=benchmark_unchanged,
-        runtime=runtime,
+        runtime_before=runtime_before,
+        runtime_after=runtime_after,
+        runtime_unchanged=runtime_unchanged,
+        formal_worker_evidence=formal_worker_evidence,
     )
     attestation_path = report_root / "attestation.json"
     _write_new_json(attestation_path, attestation)
@@ -254,7 +398,10 @@ def build_public_attestation(
     evaluator_source: dict[str, Any] | None = None,
     evaluator_unchanged: bool = True,
     benchmark_unchanged: bool = True,
-    runtime: dict[str, Any] | None = None,
+    runtime_before: dict[str, Any] | None = None,
+    runtime_after: dict[str, Any] | None = None,
+    runtime_unchanged: bool | None = None,
+    formal_worker_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     agents = []
     for result in report["agents"]:
@@ -264,8 +411,8 @@ def build_public_attestation(
         agents.append(
             {
                 "agent": agent,
-                "requested_model": result["model"],
-                "resolved_model": result["process"]["resolved_model"],
+                "model": result["process"]["model_evidence"],
+                "runner": result["process"]["runner"],
                 "cli_version": result["process"]["cli_version"],
                 "status": result["status"],
                 "classification": result["classification"],
@@ -296,9 +443,13 @@ def build_public_attestation(
     if repository_unchanged is None:
         repository_unchanged = repository_before == repository_after
     evaluator_source = evaluator_source or _evaluator_source_manifest()
-    runtime = runtime or _runtime_evidence(benchmark.directory)
+    runtime_before = runtime_before or _runtime_evidence(benchmark.directory)
+    runtime_after = runtime_after or _runtime_evidence(benchmark.directory)
+    if runtime_unchanged is None:
+        runtime_unchanged = runtime_before == runtime_after
     formal = (
-        runner_mode == "builtin_cli"
+        _formal_worker_evidence_valid(formal_worker_evidence)
+        and runner_mode == "isolated_builtin_cli_worker"
         and repository_unchanged
         and repository_before["commit"] is not None
         and repository_after["commit"] is not None
@@ -306,13 +457,19 @@ def build_public_attestation(
         and not repository_after["dirty"]
         and evaluator_unchanged
         and benchmark_unchanged
+        and runtime_unchanged
+        and all(_runner_evidence_valid(agent["runner"]) for agent in agents)
+        and all(
+            _model_evidence_valid(agent["model"], agent["agent"]) for agent in agents
+        )
     )
     return {
         "format": "inferref-agent-evaluation-attestation",
-        "format_version": "0.3",
+        "format_version": "0.4",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "attestation_level": "formal" if formal else "development",
         "runner_mode": runner_mode,
+        "worker": formal_worker_evidence,
         "repository": {
             "before": repository_before,
             "after": repository_after,
@@ -331,7 +488,11 @@ def build_public_attestation(
             "source_tree_unchanged": evaluator_unchanged,
             "files": evaluator_source["files"],
         },
-        "runtime": runtime,
+        "runtime": {
+            "before": runtime_before,
+            "after": runtime_after,
+            "unchanged": runtime_unchanged,
+        },
         "report_json_sha256": _sha256_or_none(report_path),
         "status": report["status"],
         "acceptance": report["acceptance"],
@@ -397,6 +558,11 @@ def assess_candidate(
     if process.timed_out:
         classification = "infrastructure_failure"
         message = "Agent process exceeded the wall-clock limit"
+    elif process.runner_evidence and not _runner_evidence_valid(
+        process.runner_evidence
+    ):
+        classification = "integrity_failure"
+        message = "Agent executable command chain changed during execution"
     elif process.transcript_error is not None:
         classification = "infrastructure_failure"
         message = process.transcript_error
@@ -483,7 +649,9 @@ def assess_candidate(
         "message": message,
         "process": {
             "cli_version": process.cli_version,
-            "resolved_model": process.resolved_model,
+            "model_evidence": process.model_evidence
+            or _model_evidence(agent, model, None, "unavailable"),
+            "runner": process.runner_evidence,
             "transcript_error": process.transcript_error,
             "exit_code": process.exit_code,
             "timed_out": process.timed_out,
@@ -547,6 +715,10 @@ def run_agent_cli(
     claude_model_override: str | None = None,
 ) -> AgentProcessResult:
     session_root.mkdir(parents=True, exist_ok=True)
+    resolved_executable = _agent_executable(agent)
+    components_before = _command_component_evidence(resolved_executable)
+    cli_version = _agent_version(resolved_executable)
+    components_after_version = _command_component_evidence(resolved_executable)
     command = _agent_command(
         agent,
         model,
@@ -554,6 +726,7 @@ def run_agent_cli(
         workspace,
         session_root,
         audit_path,
+        executable=resolved_executable,
         claude_settings=claude_settings,
         claude_model_override=claude_model_override,
     )
@@ -564,11 +737,31 @@ def run_agent_cli(
         stdout_path=session_root.parent / "agent.stdout.jsonl",
         stderr_path=session_root.parent / "agent.stderr.log",
     )
+    components_after = _command_component_evidence(resolved_executable)
+    components_unchanged = (
+        components_before == components_after_version == components_after
+        and all(item.get("sha256") for item in components_after)
+    )
     return replace(
         result,
-        cli_version=_agent_version(agent),
-        resolved_model=_agent_model_from_events(result.stdout_path),
+        cli_version=cli_version,
         transcript_error=_validate_event_stream(result.stdout_path),
+        runner_evidence={
+            "kind": agent,
+            "command_components": {
+                "before": components_before,
+                "after_version": components_after_version,
+                "after": components_after,
+            },
+            "components_unchanged": components_unchanged,
+            "argv_policy_sha256": hashlib.sha256(
+                json.dumps(command, ensure_ascii=False, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
+            "version_output": cli_version,
+        },
+        model_evidence=_agent_model_evidence(agent, model, result.stdout_path),
     )
 
 
@@ -605,9 +798,11 @@ def _agent_command(
     session_root: Path,
     audit_path: Path,
     *,
+    executable: Sequence[str] | None = None,
     claude_settings: str | Path | None = None,
     claude_model_override: str | None = None,
 ) -> list[str]:
+    executable = tuple(executable or _agent_executable(agent))
     server_args = [
         "-m",
         "inferref.agent.evaluation_mcp",
@@ -623,7 +818,7 @@ def _agent_command(
     prompt = _candidate_prompt(benchmark)
     if agent == "codex":
         return [
-            *_agent_executable("codex"),
+            *executable,
             "exec",
             "--ignore-user-config",
             "--ephemeral",
@@ -671,7 +866,7 @@ def _agent_command(
             "mcp__inferref__inferref_context,mcp__inferref__inferref_run_engine"
         )
         command = [
-            *_agent_executable("claude"),
+            *executable,
             prompt,
             "--print",
             "--output-format",
@@ -714,7 +909,30 @@ def _agent_executable(agent: str) -> list[str]:
         executable = shutil.which(agent)
         if executable is None:
             raise FileNotFoundError(f"Agent CLI is not installed: {agent}")
-        return [executable]
+        entry = Path(executable).resolve(strict=True)
+        try:
+            first_line = (
+                _read_regular_file(entry)
+                .splitlines()[0]
+                .decode("utf-8", errors="strict")
+            )
+        except (OSError, UnicodeError, IndexError):
+            return [str(entry)]
+        if not first_line.startswith("#!"):
+            return [str(entry)]
+        shebang = shlex.split(first_line[2:].strip())
+        if not shebang:
+            return [str(entry)]
+        if Path(shebang[0]).name == "env" and len(shebang) >= 2:
+            interpreter_name = shebang[-1]
+            interpreter = shutil.which(interpreter_name)
+        else:
+            interpreter = shebang[0]
+        if interpreter is None:
+            raise FileNotFoundError(
+                f"cannot resolve interpreter for Agent CLI: {agent}"
+            )
+        return [str(Path(interpreter).resolve(strict=True)), str(entry)]
     shim = shutil.which(agent)
     if shim is None:
         raise FileNotFoundError(f"Agent CLI is not installed: {agent}")
@@ -729,19 +947,126 @@ def _agent_executable(agent: str) -> list[str]:
             / "claude.exe"
         )
         if native.is_file():
-            return [str(native)]
+            return [str(native.resolve(strict=True))]
     if agent == "codex":
         script = npm_root / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
         node = shutil.which("node.exe") or shutil.which("node")
         if script.is_file() and node is not None:
-            return [node, str(script)]
+            return [
+                str(Path(node).resolve(strict=True)),
+                str(script.resolve(strict=True)),
+            ]
     raise FileNotFoundError(f"cannot resolve native executable behind {shim}")
 
 
-def _agent_version(agent: str) -> str | None:
+def _command_component_evidence(executable: Sequence[str]) -> list[dict[str, Any]]:
+    roles = (
+        ["cli_executable"]
+        if len(executable) == 1
+        else ["runtime", "cli_entry", *("component" for _ in executable[2:])]
+    )
+    evidence = []
+    for role, raw_path in zip(roles, executable, strict=True):
+        path = Path(raw_path)
+        try:
+            payload = _read_regular_file(path)
+        except OSError as exc:
+            evidence.append(
+                {
+                    "role": role,
+                    "name": path.name,
+                    "size": None,
+                    "sha256": None,
+                    "error": str(exc)[:256],
+                }
+            )
+        else:
+            evidence.append(
+                {
+                    "role": role,
+                    "name": path.name,
+                    "size": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "error": None,
+                }
+            )
+    return evidence
+
+
+def _runner_evidence_valid(evidence: Any) -> bool:
+    if (
+        not isinstance(evidence, dict)
+        or evidence.get("components_unchanged") is not True
+    ):
+        return False
+    snapshots = evidence.get("command_components")
+    if not isinstance(snapshots, dict):
+        return False
+    if evidence.get("kind") not in {"codex", "claude"}:
+        return False
+    argv_digest = evidence.get("argv_policy_sha256")
+    if not isinstance(argv_digest, str) or len(argv_digest) != 64:
+        return False
+    if (
+        not isinstance(evidence.get("version_output"), str)
+        or not evidence["version_output"]
+    ):
+        return False
+    before = snapshots.get("before")
+    after_version = snapshots.get("after_version")
+    after = snapshots.get("after")
+    if not isinstance(before, list) or before != after_version or before != after:
+        return False
+    return bool(before) and all(
+        isinstance(item, dict)
+        and item.get("role") in {"runtime", "cli_entry", "cli_executable", "component"}
+        and isinstance(item.get("name"), str)
+        and bool(item["name"])
+        and isinstance(item.get("sha256"), str)
+        and len(item["sha256"]) == 64
+        for item in before
+    )
+
+
+def _formal_worker_evidence_valid(evidence: Any) -> bool:
+    return (
+        isinstance(evidence, dict)
+        and evidence.get("python_isolated") is True
+        and evidence.get("entry_module") == "inferref.agent.evaluation_worker"
+        and isinstance(evidence.get("launch_policy_sha256"), str)
+        and len(evidence["launch_policy_sha256"]) == 64
+    )
+
+
+def _model_evidence_valid(evidence: Any, agent: str) -> bool:
+    if not isinstance(evidence, dict) or evidence.get("agent") != agent:
+        return False
+    requested = evidence.get("requested")
+    reported = evidence.get("reported")
+    level = evidence.get("identity_level")
+    if not isinstance(requested, str) or not requested:
+        return False
+    if reported is None:
+        return (
+            level == "requested_only"
+            and evidence.get("matches_request") is None
+            and evidence.get("evidence_source") == "unavailable"
+            and evidence.get("provider_verified") is False
+        )
+    return (
+        isinstance(reported, str)
+        and bool(reported)
+        and level == "cli_self_reported"
+        and evidence.get("matches_request") == (reported == requested)
+        and isinstance(evidence.get("evidence_source"), str)
+        and evidence.get("provider_verified") is False
+    )
+
+
+def _agent_version(executable: Sequence[str]) -> str | None:
     try:
         completed = subprocess.run(
-            [*_agent_executable(agent), "--version"],
+            [*executable, "--version"],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             check=False,
@@ -755,9 +1080,9 @@ def _agent_version(agent: str) -> str | None:
     return version[:256] or None
 
 
-def _agent_model_from_events(path: Path) -> str | None:
+def _claude_model_from_events(path: Path) -> tuple[str | None, str]:
     if not path.is_file():
-        return None
+        return None, "unavailable"
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             event = json.loads(line)
@@ -769,8 +1094,58 @@ def _agent_model_from_events(path: Path) -> str | None:
             and event.get("subtype") == "init"
             and isinstance(event.get("model"), str)
         ):
-            return event["model"][:256]
-    return None
+            return event["model"][:256], "cli_system_init_event"
+    return None, "unavailable"
+
+
+def _codex_model_from_events(path: Path) -> tuple[str | None, str]:
+    if not path.is_file():
+        return None, "unavailable"
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        event_type = event.get("type")
+        model = event.get("model")
+        if event_type in {
+            "thread.started",
+            "turn.started",
+            "session.configured",
+        } and isinstance(model, str):
+            return model[:256], f"codex_{event_type.replace('.', '_')}_event"
+    return None, "unavailable"
+
+
+def _agent_reported_model(agent: str, path: Path) -> tuple[str | None, str]:
+    if agent == "codex":
+        return _codex_model_from_events(path)
+    if agent == "claude":
+        return _claude_model_from_events(path)
+    return None, "unavailable"
+
+
+def _agent_model_evidence(agent: str, requested: str, path: Path) -> dict[str, Any]:
+    reported, source = _agent_reported_model(agent, path)
+    return _model_evidence(agent, requested, reported, source)
+
+
+def _model_evidence(
+    agent: str, requested: str, reported: str | None, source: str
+) -> dict[str, Any]:
+    return {
+        "requested": requested,
+        "reported": reported,
+        "evidence_source": source,
+        "matches_request": reported == requested if reported is not None else None,
+        "identity_level": (
+            "cli_self_reported" if reported is not None else "requested_only"
+        ),
+        "provider_verified": False,
+        "agent": agent,
+    }
 
 
 def _agent_api_failure(path: Path) -> str | None:

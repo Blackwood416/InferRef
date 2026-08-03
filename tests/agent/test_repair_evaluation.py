@@ -16,7 +16,7 @@ mcp = pytest.importorskip("mcp")
 
 from mcp import Client
 
-from inferref.agent import evaluation_host
+from inferref.agent import evaluation_host, evaluation_worker
 from inferref.agent.evaluation import (
     CANDIDATE_URI,
     RUNS_URI,
@@ -102,6 +102,66 @@ def _fake_repair_driver(
     _exercise_required_tools(session, repair=True)
     session.finalize_audit()
     return _process(session_root.parent)
+
+
+def _valid_runner_evidence(agent: str) -> dict[str, object]:
+    components = [
+        {
+            "role": "cli_executable",
+            "name": f"{agent}.exe",
+            "size": 123,
+            "sha256": "a" * 64,
+            "error": None,
+        }
+    ]
+    return {
+        "kind": agent,
+        "command_components": {
+            "before": components,
+            "after_version": components,
+            "after": components,
+        },
+        "components_unchanged": True,
+        "argv_policy_sha256": "b" * 64,
+        "version_output": f"{agent} test-version",
+    }
+
+
+def _valid_worker_evidence() -> dict[str, object]:
+    return {
+        "python_isolated": True,
+        "entry_module": "inferref.agent.evaluation_worker",
+        "launch_policy_sha256": "c" * 64,
+    }
+
+
+def _fake_builtin_driver(
+    agent: str,
+    model: str,
+    benchmark: EvaluationBenchmark,
+    workspace: Path,
+    session_root: Path,
+    audit_path: Path,
+    **kwargs: object,
+) -> AgentProcessResult:
+    del kwargs
+    process = _fake_repair_driver(
+        agent, model, benchmark, workspace, session_root, audit_path
+    )
+    return replace(
+        process,
+        cli_version=f"{agent} test-version",
+        runner_evidence=_valid_runner_evidence(agent),
+        model_evidence={
+            "requested": model,
+            "reported": None,
+            "evidence_source": "unavailable",
+            "matches_request": None,
+            "identity_level": "requested_only",
+            "provider_verified": False,
+            "agent": agent,
+        },
+    )
 
 
 def test_v02_contract_and_workspace_hide_host_assets(tmp_path: Path) -> None:
@@ -632,40 +692,18 @@ def test_success_policy_controls_required_agent_passes(tmp_path: Path) -> None:
     assert report["acceptance"]["policy"] == manifest["success"]
 
 
-def test_public_attestation_omits_private_transcript_and_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_development_attestation_omits_private_transcript_and_paths(
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(
-        evaluation_host,
-        "_repository_evidence",
-        lambda path: {
-            "commit": "a" * 40,
-            "dirty": False,
-            "status_sha256": hashlib.sha256(b"").hexdigest(),
-            "git_diff_sha256": hashlib.sha256(b"").hexdigest(),
-            "git_available": True,
-        },
-    )
-    monkeypatch.setattr(
-        evaluation_host,
-        "run_agent_cli",
-        lambda name, model, benchmark, workspace, session_root, audit_path, **kwargs: (
-            _fake_repair_driver(
-                name, model, benchmark, workspace, session_root, audit_path
-            )
-        ),
-    )
-    public_path = tmp_path / "public" / "attestation.json"
     report_root = tmp_path / "private-report"
     report = evaluate_benchmark(
         BENCHMARK_PATH,
         agents=("codex", "claude"),
         report_dir=report_root,
-        public_attestation=public_path,
+        driver=_fake_repair_driver,
     )
 
-    attestation = json.loads(public_path.read_text(encoding="utf-8"))
-    assert attestation == json.loads(
+    attestation = json.loads(
         (report_root / "attestation.json").read_text(encoding="utf-8")
     )
     assert attestation["status"] == report["status"] == "pass"
@@ -673,11 +711,9 @@ def test_public_attestation_omits_private_transcript_and_paths(
     assert all(agent["engine_patch"] for agent in attestation["agents"])
     assert all(agent["final_engine_sha256"] for agent in attestation["agents"])
     assert all(agent["raw_transcript_sha256"] for agent in attestation["agents"])
-    assert attestation["format_version"] == "0.3"
-    assert attestation["attestation_level"] == "formal"
-    assert attestation["runner_mode"] == "builtin_cli"
-    assert attestation["repository"]["before"]["dirty"] is False
-    assert attestation["repository"]["after"]["dirty"] is False
+    assert attestation["format_version"] == "0.4"
+    assert attestation["attestation_level"] == "development"
+    assert attestation["runner_mode"] == "custom_driver"
     assert attestation["repository"]["unchanged"] is True
     assert (
         attestation["benchmark"]["loaded_source_sha256"] == _benchmark().source_sha256
@@ -693,11 +729,12 @@ def test_public_attestation_omits_private_transcript_and_paths(
         "inferref/agent/protocol.py",
         "inferref/agent/adapter.py",
     } <= set(attestation["evaluator"]["files"])
-    assert attestation["runtime"]["python"]
-    assert attestation["runtime"]["numpy"]
-    assert attestation["runtime"]["inferref"] == "0.3.0"
-    assert attestation["runtime"]["byteorder"] in {"little", "big"}
-    assert attestation["runtime"]["import"]["mode"] == "repository_source"
+    assert attestation["runtime"]["unchanged"] is True
+    assert attestation["runtime"]["before"]["python"]
+    assert attestation["runtime"]["before"]["numpy"]
+    assert attestation["runtime"]["before"]["inferref"] == "0.3.0"
+    assert attestation["runtime"]["before"]["byteorder"] in {"little", "big"}
+    assert attestation["runtime"]["before"]["import"]["mode"] == "repository_source"
     assert attestation["report_json_sha256"]
     rendered = json.dumps(attestation)
     assert str(tmp_path) not in rendered
@@ -707,7 +744,7 @@ def test_public_attestation_omits_private_transcript_and_paths(
 
 
 def test_formal_public_attestation_rejects_custom_driver(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="built-in Agent driver"):
+    with pytest.raises(ValueError, match="isolated built-in Agent worker"):
         evaluate_benchmark(
             BENCHMARK_PATH,
             agents=("codex",),
@@ -717,6 +754,75 @@ def test_formal_public_attestation_rejects_custom_driver(tmp_path: Path) -> None
         )
 
     assert not (tmp_path / "report").exists()
+
+
+def test_public_attestation_delegates_to_isolated_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel = {"status": "pass", "source": "worker"}
+    captured: dict[str, object] = {}
+
+    def fake_worker(benchmark_path: str | Path, **kwargs: object) -> dict[str, object]:
+        captured["benchmark"] = benchmark_path
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(evaluation_host, "_run_formal_worker", fake_worker)
+    monkeypatch.setattr(
+        evaluation_host,
+        "run_agent_cli",
+        lambda *args, **kwargs: pytest.fail("parent run_agent_cli must not execute"),
+    )
+
+    result = evaluate_benchmark(
+        BENCHMARK_PATH,
+        agents=("codex", "claude"),
+        report_dir=tmp_path / "report",
+        public_attestation=tmp_path / "public.json",
+    )
+
+    assert result is sentinel
+    assert captured["agents"] == ("codex", "claude")
+    assert captured["public_attestation"] == tmp_path / "public.json"
+
+
+def test_formal_worker_launches_isolated_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        report_root = tmp_path / "report"
+        report_root.mkdir()
+        (report_root / "report.json").write_text(
+            json.dumps({"status": "pass"}), encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(evaluation_host.subprocess, "run", fake_run)
+
+    report = evaluation_host._run_formal_worker(
+        BENCHMARK_PATH,
+        agents=("codex",),
+        report_dir=tmp_path / "report",
+        claude_settings=None,
+        claude_model=None,
+        public_attestation=tmp_path / "public.json",
+    )
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[1:4] == ["-I", "-m", "inferref.agent.evaluation_worker"]
+    assert report == {"status": "pass"}
+
+
+def test_formal_worker_entry_refuses_nonisolated_python(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="requires Python isolated mode"):
+        evaluation_worker.run_request(tmp_path / "missing-request.json")
 
 
 def test_custom_driver_attestation_is_development_evidence(tmp_path: Path) -> None:
@@ -736,6 +842,94 @@ def test_custom_driver_attestation_is_development_evidence(tmp_path: Path) -> No
     assert attestation["attestation_level"] == "development"
 
 
+def test_formal_attestation_level_requires_worker_and_bound_runner(
+    tmp_path: Path,
+) -> None:
+    report_root = tmp_path / "report"
+    report = evaluate_benchmark(
+        BENCHMARK_PATH,
+        agents=("codex",),
+        report_dir=report_root,
+        driver=_fake_repair_driver,
+    )
+    report["agents"][0]["process"]["runner"] = _valid_runner_evidence("codex")
+    report["agents"][0]["process"]["model_evidence"] = {
+        "requested": "gpt-5.6-sol",
+        "reported": None,
+        "evidence_source": "unavailable",
+        "matches_request": None,
+        "identity_level": "requested_only",
+        "provider_verified": False,
+        "agent": "codex",
+    }
+    clean = {
+        "commit": "a" * 40,
+        "dirty": False,
+        "status_sha256": hashlib.sha256(b"").hexdigest(),
+        "git_diff_sha256": hashlib.sha256(b"").hexdigest(),
+        "git_available": True,
+    }
+    runtime = {"python": "test"}
+    arguments = {
+        "report_root": report_root,
+        "report_path": report_root / "report.json",
+        "runner_mode": "isolated_builtin_cli_worker",
+        "repository_before": clean,
+        "repository_after": clean,
+        "repository_unchanged": True,
+        "evaluator_unchanged": True,
+        "benchmark_unchanged": True,
+        "runtime_before": runtime,
+        "runtime_after": runtime,
+        "runtime_unchanged": True,
+    }
+
+    development = evaluation_host.build_public_attestation(
+        _benchmark(), report, formal_worker_evidence=None, **arguments
+    )
+    formal = evaluation_host.build_public_attestation(
+        _benchmark(),
+        report,
+        formal_worker_evidence=_valid_worker_evidence(),
+        **arguments,
+    )
+
+    assert development["attestation_level"] == "development"
+    assert formal["attestation_level"] == "formal"
+    assert formal["format_version"] == "0.4"
+    assert formal["worker"] == _valid_worker_evidence()
+    assert formal["agents"][0]["model"]["identity_level"] == "requested_only"
+    assert formal["agents"][0]["runner"]["components_unchanged"] is True
+
+
+def test_runtime_is_rechecked_after_agent_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence = iter(({"python": "before"}, {"python": "after"}))
+    monkeypatch.setattr(
+        evaluation_host, "_runtime_evidence", lambda path: next(evidence)
+    )
+
+    report_root = tmp_path / "report"
+    report = evaluate_benchmark(
+        BENCHMARK_PATH,
+        agents=("codex",),
+        report_dir=report_root,
+        driver=_fake_repair_driver,
+    )
+    attestation = json.loads(
+        (report_root / "attestation.json").read_text(encoding="utf-8")
+    )
+
+    assert report["status"] == "fail"
+    assert report["host_integrity"]["runtime_unchanged"] is False
+    assert attestation["runtime"] == {
+        "before": {"python": "before"},
+        "after": {"python": "after"},
+        "unchanged": False,
+    }
+
+
 def test_formal_public_attestation_rejects_dirty_repository(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -752,11 +946,12 @@ def test_formal_public_attestation_rejects_dirty_repository(
     )
 
     with pytest.raises(RuntimeError, match="clean Git worktree"):
-        evaluate_benchmark(
+        evaluation_host._evaluate_benchmark_core(
             BENCHMARK_PATH,
             agents=("codex",),
             report_dir=tmp_path / "report",
             public_attestation=tmp_path / "public.json",
+            formal_worker_evidence=_valid_worker_evidence(),
         )
 
     assert not (tmp_path / "report").exists()
@@ -780,19 +975,16 @@ def test_formal_attestation_rechecks_repository_after_agents(
     monkeypatch.setattr(
         evaluation_host,
         "run_agent_cli",
-        lambda name, model, benchmark, workspace, session_root, audit_path, **kwargs: (
-            _fake_repair_driver(
-                name, model, benchmark, workspace, session_root, audit_path
-            )
-        ),
+        _fake_builtin_driver,
     )
 
     with pytest.raises(RuntimeError, match="changed during the run"):
-        evaluate_benchmark(
+        evaluation_host._evaluate_benchmark_core(
             BENCHMARK_PATH,
             agents=("codex",),
             report_dir=tmp_path / "report",
             public_attestation=tmp_path / "public.json",
+            formal_worker_evidence=_valid_worker_evidence(),
         )
 
     report = json.loads((tmp_path / "report" / "report.json").read_text())
@@ -1006,6 +1198,134 @@ def test_codex_driver_ignores_user_plugins_and_mcp_config(
     assert not any("node_repl" in item for item in command)
 
 
+def test_agent_runner_resolves_once_and_binds_executable_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    benchmark = _benchmark()
+    runtime = tmp_path / "node.exe"
+    entry = tmp_path / "codex.js"
+    runtime.write_bytes(b"node-runtime")
+    entry.write_bytes(b"codex-entry")
+    resolutions = 0
+
+    def resolve(agent: str) -> list[str]:
+        nonlocal resolutions
+        resolutions += 1
+        assert agent == "codex"
+        return [str(runtime), str(entry)]
+
+    def version(executable: list[str]) -> str:
+        assert executable == [str(runtime), str(entry)]
+        return "codex-cli test"
+
+    def run_process(
+        command: list[str],
+        *,
+        cwd: Path,
+        timeout_seconds: float,
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> AgentProcessResult:
+        del cwd, timeout_seconds
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        stdout_path.write_text(
+            json.dumps({"type": "thread.started", "thread_id": "test"}) + "\n",
+            encoding="utf-8",
+        )
+        stderr_path.write_text("", encoding="utf-8")
+        return AgentProcessResult(
+            command=tuple(command),
+            exit_code=0,
+            timed_out=False,
+            duration_ms=1.0,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            stdout="",
+            stderr="",
+            usage={},
+        )
+
+    monkeypatch.setattr(evaluation_host, "_agent_executable", resolve)
+    monkeypatch.setattr(evaluation_host, "_agent_version", version)
+    monkeypatch.setattr(evaluation_host, "_run_process", run_process)
+
+    result = evaluation_host.run_agent_cli(
+        "codex",
+        "gpt-5.6-sol",
+        benchmark,
+        tmp_path / "workspace",
+        tmp_path / "session",
+        tmp_path / "audit.jsonl",
+    )
+
+    assert resolutions == 1
+    assert result.command[:2] == (str(runtime), str(entry))
+    assert result.cli_version == "codex-cli test"
+    assert result.runner_evidence["components_unchanged"] is True
+    components = result.runner_evidence["command_components"]["before"]
+    assert [item["role"] for item in components] == ["runtime", "cli_entry"]
+    assert [item["name"] for item in components] == ["node.exe", "codex.js"]
+    assert all(item["sha256"] for item in components)
+    assert not any("path" in item for item in components)
+    assert result.model_evidence["identity_level"] == "requested_only"
+
+
+def test_agent_runner_detects_component_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    benchmark = _benchmark()
+    executable = tmp_path / "claude.exe"
+    executable.write_bytes(b"before")
+    monkeypatch.setattr(
+        evaluation_host, "_agent_executable", lambda agent: [str(executable)]
+    )
+    monkeypatch.setattr(
+        evaluation_host, "_agent_version", lambda command: "claude test"
+    )
+
+    def replacing_process(
+        command: list[str],
+        *,
+        cwd: Path,
+        timeout_seconds: float,
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> AgentProcessResult:
+        del cwd, timeout_seconds
+        executable.write_bytes(b"after")
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        stdout_path.write_text(
+            json.dumps({"type": "system", "subtype": "init", "model": "opus"}) + "\n",
+            encoding="utf-8",
+        )
+        stderr_path.write_text("", encoding="utf-8")
+        return AgentProcessResult(
+            command=tuple(command),
+            exit_code=0,
+            timed_out=False,
+            duration_ms=1.0,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            stdout="",
+            stderr="",
+            usage={},
+        )
+
+    monkeypatch.setattr(evaluation_host, "_run_process", replacing_process)
+
+    result = evaluation_host.run_agent_cli(
+        "claude",
+        "opus",
+        benchmark,
+        tmp_path / "workspace",
+        tmp_path / "session",
+        tmp_path / "audit.jsonl",
+    )
+
+    assert result.runner_evidence["components_unchanged"] is False
+    assert not evaluation_host._runner_evidence_valid(result.runner_evidence)
+
+
 def test_claude_driver_exposes_only_permitted_tools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1039,7 +1359,7 @@ def test_claude_driver_exposes_only_permitted_tools(
     assert command[command.index("--model") + 1] == "deepseek-v4-flash"
 
 
-def test_claude_resolved_model_is_read_from_init_event(tmp_path: Path) -> None:
+def test_claude_model_evidence_is_read_from_init_event(tmp_path: Path) -> None:
     events = tmp_path / "events.jsonl"
     events.write_text(
         json.dumps(
@@ -1053,7 +1373,51 @@ def test_claude_resolved_model_is_read_from_init_event(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert evaluation_host._agent_model_from_events(events) == "deepseek-v4-flash[1m]"
+    evidence = evaluation_host._agent_model_evidence(
+        "claude", "deepseek-v4-flash[1m]", events
+    )
+
+    assert evidence == {
+        "requested": "deepseek-v4-flash[1m]",
+        "reported": "deepseek-v4-flash[1m]",
+        "evidence_source": "cli_system_init_event",
+        "matches_request": True,
+        "identity_level": "cli_self_reported",
+        "provider_verified": False,
+        "agent": "claude",
+    }
+
+
+def test_codex_model_evidence_is_requested_only_without_reported_event(
+    tmp_path: Path,
+) -> None:
+    events = tmp_path / "events.jsonl"
+    events.write_text(
+        json.dumps({"type": "thread.started", "thread_id": "test"}) + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = evaluation_host._agent_model_evidence("codex", "gpt-5.6-sol", events)
+
+    assert evidence["requested"] == "gpt-5.6-sol"
+    assert evidence["reported"] is None
+    assert evidence["evidence_source"] == "unavailable"
+    assert evidence["matches_request"] is None
+    assert evidence["identity_level"] == "requested_only"
+
+
+def test_codex_model_evidence_accepts_explicit_thread_model(tmp_path: Path) -> None:
+    events = tmp_path / "events.jsonl"
+    events.write_text(
+        json.dumps({"type": "thread.started", "model": "gpt-5.6-sol"}) + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = evaluation_host._agent_model_evidence("codex", "gpt-5.6-sol", events)
+
+    assert evidence["reported"] == "gpt-5.6-sol"
+    assert evidence["evidence_source"] == "codex_thread_started_event"
+    assert evidence["identity_level"] == "cli_self_reported"
 
 
 def test_agent_api_failure_is_summarized_from_result_event(tmp_path: Path) -> None:

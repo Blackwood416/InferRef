@@ -286,15 +286,33 @@ The cumulative digest detects corruption, truncation, and torn writes. It is not
 a keyed authenticator and does not resist a same-user process able to rewrite the
 entire evidence stream.
 
-The evaluator may emit a redacted `inferref-agent-evaluation-attestation` v0.3.
-A formal public attestation requires the built-in Agent CLI runner, a clean Git
-worktree before and after the run, unchanged repository/evaluator/benchmark
-evidence, and records both repository snapshots. Custom and test drivers can only
-produce `attestation_level: development` evidence. The benchmark digest is fixed
-from the exact bytes parsed at load time rather than reread during publication.
-The attestation also records the complete imported `inferref` source-tree
-manifest/hash, runtime and installed-distribution metadata, sealed tool audit,
-final patch, final visible/holdout verdicts, raw transcript hashes, and available
-usage. `report_json_sha256` hashes exactly `report.json`, not the whole private
-report directory. The attestation excludes transcript text, reasoning,
+The evaluator may emit a redacted `inferref-agent-evaluation-attestation` v0.4.
+Formal publication is delegated to a fresh isolated Python worker (`python -I`);
+ordinary in-process API and custom/test-driver runs can only produce
+`attestation_level: development` evidence. The worker requires a clean Git
+worktree before and after the run and unchanged repository, evaluator, benchmark,
+runtime, and Agent executable evidence.
+
+Each Agent executable chain is resolved once. The same frozen command prefix is
+used for version detection and execution, and every component is hashed before
+version detection, after version detection, and after execution. Public evidence
+contains component roles, basenames, sizes, SHA-256 values, an argv-policy digest,
+version output, and the aggregate unchanged verdict, but no absolute executable
+paths. For Windows Codex the runtime (`node.exe`) and CLI entry (`codex.js`) are
+separate components.
+
+Model identity is explicit evidence rather than a single resolved-model string:
+`requested_only` means only the evaluator request is known;
+`cli_self_reported` means an Agent-specific JSON event reported the model. The
+record includes request, report, source and match verdict. Neither level is
+provider verification, and a missing Codex model event does not silently become a
+confirmed identity.
+
+The benchmark digest is fixed from the exact bytes parsed at load time rather
+than reread during publication. Runtime and installed-distribution evidence is
+captured before and after and carries an unchanged verdict. The attestation also
+records the complete imported `inferref` source-tree manifest/hash, sealed tool
+audit, final patch, final visible/holdout verdicts, raw transcript hashes, and
+available usage. `report_json_sha256` hashes exactly `report.json`, not the whole
+private report directory. The attestation excludes transcript text, reasoning,
 credentials, reference payloads, and absolute local paths.
