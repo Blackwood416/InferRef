@@ -184,6 +184,7 @@ class EvaluationSuccessPolicy:
 @dataclass(frozen=True)
 class EvaluationBenchmark:
     source: Path
+    source_sha256: str
     id: str
     title: str
     task: str
@@ -200,7 +201,8 @@ class EvaluationBenchmark:
     @classmethod
     def load(cls, path: str | Path) -> EvaluationBenchmark:
         source = Path(path).resolve()
-        data = json.loads(source.read_text(encoding="utf-8"))
+        source_bytes = _read_regular_file(source)
+        data = json.loads(source_bytes.decode("utf-8", errors="strict"))
         if not isinstance(data, dict):
             raise AgentProtocolError("evaluation manifest root must be an object")
         if data.get("format") != EVALUATION_FORMAT:
@@ -267,6 +269,7 @@ class EvaluationBenchmark:
         )
         return cls(
             source=source,
+            source_sha256=hashlib.sha256(source_bytes).hexdigest(),
             id=identifier,
             title=title,
             task=task,
@@ -772,11 +775,23 @@ def load_audit(path: Path) -> AuditLog:
         return AuditLog(records=records, error="audit footer digest mismatch")
 
     previous_runs = 0
+    capabilities_succeeded = False
+    context_succeeded = False
     for index, record in enumerate(records, start=1):
-        error = _validate_audit_record(record, index=index, previous_runs=previous_runs)
+        error = _validate_audit_record(
+            record,
+            index=index,
+            previous_runs=previous_runs,
+            capabilities_succeeded=capabilities_succeeded,
+            context_succeeded=context_succeeded,
+        )
         if error is not None:
             return AuditLog(records=records, error=error, footer=footer)
         previous_runs = record["engine_runs"]
+        if record["tool"] == "inferref_capabilities" and record["status"] == "ok":
+            capabilities_succeeded = True
+        elif record["tool"] == "inferref_context" and record["status"] == "ok":
+            context_succeeded = True
     return AuditLog(records=records, valid=True, footer=footer)
 
 
@@ -788,7 +803,12 @@ def _audit_line(record: dict[str, Any]) -> bytes:
 
 
 def _validate_audit_record(
-    record: dict[str, Any], *, index: int, previous_runs: int
+    record: dict[str, Any],
+    *,
+    index: int,
+    previous_runs: int,
+    capabilities_succeeded: bool,
+    context_succeeded: bool,
 ) -> str | None:
     if record.get("type") != "tool_call":
         return f"audit record {index} has an invalid type"
@@ -808,6 +828,61 @@ def _validate_audit_record(
     codes = record.get("diagnostic_codes")
     if not isinstance(codes, list) or not all(isinstance(code, str) for code in codes):
         return f"audit record {index}.diagnostic_codes must be a string list"
+
+    tool = record["tool"]
+    operation = record["operation"]
+    status = record["status"]
+    run_delta = engine_runs - previous_runs
+    operation_by_tool = {
+        "inferref_capabilities": "capabilities",
+        "inferref_context": "context",
+        "inferref_run_engine": "run_engine",
+    }
+    if tool not in operation_by_tool:
+        return f"audit record {index}.tool is not an evaluation tool"
+    if operation != operation_by_tool[tool]:
+        return f"audit record {index} has an invalid tool/operation pairing"
+
+    blocked_codes = {"required_tool_sequence", "path_not_allowed", "budget_exhausted"}
+    blocked = bool(blocked_codes.intersection(codes))
+    if tool == "inferref_capabilities":
+        if status != "ok" or codes or run_delta != 0:
+            return f"audit record {index} has invalid capabilities semantics"
+    elif tool == "inferref_context":
+        if run_delta != 0:
+            return f"audit record {index} changes engine_runs outside run_engine"
+        if status == "ok":
+            if not capabilities_succeeded or codes:
+                return f"audit record {index} has invalid successful context semantics"
+        elif status == "error":
+            expected_codes = (
+                ["path_not_allowed"]
+                if capabilities_succeeded
+                else ["required_tool_sequence"]
+            )
+            if codes != expected_codes:
+                return f"audit record {index} has invalid rejected context semantics"
+        else:
+            return f"audit record {index} has invalid context status"
+    else:
+        prerequisites_met = capabilities_succeeded and context_succeeded
+        if run_delta == 1:
+            if (
+                not prerequisites_met
+                or blocked
+                or status not in {"pass", "fail", "error"}
+            ):
+                return f"audit record {index} has invalid executed run semantics"
+        elif run_delta == 0:
+            expected_codes = (
+                {"path_not_allowed", "budget_exhausted"}
+                if prerequisites_met
+                else {"required_tool_sequence"}
+            )
+            if status != "error" or len(codes) != 1 or codes[0] not in expected_codes:
+                return f"audit record {index} has invalid rejected run semantics"
+        else:  # guarded by the monotonicity check, kept explicit for the FSM.
+            return f"audit record {index} has an invalid engine run transition"
     return None
 
 

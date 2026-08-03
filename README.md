@@ -150,7 +150,10 @@ The Codex driver uses `--ignore-user-config` so user plugins and unrelated MCP
 servers cannot enter the evaluation session; authentication remains available.
 The audit file is atomically checkpointed with a valid terminal footer after
 every tool call, because some Agent CLIs terminate MCP children without a graceful
-stdio shutdown.
+stdio shutdown. Its validator also enforces the evaluation tool/operation/status
+state machine and exact engine-run counter transitions. The footer detects
+corruption and torn writes; it is not authentication against a same-user process
+that can rewrite the complete stream.
 
 Here, “blind” means candidate-input blind, oracle-isolated, and hidden from the
 Agent workspace. It does not mean adversarially secret: holdout metadata is in the
@@ -174,14 +177,17 @@ select its concrete model with `--claude-model MODEL`. The evaluator records the
 requested and resolved model but never copies the settings path or contents into
 the report or benchmark manifest.
 
-The private report contains bounded CLI output. A formal public attestation is
-only emitted from a clean Git worktree. Attestation v0.2 binds the repository
-commit and dirty state, a manifest/hash of the complete imported `inferref`
-source tree, the benchmark, the sealed MCP audit, final patch, visible/holdout
-results, transcript hashes, duration, and available usage/cost. It excludes
-reasoning, credentials, reference payloads, and absolute local paths. Full model
-event streams remain untracked. Ordinary CI uses a deterministic fake Agent to
-test this evaluator; it does not spend model tokens or claim autonomous repair.
+The private report contains bounded CLI output. A formal public attestation can
+only be emitted by the built-in Codex/Claude CLI runner from a clean Git worktree;
+injected drivers produce explicitly labelled development evidence. Attestation
+v0.3 binds repository state both before and after evaluation, the benchmark bytes
+loaded by the evaluator, a manifest/hash of the complete imported `inferref`
+source tree, runtime and distribution metadata, the sealed MCP audit, final patch,
+visible/holdout results, transcript hashes, duration, and available usage/cost.
+It excludes reasoning, credentials, reference payloads, and absolute local paths.
+Full model event streams remain untracked. Ordinary CI uses a deterministic fake
+Agent to test this evaluator and produces development evidence; it does not spend
+model tokens or claim autonomous repair.
 The machine-readable contract lives in
 [`benchmark.json`](examples/agent_eval/rope_sign/benchmark.json).
 

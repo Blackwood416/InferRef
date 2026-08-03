@@ -908,7 +908,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     q.add_argument(
         "--public-attestation",
-        help="write a fresh redacted attestation JSON outside the private report directory",
+        help=(
+            "write a fresh formal attestation outside the private report directory; "
+            "requires the built-in Agent runner and a clean, unchanged repository"
+        ),
     )
     _add_json(q)
     q.set_defaults(func=cmd_agent_evaluate)

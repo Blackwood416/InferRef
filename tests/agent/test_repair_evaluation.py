@@ -336,6 +336,76 @@ def test_audit_schema_and_monotonicity_fail_closed(
     assert audit.error
 
 
+@pytest.mark.parametrize(
+    "records",
+    [
+        [{**_audit_record(1), "operation": "context"}],
+        [{**_audit_record(1), "tool": "unknown_tool"}],
+        [{**_audit_record(1), "status": "pass"}],
+        [
+            _audit_record(1),
+            {**_audit_record(2, 1), "tool": "inferref_context", "operation": "context"},
+        ],
+        [
+            _audit_record(1),
+            {
+                **_audit_record(2),
+                "tool": "inferref_run_engine",
+                "operation": "run_engine",
+                "status": "pass",
+            },
+        ],
+        [
+            {
+                **_audit_record(1),
+                "tool": "inferref_context",
+                "operation": "context",
+                "status": "error",
+                "diagnostic_codes": ["budget_exhausted"],
+            }
+        ],
+        [
+            {
+                **_audit_record(1),
+                "tool": "inferref_run_engine",
+                "operation": "run_engine",
+                "status": "error",
+                "diagnostic_codes": ["budget_exhausted"],
+            }
+        ],
+    ],
+)
+def test_audit_semantic_state_machine_fails_closed(
+    tmp_path: Path, records: list[dict[str, object]]
+) -> None:
+    path = tmp_path / "audit.jsonl"
+    _write_sealed_audit(path, records)
+
+    audit = load_audit(path)
+
+    assert not audit.valid
+    assert audit.error
+
+
+def test_rejected_out_of_order_run_is_valid_audit_evidence(tmp_path: Path) -> None:
+    records = [
+        {
+            **_audit_record(1),
+            "tool": "inferref_run_engine",
+            "operation": "run_engine",
+            "status": "error",
+            "diagnostic_codes": ["required_tool_sequence"],
+        }
+    ]
+    path = tmp_path / "audit.jsonl"
+    _write_sealed_audit(path, records)
+
+    audit = load_audit(path)
+
+    assert audit.valid
+    assert audit.records[0]["engine_runs"] == 0
+
+
 def test_torn_audit_after_required_tools_is_infrastructure_failure(
     tmp_path: Path,
 ) -> None:
@@ -576,13 +646,21 @@ def test_public_attestation_omits_private_transcript_and_paths(
             "git_available": True,
         },
     )
+    monkeypatch.setattr(
+        evaluation_host,
+        "run_agent_cli",
+        lambda name, model, benchmark, workspace, session_root, audit_path, **kwargs: (
+            _fake_repair_driver(
+                name, model, benchmark, workspace, session_root, audit_path
+            )
+        ),
+    )
     public_path = tmp_path / "public" / "attestation.json"
     report_root = tmp_path / "private-report"
     report = evaluate_benchmark(
         BENCHMARK_PATH,
         agents=("codex", "claude"),
         report_dir=report_root,
-        driver=_fake_repair_driver,
         public_attestation=public_path,
     )
 
@@ -595,7 +673,16 @@ def test_public_attestation_omits_private_transcript_and_paths(
     assert all(agent["engine_patch"] for agent in attestation["agents"])
     assert all(agent["final_engine_sha256"] for agent in attestation["agents"])
     assert all(agent["raw_transcript_sha256"] for agent in attestation["agents"])
-    assert attestation["repository"]["dirty"] is False
+    assert attestation["format_version"] == "0.3"
+    assert attestation["attestation_level"] == "formal"
+    assert attestation["runner_mode"] == "builtin_cli"
+    assert attestation["repository"]["before"]["dirty"] is False
+    assert attestation["repository"]["after"]["dirty"] is False
+    assert attestation["repository"]["unchanged"] is True
+    assert (
+        attestation["benchmark"]["loaded_source_sha256"] == _benchmark().source_sha256
+    )
+    assert attestation["benchmark"]["source_unchanged"] is True
     assert attestation["evaluator"]["source_tree_sha256"]
     assert attestation["evaluator"]["files"]
     assert {
@@ -606,12 +693,47 @@ def test_public_attestation_omits_private_transcript_and_paths(
         "inferref/agent/protocol.py",
         "inferref/agent/adapter.py",
     } <= set(attestation["evaluator"]["files"])
+    assert attestation["runtime"]["python"]
+    assert attestation["runtime"]["numpy"]
+    assert attestation["runtime"]["inferref"] == "0.3.0"
+    assert attestation["runtime"]["byteorder"] in {"little", "big"}
+    assert attestation["runtime"]["import"]["mode"] == "repository_source"
     assert attestation["report_json_sha256"]
     rendered = json.dumps(attestation)
     assert str(tmp_path) not in rendered
     assert '"prompt"' not in rendered
     assert '"stdout"' not in rendered
     assert "thinking" not in rendered
+
+
+def test_formal_public_attestation_rejects_custom_driver(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="built-in Agent driver"):
+        evaluate_benchmark(
+            BENCHMARK_PATH,
+            agents=("codex",),
+            report_dir=tmp_path / "report",
+            driver=_fake_repair_driver,
+            public_attestation=tmp_path / "public.json",
+        )
+
+    assert not (tmp_path / "report").exists()
+
+
+def test_custom_driver_attestation_is_development_evidence(tmp_path: Path) -> None:
+    report_root = tmp_path / "report"
+    report = evaluate_benchmark(
+        BENCHMARK_PATH,
+        agents=("codex",),
+        report_dir=report_root,
+        driver=_fake_repair_driver,
+    )
+
+    attestation = json.loads(
+        (report_root / "attestation.json").read_text(encoding="utf-8")
+    )
+    assert report["runner_mode"] == "custom_driver"
+    assert attestation["runner_mode"] == "custom_driver"
+    assert attestation["attestation_level"] == "development"
 
 
 def test_formal_public_attestation_rejects_dirty_repository(
@@ -634,11 +756,89 @@ def test_formal_public_attestation_rejects_dirty_repository(
             BENCHMARK_PATH,
             agents=("codex",),
             report_dir=tmp_path / "report",
-            driver=_fake_repair_driver,
             public_attestation=tmp_path / "public.json",
         )
 
     assert not (tmp_path / "report").exists()
+
+
+def test_formal_attestation_rechecks_repository_after_agents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clean = {
+        "commit": "a" * 40,
+        "dirty": False,
+        "status_sha256": hashlib.sha256(b"").hexdigest(),
+        "git_diff_sha256": hashlib.sha256(b"").hexdigest(),
+        "git_available": True,
+    }
+    changed = {**clean, "commit": "b" * 40}
+    evidence = iter((clean, changed))
+    monkeypatch.setattr(
+        evaluation_host, "_repository_evidence", lambda path: next(evidence)
+    )
+    monkeypatch.setattr(
+        evaluation_host,
+        "run_agent_cli",
+        lambda name, model, benchmark, workspace, session_root, audit_path, **kwargs: (
+            _fake_repair_driver(
+                name, model, benchmark, workspace, session_root, audit_path
+            )
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="changed during the run"):
+        evaluate_benchmark(
+            BENCHMARK_PATH,
+            agents=("codex",),
+            report_dir=tmp_path / "report",
+            public_attestation=tmp_path / "public.json",
+        )
+
+    report = json.loads((tmp_path / "report" / "report.json").read_text())
+    assert report["host_integrity"]["repository_unchanged"] is False
+    assert report["status"] == "fail"
+    assert not (tmp_path / "public.json").exists()
+
+
+def test_loaded_benchmark_hash_is_frozen_and_change_fails_host_integrity(
+    tmp_path: Path,
+) -> None:
+    manifest = BENCHMARK_PATH.read_bytes()
+    benchmark_path = tmp_path / "benchmark.json"
+    benchmark_path.write_bytes(manifest)
+    for name in ("engine.py", "TASK.md"):
+        (tmp_path / name).write_bytes((BENCHMARK_PATH.parent / name).read_bytes())
+    loaded_sha256 = hashlib.sha256(manifest).hexdigest()
+
+    def mutating_driver(
+        agent: str,
+        model: str,
+        benchmark: EvaluationBenchmark,
+        workspace: Path,
+        session_root: Path,
+        audit_path: Path,
+    ) -> AgentProcessResult:
+        benchmark.source.write_bytes(manifest + b"\n")
+        return _fake_repair_driver(
+            agent, model, benchmark, workspace, session_root, audit_path
+        )
+
+    report_root = tmp_path / "report"
+    report = evaluate_benchmark(
+        benchmark_path,
+        agents=("codex",),
+        report_dir=report_root,
+        driver=mutating_driver,
+    )
+    attestation = json.loads(
+        (report_root / "attestation.json").read_text(encoding="utf-8")
+    )
+
+    assert report["host_integrity"]["benchmark_source_unchanged"] is False
+    assert report["status"] == "fail"
+    assert attestation["benchmark"]["loaded_source_sha256"] == loaded_sha256
+    assert attestation["benchmark"]["source_unchanged"] is False
 
 
 def test_visible_only_patch_is_classified_as_overfit(tmp_path: Path) -> None:

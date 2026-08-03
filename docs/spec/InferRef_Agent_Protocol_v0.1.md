@@ -272,19 +272,29 @@ reads or modify-then-restore behavior. This is not an adversarial secrecy or OS
 sandbox claim.
 
 The evaluation MCP audit is a fail-closed JSONL evidence stream. Tool-call records
-have one continuous global `call_index` and monotonic `engine_runs`. A terminal
-`session_footer` binds the record count and SHA-256 of all preceding record bytes.
+have one continuous global `call_index`; tool/operation/status combinations and
+exact `engine_runs` transitions are checked as an explicit evaluation state
+machine. A terminal `session_footer` binds the record count and SHA-256 of all
+preceding record bytes.
 Malformed JSON, invalid record schema, a missing footer, or a count/digest mismatch
 is an `infrastructure_failure`; records are never silently skipped.
 The host atomically replaces the complete stream, including its footer, after
 every tool call. This makes the evidence crash-consistent even when an Agent CLI
 terminates the MCP child without allowing process-shutdown handlers to run. A
 zero-call probe does not reserve or create the audit path.
+The cumulative digest detects corruption, truncation, and torn writes. It is not
+a keyed authenticator and does not resist a same-user process able to rewrite the
+entire evidence stream.
 
-The evaluator may emit a redacted `inferref-agent-evaluation-attestation` v0.2.
-A formal public attestation requires a clean Git worktree and records the commit,
-dirty status, complete imported `inferref` source-tree manifest/hash, benchmark,
-sealed tool audit, final patch, final visible/holdout verdicts, raw transcript
-hashes, and available usage. `report_json_sha256` hashes exactly `report.json`, not
-the whole private report directory. The attestation excludes transcript text,
-reasoning, credentials, reference payloads, and absolute local paths.
+The evaluator may emit a redacted `inferref-agent-evaluation-attestation` v0.3.
+A formal public attestation requires the built-in Agent CLI runner, a clean Git
+worktree before and after the run, unchanged repository/evaluator/benchmark
+evidence, and records both repository snapshots. Custom and test drivers can only
+produce `attestation_level: development` evidence. The benchmark digest is fixed
+from the exact bytes parsed at load time rather than reread during publication.
+The attestation also records the complete imported `inferref` source-tree
+manifest/hash, runtime and installed-distribution metadata, sealed tool audit,
+final patch, final visible/holdout verdicts, raw transcript hashes, and available
+usage. `report_json_sha256` hashes exactly `report.json`, not the whole private
+report directory. The attestation excludes transcript text, reasoning,
+credentials, reference payloads, and absolute local paths.

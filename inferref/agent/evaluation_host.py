@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 import os
+import platform
 import shutil
 import signal
 import subprocess
@@ -16,6 +18,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from inferref.agent.adapter import (
     _assign_windows_kill_job,
@@ -36,6 +40,7 @@ from inferref.agent.evaluation import (
     prepare_workspace,
     workspace_hashes,
 )
+from inferref.ir.version import INFERREF_VERSION
 
 
 @dataclass(frozen=True)
@@ -77,10 +82,14 @@ def evaluate_benchmark(
     public_attestation_path = (
         Path(public_attestation).resolve() if public_attestation is not None else None
     )
-    repository = _repository_evidence(benchmark.directory)
-    evaluator_source = _evaluator_source_manifest()
+    runner_mode = "builtin_cli" if driver is None else "custom_driver"
+    if public_attestation_path is not None and driver is not None:
+        raise ValueError("formal public attestation requires the built-in Agent driver")
+    repository_before = _repository_evidence(benchmark.directory)
+    evaluator_source_before = _evaluator_source_manifest()
+    runtime = _runtime_evidence(benchmark.directory)
     if public_attestation_path is not None and (
-        repository["commit"] is None or repository["dirty"]
+        repository_before["commit"] is None or repository_before["dirty"]
     ):
         raise RuntimeError(
             "formal public attestation requires a clean Git worktree at a commit"
@@ -162,12 +171,22 @@ def evaluate_benchmark(
         (agent_root / "result.json").write_text(
             json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
+    repository_after = _repository_evidence(benchmark.directory)
+    evaluator_source_after = _evaluator_source_manifest()
+    repository_unchanged = repository_after == repository_before
+    evaluator_unchanged = evaluator_source_after == evaluator_source_before
+    benchmark_after_sha256 = _sha256_or_none(benchmark.source)
+    benchmark_unchanged = benchmark_after_sha256 == benchmark.source_sha256
+    host_unchanged = (
+        repository_unchanged and evaluator_unchanged and benchmark_unchanged
+    )
     passed_count = sum(item["status"] == "pass" for item in results)
-    passed = passed_count >= benchmark.success.required_agent_passes
+    passed = passed_count >= benchmark.success.required_agent_passes and host_unchanged
     report = {
         "format": "inferref-agent-evaluation-report",
         "format_version": "0.2",
         "benchmark": benchmark.id,
+        "runner_mode": runner_mode,
         "status": "pass" if passed else "fail",
         "acceptance": {
             "configured_agents": list(benchmark.drivers),
@@ -175,6 +194,12 @@ def evaluate_benchmark(
             "policy": benchmark.success.to_dict(),
             "required_passes": benchmark.success.required_agent_passes,
             "passed": passed_count,
+            "host_integrity_passed": host_unchanged,
+        },
+        "host_integrity": {
+            "repository_unchanged": repository_unchanged,
+            "evaluator_source_unchanged": evaluator_unchanged,
+            "benchmark_source_unchanged": benchmark_unchanged,
         },
         "agents": results,
     }
@@ -182,20 +207,32 @@ def evaluate_benchmark(
     report_path.write_text(
         json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    evaluator_source_after = _evaluator_source_manifest()
-    evaluator_unchanged = evaluator_source_after == evaluator_source
-    if public_attestation_path is not None and not evaluator_unchanged:
+    formal_repository_valid = (
+        repository_unchanged
+        and repository_after["commit"] is not None
+        and not repository_before["dirty"]
+        and not repository_after["dirty"]
+    )
+    if public_attestation_path is not None and not (
+        formal_repository_valid and evaluator_unchanged and benchmark_unchanged
+    ):
         raise RuntimeError(
-            "formal public attestation refused because evaluator source changed during the run"
+            "formal public attestation refused because repository, evaluator, or "
+            "benchmark evidence changed during the run"
         )
     attestation = build_public_attestation(
         benchmark,
         report,
         report_root=report_root,
         report_path=report_path,
-        repository=repository,
-        evaluator_source=evaluator_source,
+        runner_mode=runner_mode,
+        repository_before=repository_before,
+        repository_after=repository_after,
+        repository_unchanged=repository_unchanged,
+        evaluator_source=evaluator_source_before,
         evaluator_unchanged=evaluator_unchanged,
+        benchmark_unchanged=benchmark_unchanged,
+        runtime=runtime,
     )
     attestation_path = report_root / "attestation.json"
     _write_new_json(attestation_path, attestation)
@@ -210,9 +247,14 @@ def build_public_attestation(
     *,
     report_root: Path,
     report_path: Path,
-    repository: dict[str, Any] | None = None,
+    runner_mode: str = "custom_driver",
+    repository_before: dict[str, Any] | None = None,
+    repository_after: dict[str, Any] | None = None,
+    repository_unchanged: bool | None = None,
     evaluator_source: dict[str, Any] | None = None,
     evaluator_unchanged: bool = True,
+    benchmark_unchanged: bool = True,
+    runtime: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     agents = []
     for result in report["agents"]:
@@ -249,18 +291,39 @@ def build_public_attestation(
                 "usage": result["process"]["usage"],
             }
         )
-    repository = repository or _repository_evidence(benchmark.directory)
+    repository_before = repository_before or _repository_evidence(benchmark.directory)
+    repository_after = repository_after or _repository_evidence(benchmark.directory)
+    if repository_unchanged is None:
+        repository_unchanged = repository_before == repository_after
     evaluator_source = evaluator_source or _evaluator_source_manifest()
+    runtime = runtime or _runtime_evidence(benchmark.directory)
+    formal = (
+        runner_mode == "builtin_cli"
+        and repository_unchanged
+        and repository_before["commit"] is not None
+        and repository_after["commit"] is not None
+        and not repository_before["dirty"]
+        and not repository_after["dirty"]
+        and evaluator_unchanged
+        and benchmark_unchanged
+    )
     return {
         "format": "inferref-agent-evaluation-attestation",
-        "format_version": "0.2",
+        "format_version": "0.3",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "repository": repository,
+        "attestation_level": "formal" if formal else "development",
+        "runner_mode": runner_mode,
+        "repository": {
+            "before": repository_before,
+            "after": repository_after,
+            "unchanged": repository_unchanged,
+        },
         "benchmark": {
             "id": benchmark.id,
             "format": "inferref-agent-evaluation",
             "format_version": "0.2",
-            "sha256": _sha256_or_none(benchmark.source),
+            "loaded_source_sha256": benchmark.source_sha256,
+            "source_unchanged": benchmark_unchanged,
             "success_policy": benchmark.success.to_dict(),
         },
         "evaluator": {
@@ -268,6 +331,7 @@ def build_public_attestation(
             "source_tree_unchanged": evaluator_unchanged,
             "files": evaluator_source["files"],
         },
+        "runtime": runtime,
         "report_json_sha256": _sha256_or_none(report_path),
         "status": report["status"],
         "acceptance": report["acceptance"],
@@ -936,6 +1000,65 @@ def _repository_evidence(cwd: Path) -> dict[str, Any]:
         "status_sha256": hashlib.sha256(status or b"").hexdigest(),
         "git_diff_sha256": hashlib.sha256(diff or b"").hexdigest(),
         "git_available": root is not None,
+    }
+
+
+def _runtime_evidence(cwd: Path) -> dict[str, Any]:
+    """Describe the interpreter and installed distributions without local paths."""
+
+    package_root = Path(__file__).resolve().parents[1]
+    repository_root_text = _git_output(cwd, ["rev-parse", "--show-toplevel"])
+    repository_relative_import = None
+    if repository_root_text is not None:
+        repository_root = Path(repository_root_text).resolve()
+        if package_root.is_relative_to(repository_root):
+            repository_relative_import = package_root.relative_to(
+                repository_root
+            ).as_posix()
+    return {
+        "python": platform.python_version(),
+        "implementation": platform.python_implementation(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "architecture": platform.architecture()[0],
+        "byteorder": sys.byteorder,
+        "numpy": np.__version__,
+        "inferref": INFERREF_VERSION,
+        "mcp_sdk": _distribution_version("mcp"),
+        "import": {
+            "mode": (
+                "repository_source"
+                if repository_relative_import is not None
+                else "installed_distribution"
+            ),
+            "repository_relative_root": repository_relative_import,
+        },
+        "distributions": {
+            name: _distribution_evidence(name) for name in ("inferref", "numpy", "mcp")
+        },
+    }
+
+
+def _distribution_version(name: str) -> str | None:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _distribution_evidence(name: str) -> dict[str, Any]:
+    try:
+        distribution = importlib.metadata.distribution(name)
+    except importlib.metadata.PackageNotFoundError:
+        return {"version": None, "record_sha256": None}
+    record_sha256 = None
+    for item in distribution.files or ():
+        if item.as_posix().endswith(".dist-info/RECORD"):
+            record_sha256 = _sha256_or_none(Path(distribution.locate_file(item)))
+            break
+    return {
+        "version": distribution.version,
+        "record_sha256": record_sha256,
     }
 
 

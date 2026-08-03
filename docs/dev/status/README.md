@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-08-03 | [Agent attestation provenance hardening](2026-08-03-attestation-provenance-hardening.md) | Formal built-in runner only; before/after repository binding; audit FSM; runtime evidence; 426 tests |
 | 2026-08-03 | [Evaluation evidence and container-alias hardening](2026-08-03-evaluation-evidence-hardening.md) | Source manifest; crash-consistent audit; recursive aliases; formal v0.2 Agent gate 2/2; 414 tests |
 | 2026-08-02 | [Agent evaluation correctness hardening](2026-08-02-agent-evaluation-correctness-hardening.md) | Frozen final visible+holdouts; enforced success policy; public attestation; post-fix real 2/2 |
 | 2026-08-02 | [Real dual-Agent repair pilot PASS](2026-08-02-real-agent-pilot-pass.md) | Codex + DeepSeek/Claude Code 2/2; visible 2/2; hidden 6/6; no integrity violations |
