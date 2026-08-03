@@ -247,6 +247,24 @@ def test_evaluation_mcp_enforces_opaque_uris_and_run_budget(tmp_path: Path) -> N
     assert records[-1]["diagnostic_codes"] == ["budget_exhausted"]
 
 
+def test_zero_call_probe_does_not_reserve_the_audit_path(tmp_path: Path) -> None:
+    benchmark = _benchmark()
+    workspace = prepare_workspace(benchmark, tmp_path / "workspace")
+    audit_path = tmp_path / "audit.jsonl"
+
+    probe = EvaluationSession(benchmark, workspace, tmp_path / "probe", audit_path)
+    probe.finalize_audit()
+    assert not audit_path.exists()
+
+    real = EvaluationSession(benchmark, workspace, tmp_path / "real", audit_path)
+    response = real.capabilities()
+    real.audit("inferref_capabilities", response)
+    assert load_audit(audit_path).valid
+    real.finalize_audit()
+
+    assert load_audit(audit_path).valid
+
+
 def _write_sealed_audit(path: Path, records: list[dict[str, object]]) -> None:
     encoded = b"".join(_audit_line(record) for record in records)
     footer = {
@@ -765,6 +783,27 @@ def test_codex_and_claude_json_usage_fixtures(
 
     assert usage["usage.input_tokens"] >= 12
     assert usage["usage.output_tokens"] >= 7
+
+
+def test_codex_driver_ignores_user_plugins_and_mcp_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    benchmark = _benchmark()
+    monkeypatch.setattr(evaluation_host, "_agent_executable", lambda agent: [agent])
+
+    command = evaluation_host._agent_command(
+        "codex",
+        "gpt-5.6-sol",
+        benchmark,
+        tmp_path / "workspace",
+        tmp_path / "session",
+        tmp_path / "audit.jsonl",
+    )
+
+    assert command[:3] == ["codex", "exec", "--ignore-user-config"]
+    assert any(item.startswith("mcp_servers.inferref.command=") for item in command)
+    assert any(item.startswith("mcp_servers.inferref.args=") for item in command)
+    assert not any("node_repl" in item for item in command)
 
 
 def test_claude_driver_exposes_only_permitted_tools(

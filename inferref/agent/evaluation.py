@@ -297,6 +297,8 @@ class EvaluationSession:
     successful_tools: set[str] = field(default_factory=set)
     _audit_records: int = field(default=0, init=False, repr=False)
     _audit_digest: Any = field(default_factory=hashlib.sha256, init=False, repr=False)
+    _audit_lines: list[bytes] = field(default_factory=list, init=False, repr=False)
+    _audit_lock_acquired: bool = field(default=False, init=False, repr=False)
     _audit_finalized: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -305,12 +307,6 @@ class EvaluationSession:
         self.root.mkdir(parents=True, exist_ok=True)
         self.audit_path = self.audit_path.resolve()
         self.audit_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            self.audit_path.touch(exist_ok=False)
-        except FileExistsError as exc:
-            raise FileExistsError(
-                f"evaluation audit already exists: {self.audit_path}"
-            ) from exc
 
     def audit(self, tool: str, response: AgentResponse) -> None:
         if self._audit_finalized:
@@ -335,22 +331,46 @@ class EvaluationSession:
         }
         encoded = _audit_line(record)
         self._audit_digest.update(encoded)
-        with self.audit_path.open("ab") as stream:
-            stream.write(encoded)
+        self._audit_lines.append(encoded)
+        self._write_audit_checkpoint()
 
     def finalize_audit(self) -> None:
         """Seal the evidence stream with a count and cumulative digest."""
 
         if self._audit_finalized:
             return
+        if self._audit_records == 0:
+            self._audit_finalized = True
+            return
+        self._write_audit_checkpoint()
+        self._audit_finalized = True
+
+    def _write_audit_checkpoint(self) -> None:
+        if not self._audit_lock_acquired:
+            lock_path = self.audit_path.with_name(self.audit_path.name + ".lock")
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(descriptor)
+            self._audit_lock_acquired = True
         footer = {
             "type": "session_footer",
             "record_count": self._audit_records,
             "records_sha256": self._audit_digest.hexdigest(),
         }
-        with self.audit_path.open("ab") as stream:
-            stream.write(_audit_line(footer))
-        self._audit_finalized = True
+        payload = b"".join(self._audit_lines) + _audit_line(footer)
+        temporary = self.audit_path.with_name(
+            f".{self.audit_path.name}.{os.getpid()}.tmp"
+        )
+        try:
+            with temporary.open("xb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.audit_path)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
 
     def capabilities(self) -> AgentResponse:
         from inferref.agent.service import capabilities

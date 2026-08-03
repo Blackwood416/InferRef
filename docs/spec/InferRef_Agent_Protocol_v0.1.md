@@ -276,6 +276,10 @@ have one continuous global `call_index` and monotonic `engine_runs`. A terminal
 `session_footer` binds the record count and SHA-256 of all preceding record bytes.
 Malformed JSON, invalid record schema, a missing footer, or a count/digest mismatch
 is an `infrastructure_failure`; records are never silently skipped.
+The host atomically replaces the complete stream, including its footer, after
+every tool call. This makes the evidence crash-consistent even when an Agent CLI
+terminates the MCP child without allowing process-shutdown handlers to run. A
+zero-call probe does not reserve or create the audit path.
 
 The evaluator may emit a redacted `inferref-agent-evaluation-attestation` v0.2.
 A formal public attestation requires a clean Git worktree and records the commit,

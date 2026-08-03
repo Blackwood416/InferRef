@@ -146,6 +146,12 @@ the host silently reruns the final `engine.py` against the visible case and thre
 holdouts, so a historical PASS from an earlier patch cannot be combined with a
 different final patch.
 
+The Codex driver uses `--ignore-user-config` so user plugins and unrelated MCP
+servers cannot enter the evaluation session; authentication remains available.
+The audit file is atomically checkpointed with a valid terminal footer after
+every tool call, because some Agent CLIs terminate MCP children without a graceful
+stdio shutdown.
+
 Here, “blind” means candidate-input blind, oracle-isolated, and hidden from the
 Agent workspace. It does not mean adversarially secret: holdout metadata is in the
 public benchmark, the processes share one OS user, and hashes detect final-state

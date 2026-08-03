@@ -561,6 +561,7 @@ def _agent_command(
         return [
             *_agent_executable("codex"),
             "exec",
+            "--ignore-user-config",
             "--ephemeral",
             "--json",
             "--skip-git-repo-check",
@@ -576,8 +577,6 @@ def _agent_command(
             f"mcp_servers.inferref.args={json.dumps(server_args)}",
             "-c",
             'mcp_servers.inferref.default_tools_approval_mode="approve"',
-            "-c",
-            "mcp_servers.node_repl.enabled=false",
             "-c",
             'approval_policy="never"',
             "-c",

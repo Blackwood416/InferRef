@@ -24,6 +24,12 @@ symmetrically on the input and output sides.
   and a terminal footer containing the record count and cumulative SHA-256. Any
   malformed line, invalid schema, missing footer, torn tail, or digest/count
   mismatch is an `infrastructure_failure`.
+- Each tool call atomically checkpoints all records plus a valid footer. This was
+  required by a real Codex run: Codex terminates its MCP child directly after the
+  turn, so a footer written only from Python `finally` was not reliable.
+- Codex starts with `--ignore-user-config`; otherwise user plugins and global MCP
+  servers can hide the evaluation-only InferRef server. A zero-call MCP probe no
+  longer creates/reserves the audit path before the real connection starts.
 
 ## Workspace integrity
 
@@ -58,8 +64,8 @@ and requires the C++ comparator to reject it.
 
 ## Verification
 
-- Python: `412 passed, 5 skipped`
-- Focused Agent/frontend hardening: `81 passed`
+- Python: `414 passed, 5 skipped`
+- Focused Agent evaluation hardening: `41 passed`
 - Ruff on changed Python files: format and lint clean
 - Package build: wheel and sdist succeeded
 - Windows C++: MSVC 19.50 configure/build and `irtensor_selftest` passed
@@ -76,3 +82,13 @@ and requires the C++ comparator to reject it.
   formal v0.2 pilot should be generated only after this source tree is committed
   and clean.
 
+## Real lifecycle findings
+
+The first formal v0.2 attempt against clean commit `535af43` produced a legitimate
+`infrastructure_failure`: Claude/DeepSeek passed, while Codex could not initialize
+the evaluation MCP server because user-level configuration remained active. The
+redacted failure attestation is retained under `docs/dev/attestations` rather than
+rewritten as a pass. After config isolation and crash-consistent audit checkpoints,
+an isolated real Codex rerun passed with one engine run, final visible PASS, and
+all three holdouts PASS. A fresh strict 2/2 formal run remains required after the
+lifecycle fix is committed.
