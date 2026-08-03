@@ -13,11 +13,15 @@ import pytest
 import torch
 
 import inferref
-from inferref.frontend.pytorch.dispatch import iter_tensors, iter_written_tensors
+from inferref.frontend.pytorch.dispatch import (
+    _collect_tensor_pairs,
+    iter_tensors,
+    iter_written_tensors,
+)
 from inferref.frontend.pytorch.params import ParameterIndex
 from inferref.ir.package import TracePackage
 from inferref.ir.validate import validate_package
-from inferref.ir.values import TensorRef
+from inferref.ir.values import DictValue, ListValue, StringValue, TensorRef
 
 
 def _trace(fn, trace_dir: Path, **kwargs) -> TracePackage:
@@ -36,7 +40,9 @@ def _mutations(op) -> list[tuple[int, int, int]]:
 
 def _find(package: TracePackage, needle: str):
     return [
-        op for op in package.graph.ops_in_execution_order() if needle in op.canonical_name
+        op
+        for op in package.graph.ops_in_execution_order()
+        if needle in op.canonical_name
     ]
 
 
@@ -113,6 +119,47 @@ def test_container_write_is_detected(trace_dir: Path) -> None:
     assert len({storage for storage, _, _ in mutations}) == 2
 
 
+def test_container_aliases_include_same_objects_and_views(trace_dir: Path) -> None:
+    library = torch.library.Library("inferref_test_container_alias", "FRAGMENT")
+    library.define("list_alias(Tensor(a)[] tensors) -> Tensor(a)[]")
+    library.impl("list_alias", lambda tensors: tensors, "CPU")
+    base = torch.zeros(4)
+    view = base.view(2, 2)
+
+    package = _trace(
+        lambda s: torch.ops.inferref_test_container_alias.list_alias([base, view]),
+        trace_dir,
+    )
+    op = _find(package, "inferref_test_container_alias.list_alias")[0]
+
+    assert sum(alias.relationship == "same_object" for alias in op.effects.aliases) == 2
+    assert any(alias.relationship == "view" for alias in op.effects.aliases)
+
+
+def test_collect_tensor_pairs_walks_nested_dict_and_list() -> None:
+    first = torch.zeros(2)
+    second = torch.ones(3)
+    value = DictValue(
+        items=(
+            (
+                StringValue("nested"),
+                ListValue(
+                    (TensorRef(11), DictValue(((StringValue("leaf"), TensorRef(12)),)))
+                ),
+            ),
+        )
+    )
+    runtime = {"nested": [first, {"leaf": second}]}
+    pairs: list[tuple[TensorRef, torch.Tensor]] = []
+
+    _collect_tensor_pairs(value, runtime, pairs)
+
+    assert [(ref.value_id, tensor) for ref, tensor in pairs] == [
+        (11, first),
+        (12, second),
+    ]
+
+
 def test_aliased_writes_bump_a_storage_once(trace_dir: Path) -> None:
     """Two writable arguments over one storage advance it a single generation."""
     tensor = torch.zeros(4)
@@ -133,7 +180,9 @@ def test_iter_written_tensors_binds_positional_arg_given_by_name() -> None:
     func = torch.ops.aten.add_.Tensor
 
     by_position = list(iter_written_tensors(func, (target, torch.ones(3)), {}))
-    by_name = list(iter_written_tensors(func, (), {"self": target, "other": torch.ones(3)}))
+    by_name = list(
+        iter_written_tensors(func, (), {"self": target, "other": torch.ones(3)})
+    )
 
     assert [t.data_ptr() for t in by_position] == [target.data_ptr()]
     assert [t.data_ptr() for t in by_name] == [target.data_ptr()]
@@ -270,7 +319,8 @@ def test_metadata_only_inplace_does_not_version_shared_storage(
     metadata_op = next(
         op
         for op in package.graph.ops_in_execution_order()
-        if op.canonical_name in {
+        if op.canonical_name
+        in {
             "aten.transpose_.default",
             "aten.squeeze_.dim",
             "aten.unsqueeze_.default",
@@ -359,15 +409,15 @@ def test_lineage_is_not_rewritten_by_an_alias_only_operator(trace_dir: Path) -> 
 
     x_value = graph.op_input_value_ids(detaches[0])[0]
     add_input = graph.op_input_value_ids(add)[0]
-    detach_outputs = {
-        vid for d in detaches for vid in graph.op_output_value_ids(d)
-    }
+    detach_outputs = {vid for d in detaches for vid in graph.op_output_value_ids(d)}
 
     assert add_input == x_value, "add should consume x, not a detach output"
     assert add_input not in detach_outputs
     # Each detach output is its own value with its own object identity.
     for vid in detach_outputs:
-        assert graph.value(vid).runtime_object_id != graph.value(x_value).runtime_object_id
+        assert (
+            graph.value(vid).runtime_object_id != graph.value(x_value).runtime_object_id
+        )
         assert graph.value(vid).storage_id == graph.value(x_value).storage_id
 
 
@@ -568,7 +618,16 @@ def test_capture_uses_no_numpy_bridge(trace_dir: Path) -> None:
         torch.zeros(0, dtype=torch.float32),
         torch.tensor(2.5),
     ],
-    ids=["contiguous", "transposed", "offset", "strided", "bfloat16", "bool", "empty", "scalar"],
+    ids=[
+        "contiguous",
+        "transposed",
+        "offset",
+        "strided",
+        "bfloat16",
+        "bool",
+        "empty",
+        "scalar",
+    ],
 )
 def test_logical_bytes_length(tensor: torch.Tensor) -> None:
     """Views, offsets and odd dtypes all yield exactly numel x itemsize bytes."""
@@ -605,7 +664,9 @@ def test_capture_failure_is_reported_not_swallowed(
     # And every value really did fall back to metadata.
     assert all(v.capture.mode == "metadata" for v in package.graph.values)
     assert all(v.capture.requested_mode == "full" for v in package.graph.values)
-    assert all(v.capture.degraded_reason == "capture_error" for v in package.graph.values)
+    assert all(
+        v.capture.degraded_reason == "capture_error" for v in package.graph.values
+    )
 
 
 def test_capture_limit_records_structured_degradation(trace_dir: Path) -> None:

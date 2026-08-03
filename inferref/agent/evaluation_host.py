@@ -26,8 +26,10 @@ from inferref.agent.evaluation import (
     CANDIDATE_URI,
     RUNS_URI,
     VISIBLE_URI,
+    AuditLog,
     EvaluationBenchmark,
     EvaluationCase,
+    _read_regular_file,
     engine_patch,
     execute_case,
     load_audit,
@@ -72,6 +74,17 @@ def evaluate_benchmark(
             "agents must select one or more configured drivers: "
             + ", ".join(sorted(benchmark.drivers))
         )
+    public_attestation_path = (
+        Path(public_attestation).resolve() if public_attestation is not None else None
+    )
+    repository = _repository_evidence(benchmark.directory)
+    evaluator_source = _evaluator_source_manifest()
+    if public_attestation_path is not None and (
+        repository["commit"] is None or repository["dirty"]
+    ):
+        raise RuntimeError(
+            "formal public attestation requires a clean Git worktree at a commit"
+        )
     report_root = Path(report_dir).resolve()
     if report_root.exists() and (
         not report_root.is_dir() or any(report_root.iterdir())
@@ -80,9 +93,6 @@ def evaluate_benchmark(
             f"evaluation report directory is not empty: {report_root}"
         )
     report_root.mkdir(parents=True, exist_ok=True)
-    public_attestation_path = (
-        Path(public_attestation).resolve() if public_attestation is not None else None
-    )
     if public_attestation_path is not None and public_attestation_path.exists():
         raise FileExistsError(
             f"public attestation already exists: {public_attestation_path}"
@@ -172,11 +182,20 @@ def evaluate_benchmark(
     report_path.write_text(
         json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+    evaluator_source_after = _evaluator_source_manifest()
+    evaluator_unchanged = evaluator_source_after == evaluator_source
+    if public_attestation_path is not None and not evaluator_unchanged:
+        raise RuntimeError(
+            "formal public attestation refused because evaluator source changed during the run"
+        )
     attestation = build_public_attestation(
         benchmark,
         report,
         report_root=report_root,
         report_path=report_path,
+        repository=repository,
+        evaluator_source=evaluator_source,
+        evaluator_unchanged=evaluator_unchanged,
     )
     attestation_path = report_root / "attestation.json"
     _write_new_json(attestation_path, attestation)
@@ -191,6 +210,9 @@ def build_public_attestation(
     *,
     report_root: Path,
     report_path: Path,
+    repository: dict[str, Any] | None = None,
+    evaluator_source: dict[str, Any] | None = None,
+    evaluator_unchanged: bool = True,
 ) -> dict[str, Any]:
     agents = []
     for result in report["agents"]:
@@ -214,6 +236,7 @@ def build_public_attestation(
                 "tool_audit": [
                     _public_audit_record(item) for item in result["tool_audit"]
                 ],
+                "audit_integrity": result["audit_integrity"],
                 "engine_patch": result["patch"],
                 "protected_file_hashes": integrity["protected_file_hashes"],
                 "host_protected_file_hashes": integrity["host_protected_file_hashes"],
@@ -226,12 +249,13 @@ def build_public_attestation(
                 "usage": result["process"]["usage"],
             }
         )
-    host_hashes = _hash_named_files(_protected_host_paths(benchmark))
+    repository = repository or _repository_evidence(benchmark.directory)
+    evaluator_source = evaluator_source or _evaluator_source_manifest()
     return {
         "format": "inferref-agent-evaluation-attestation",
-        "format_version": "0.1",
+        "format_version": "0.2",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "commit": _git_commit(benchmark.directory),
+        "repository": repository,
         "benchmark": {
             "id": benchmark.id,
             "format": "inferref-agent-evaluation",
@@ -239,12 +263,12 @@ def build_public_attestation(
             "sha256": _sha256_or_none(benchmark.source),
             "success_policy": benchmark.success.to_dict(),
         },
-        "evaluator_hashes": {
-            name: digest
-            for name, digest in host_hashes.items()
-            if name.startswith("host/")
+        "evaluator": {
+            "source_tree_sha256": evaluator_source["source_tree_sha256"],
+            "source_tree_unchanged": evaluator_unchanged,
+            "files": evaluator_source["files"],
         },
-        "private_report_sha256": _sha256_or_none(report_path),
+        "report_json_sha256": _sha256_or_none(report_path),
         "status": report["status"],
         "acceptance": report["acceptance"],
         "agents": agents,
@@ -259,12 +283,13 @@ def assess_candidate(
     workspace: Path,
     agent_root: Path,
     process: AgentProcessResult,
-    initial_hashes: dict[str, str],
-    final_hashes: dict[str, str],
-    audit: list[dict[str, Any]],
+    initial_hashes: dict[str, Any],
+    final_hashes: dict[str, Any],
+    audit: AuditLog,
     initial_host_hashes: dict[str, str | None] | None = None,
     final_host_hashes: dict[str, str | None] | None = None,
 ) -> dict[str, Any]:
+    audit_records = list(audit.records)
     editable = set(benchmark.editable_paths)
     changed = sorted(
         name
@@ -273,22 +298,22 @@ def assess_candidate(
     )
     protected_changes = [name for name in changed if name not in editable]
     observed_tools = [
-        item.get("tool") for item in audit if isinstance(item.get("tool"), str)
+        item.get("tool") for item in audit_records if isinstance(item.get("tool"), str)
     ]
     missing_tools = sorted(set(benchmark.required_tools) - set(observed_tools))
     budget_attempts = [
         item
-        for item in audit
+        for item in audit_records
         if "budget_exhausted" in (item.get("diagnostic_codes") or [])
     ]
     integrity_attempts = [
         item
-        for item in audit
+        for item in audit_records
         if "integrity_failure" in (item.get("diagnostic_codes") or [])
     ]
     sequence_attempts = [
         item
-        for item in audit
+        for item in audit_records
         if "required_tool_sequence" in (item.get("diagnostic_codes") or [])
     ]
     initial_host_hashes = initial_host_hashes or {}
@@ -298,7 +323,9 @@ def assess_candidate(
         for name in set(initial_host_hashes) | set(final_host_hashes)
         if initial_host_hashes.get(name) != final_host_hashes.get(name)
     )
-    visible_runs = [item for item in audit if item.get("tool") == "inferref_run_engine"]
+    visible_runs = [
+        item for item in audit_records if item.get("tool") == "inferref_run_engine"
+    ]
     historical_visible_pass = any(item.get("status") == "pass" for item in visible_runs)
 
     classification = "pass"
@@ -314,9 +341,9 @@ def assess_candidate(
         message = _agent_api_failure(process.stdout_path) or (
             f"Agent CLI exited with code {process.exit_code}"
         )
-    elif not audit:
+    elif not audit.valid:
         classification = "infrastructure_failure"
-        message = "evaluation MCP server produced no audit records"
+        message = f"evaluation MCP audit is invalid: {audit.error}"
     elif (
         (
             benchmark.success.protected_paths_unchanged
@@ -334,12 +361,18 @@ def assess_candidate(
         message = "candidate did not pass the visible case within the run budget"
 
     candidate_engine = workspace / benchmark.editable_paths[0]
+    candidate_entry = final_hashes.get(benchmark.editable_paths[0])
+    if classification == "pass" and (
+        candidate_entry is None or candidate_entry.kind != "file"
+    ):
+        classification = "integrity_failure"
+        message = "editable engine must remain a regular no-follow file"
     final_engine_sha256: str | None = None
     final_visible: dict[str, Any] | None = None
     holdouts: list[dict[str, Any]] = []
     if classification == "pass":
         try:
-            final_engine = candidate_engine.read_bytes()
+            final_engine = _read_regular_file(candidate_engine)
         except OSError as exc:
             classification = "agent_failure"
             message = f"final candidate engine is unavailable: {exc}"
@@ -374,11 +407,10 @@ def assess_candidate(
                 message = "visible case passed but one or more hidden holdouts failed"
 
     template_engine = benchmark.directory / benchmark.editable_paths[0]
-    patch = (
-        engine_patch(template_engine, candidate_engine)
-        if template_engine.is_file() and candidate_engine.is_file()
-        else ""
-    )
+    try:
+        patch = engine_patch(template_engine, candidate_engine)
+    except (OSError, UnicodeError):
+        patch = ""
     return {
         "agent": agent,
         "model": model,
@@ -403,8 +435,8 @@ def assess_candidate(
             "protected_changes": protected_changes,
             "protected_file_hashes": {
                 name: {
-                    "before": initial_hashes.get(name),
-                    "after": final_hashes.get(name),
+                    "before": _workspace_entry_dict(initial_hashes.get(name)),
+                    "after": _workspace_entry_dict(final_hashes.get(name)),
                 }
                 for name in sorted(set(initial_hashes) | set(final_hashes))
                 if name not in editable
@@ -422,7 +454,8 @@ def assess_candidate(
             "missing_required_tools": missing_tools,
             "budget_exhausted_attempts": len(budget_attempts),
         },
-        "tool_audit": audit,
+        "tool_audit": audit_records,
+        "audit_integrity": audit.to_integrity_dict(),
         "final_engine_sha256": final_engine_sha256,
         "visible": {
             "runs": len(visible_runs),
@@ -837,27 +870,97 @@ def _public_case_result(outcome: dict[str, Any]) -> dict[str, Any]:
 
 
 def _protected_host_paths(benchmark: EvaluationBenchmark) -> dict[str, Path]:
-    module_root = Path(__file__).resolve().parent
-    return {
+    package_root = Path(__file__).resolve().parents[1]
+    paths = {
         "benchmark/benchmark.json": benchmark.source,
         "benchmark/TASK.md": benchmark.directory / benchmark.task,
         "benchmark/engine.py": benchmark.directory / benchmark.editable_paths[0],
-        "host/adapter.py": module_root / "adapter.py",
-        "host/evaluation.py": module_root / "evaluation.py",
-        "host/evaluation_host.py": Path(__file__).resolve(),
-        "host/evaluation_mcp.py": module_root / "evaluation_mcp.py",
     }
+    for name, entry in workspace_hashes(package_root).items():
+        if entry.kind != "file" or _excluded_source_path(name):
+            continue
+        paths[f"evaluator/inferref/{name}"] = package_root / name
+    return paths
 
 
 def _hash_named_files(paths: dict[str, Path]) -> dict[str, str | None]:
-    return {
-        name: hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
-        for name, path in paths.items()
-    }
+    hashes: dict[str, str | None] = {}
+    for name, path in paths.items():
+        try:
+            hashes[name] = hashlib.sha256(_read_regular_file(path)).hexdigest()
+        except OSError:
+            hashes[name] = None
+    return hashes
 
 
 def _sha256_or_none(path: Path) -> str | None:
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+    try:
+        return hashlib.sha256(_read_regular_file(path)).hexdigest()
+    except OSError:
+        return None
+
+
+def _workspace_entry_dict(entry: Any) -> dict[str, Any] | None:
+    return entry.to_dict() if entry is not None else None
+
+
+def _excluded_source_path(name: str) -> bool:
+    parts = Path(name).parts
+    return "__pycache__" in parts or name.endswith((".pyc", ".pyo"))
+
+
+def _evaluator_source_manifest() -> dict[str, Any]:
+    package_root = Path(__file__).resolve().parents[1]
+    files = {
+        f"inferref/{name}": entry.to_dict()
+        for name, entry in workspace_hashes(package_root).items()
+        if entry.kind != "directory" and not _excluded_source_path(name)
+    }
+    encoded = json.dumps(
+        files, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return {
+        "source_tree_sha256": hashlib.sha256(encoded).hexdigest(),
+        "files": files,
+    }
+
+
+def _repository_evidence(cwd: Path) -> dict[str, Any]:
+    root = _git_output(cwd, ["rev-parse", "--show-toplevel"])
+    commit = _git_output(cwd, ["rev-parse", "HEAD"])
+    status = _git_bytes(cwd, ["status", "--porcelain=v1", "--untracked-files=all"])
+    diff = _git_bytes(cwd, ["diff", "--binary", "HEAD", "--", "."])
+    valid_commit = commit if commit is not None and len(commit) == 40 else None
+    return {
+        "commit": valid_commit,
+        "dirty": status is None or bool(status.strip()),
+        "status_sha256": hashlib.sha256(status or b"").hexdigest(),
+        "git_diff_sha256": hashlib.sha256(diff or b"").hexdigest(),
+        "git_available": root is not None,
+    }
+
+
+def _git_output(cwd: Path, arguments: list[str]) -> str | None:
+    payload = _git_bytes(cwd, arguments)
+    if payload is None:
+        return None
+    return payload.decode("utf-8", errors="replace").strip()
+
+
+def _git_bytes(cwd: Path, arguments: list[str]) -> bytes | None:
+    try:
+        completed = subprocess.run(
+            ["git", *arguments],
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            shell=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return completed.stdout if completed.returncode == 0 else None
 
 
 def _public_audit_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -872,24 +975,6 @@ def _public_audit_record(record: dict[str, Any]) -> dict[str, Any]:
             "diagnostic_codes",
         )
     }
-
-
-def _git_commit(cwd: Path) -> str | None:
-    try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            check=False,
-            shell=False,
-            timeout=10,
-            text=True,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    commit = completed.stdout.strip()
-    return commit if completed.returncode == 0 and len(commit) == 40 else None
 
 
 def _write_new_json(path: Path, payload: dict[str, Any]) -> None:

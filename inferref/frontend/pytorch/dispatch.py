@@ -20,13 +20,15 @@ tensor object, differing in ``storage_version`` — exactly what IR §2.4 requir
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator
+from typing import Any
 
 import torch
 from torch.utils._python_dispatch import TorchDispatchMode
 
+from inferref.frontend.pytorch.identity import Identity, torch_dtype_name
 from inferref.ir.operator import AliasEffect, Effects, OperatorRecord, StorageMutation
 from inferref.ir.values import (
     DictValue,
@@ -39,8 +41,6 @@ from inferref.ir.values import (
     TupleValue,
     Value,
 )
-from inferref.frontend.pytorch.identity import Identity, torch_dtype_name
-
 
 # These operators mutate a Tensor object's metadata, not the bytes in its
 # backing storage. Their output still gets a fresh immutable TraceValue with
@@ -198,11 +198,15 @@ class TraceRecorder:
             return _scalar_value(obj)
         if isinstance(obj, (list,)):
             return ListValue(
-                items=tuple(self.to_value(i, is_output=is_output, memo=memo) for i in obj)
+                items=tuple(
+                    self.to_value(i, is_output=is_output, memo=memo) for i in obj
+                )
             )
         if isinstance(obj, tuple):
             return TupleValue(
-                items=tuple(self.to_value(i, is_output=is_output, memo=memo) for i in obj)
+                items=tuple(
+                    self.to_value(i, is_output=is_output, memo=memo) for i in obj
+                )
             )
         if isinstance(obj, dict):
             return DictValue(
@@ -215,7 +219,9 @@ class TraceRecorder:
                 )
             )
         if isinstance(obj, torch.dtype):
-            return OpaqueValue(type="torch.dtype", repr=torch_dtype_name(obj), portable=True)
+            return OpaqueValue(
+                type="torch.dtype", repr=torch_dtype_name(obj), portable=True
+            )
         if isinstance(obj, torch.device):
             return OpaqueValue(type="torch.device", repr=str(obj), portable=True)
         if isinstance(obj, torch.layout):
@@ -223,7 +229,9 @@ class TraceRecorder:
         if isinstance(obj, torch.memory_format):
             return OpaqueValue(type="torch.memory_format", repr=str(obj), portable=True)
         # IR §41: anything else is diagnostic-only and blocks independent repro.
-        return OpaqueValue(type=type(obj).__name__, repr=repr(obj)[:200], portable=False)
+        return OpaqueValue(
+            type=type(obj).__name__, repr=repr(obj)[:200], portable=False
+        )
 
     def next_op_id(self) -> tuple[int, int]:
         op_id = self._next_op_id
@@ -358,7 +366,9 @@ class InferRefDispatchMode(TorchDispatchMode):
         result = recorder.to_value(out, is_output=True, memo={})
 
         # 6. Alias effects (IR §25).
-        aliases = self._alias_effects(args, kwargs, out, positional, keyword, result, identity)
+        aliases = self._alias_effects(
+            args, kwargs, out, positional, keyword, result, identity
+        )
 
         op_id, execution_index = recorder.next_op_id()
         namespace, op_name, overload = canonical_parts(func)
@@ -391,17 +401,15 @@ class InferRefDispatchMode(TorchDispatchMode):
         """Detect output/input aliasing by comparing observed identities."""
         inputs: list[tuple[TensorRef, torch.Tensor]] = []
         for value, obj in zip(positional, args):
-            if isinstance(value, TensorRef) and isinstance(obj, torch.Tensor):
-                inputs.append((value, obj))
+            _collect_tensor_pairs(value, obj, inputs)
         for key, value in keyword.items():
             obj = kwargs.get(key)
-            if isinstance(value, TensorRef) and isinstance(obj, torch.Tensor):
-                inputs.append((value, obj))
+            _collect_tensor_pairs(value, obj, inputs)
         if not inputs:
             return []
 
         outputs: list[tuple[TensorRef, torch.Tensor]] = []
-        _collect_tensor_outputs(result, out, outputs)
+        _collect_tensor_pairs(result, out, outputs)
 
         effects: list[AliasEffect] = []
         for out_ref, out_tensor in outputs:
@@ -414,7 +422,9 @@ class InferRefDispatchMode(TorchDispatchMode):
                 if in_tensor is out_tensor:
                     if not same_object_recorded:
                         effects.append(
-                            AliasEffect(out_ref.value_id, in_ref.value_id, "same_object")
+                            AliasEffect(
+                                out_ref.value_id, in_ref.value_id, "same_object"
+                            )
                         )
                         same_object_recorded = True
                     continue
@@ -433,18 +443,27 @@ class InferRefDispatchMode(TorchDispatchMode):
                     and in_tensor.storage_offset() == out_tensor.storage_offset()
                 )
                 relationship = "shared_storage" if same_layout else "view"
-                effects.append(AliasEffect(out_ref.value_id, in_ref.value_id, relationship))
+                effects.append(
+                    AliasEffect(out_ref.value_id, in_ref.value_id, relationship)
+                )
                 storage_alias_recorded = True
         return effects
 
 
-def _collect_tensor_outputs(
+def _collect_tensor_pairs(
     value: Value, obj: Any, into: list[tuple[TensorRef, torch.Tensor]]
 ) -> None:
-    """Pair up IR output refs with the runtime tensors they describe."""
+    """Recursively pair IR tensor refs with matching runtime container leaves."""
     if isinstance(value, TensorRef) and isinstance(obj, torch.Tensor):
         into.append((value, obj))
         return
     if isinstance(value, (ListValue, TupleValue)) and isinstance(obj, (list, tuple)):
         for sub_value, sub_obj in zip(value.items, obj):
-            _collect_tensor_outputs(sub_value, sub_obj, into)
+            _collect_tensor_pairs(sub_value, sub_obj, into)
+        return
+    if isinstance(value, DictValue) and isinstance(obj, dict):
+        for (key_value, item_value), (key_obj, item_obj) in zip(
+            value.items, obj.items()
+        ):
+            _collect_tensor_pairs(key_value, key_obj, into)
+            _collect_tensor_pairs(item_value, item_obj, into)

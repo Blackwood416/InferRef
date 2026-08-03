@@ -290,12 +290,21 @@ jobs:
           BIN=cpp/build/inferref_compare
           [ -x "$BIN" ] || BIN=cpp/build/Release/inferref_compare.exe
 
-          # Same verdict as `inferref compare`, computed without PyTorch.
-          "$BIN" repro/rope/reference/q_embed.irtensor engine-out/q_embed.irtensor
+          # Same multi-output verdict as `inferref compare`, computed without PyTorch.
+          for name in q_embed k_embed; do
+            "$BIN" "repro/rope/reference/${name}.irtensor" "engine-out/${name}.irtensor"
+          done
 
           python examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
           if "$BIN" repro/rope/reference/q_embed.irtensor engine-bad/q_embed.irtensor; then
             echo "::error::C++ comparator reported PASS for a broken engine"
             exit 1
           fi
-          echo "C++ and Python comparators agree in both directions"
+          "$BIN" repro/rope/reference/k_embed.irtensor engine-bad/k_embed.irtensor
+
+          cp engine-bad/q_embed.irtensor engine-bad/k_embed.irtensor
+          if "$BIN" repro/rope/reference/k_embed.irtensor engine-bad/k_embed.irtensor; then
+            echo "::error::C++ comparator reported PASS for a corrupted k_embed"
+            exit 1
+          fi
+          echo "C++ and Python comparators agree for every output and both failure directions"

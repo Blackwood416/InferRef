@@ -157,6 +157,14 @@ or filesystem-access limits. Artifact monitoring can detect and terminate growth
 only an OS/container quota can guarantee that a hostile process never transiently
 exceeds the configured byte limit.
 
+Root containment is accidental path-escape protection, not a handle-based
+security boundary. The current implementation rejects absolute paths, lexical
+parents, and resolved paths outside configured roots, but check and use are
+separate filesystem operations. A same-user adversary may race a directory
+symlink, junction, or reparse point. Strong isolation requires directory-handle
+relative access (`openat2`/`O_NOFOLLOW` on Linux and final-handle/reparse checks on
+Windows) or an OS sandbox.
+
 ## 5. MCP transport
 
 Install the optional transport with:
@@ -263,8 +271,16 @@ public, evaluator and Agent share an OS user, and final-state hashes cannot dete
 reads or modify-then-restore behavior. This is not an adversarial secrecy or OS
 sandbox claim.
 
-The evaluator may emit a redacted `inferref-agent-evaluation-attestation` v0.1.
-It contains the commit, benchmark/evaluator hashes, model and CLI versions, tool
-audit, final patch, final visible/holdout verdicts, raw transcript hashes, and
-available usage. It excludes transcript text, reasoning, credentials, reference
-payloads, and absolute local paths.
+The evaluation MCP audit is a fail-closed JSONL evidence stream. Tool-call records
+have one continuous global `call_index` and monotonic `engine_runs`. A terminal
+`session_footer` binds the record count and SHA-256 of all preceding record bytes.
+Malformed JSON, invalid record schema, a missing footer, or a count/digest mismatch
+is an `infrastructure_failure`; records are never silently skipped.
+
+The evaluator may emit a redacted `inferref-agent-evaluation-attestation` v0.2.
+A formal public attestation requires a clean Git worktree and records the commit,
+dirty status, complete imported `inferref` source-tree manifest/hash, benchmark,
+sealed tool audit, final patch, final visible/holdout verdicts, raw transcript
+hashes, and available usage. `report_json_sha256` hashes exactly `report.json`, not
+the whole private report directory. The attestation excludes transcript text,
+reasoning, credentials, reference payloads, and absolute local paths.

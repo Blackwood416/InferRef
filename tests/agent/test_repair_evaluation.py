@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -20,6 +23,7 @@ from inferref.agent.evaluation import (
     VISIBLE_URI,
     EvaluationBenchmark,
     EvaluationSession,
+    _audit_line,
     execute_case,
     load_audit,
     prepare_workspace,
@@ -96,6 +100,7 @@ def _fake_repair_driver(
     del agent, model
     session = EvaluationSession(benchmark, workspace, session_root, audit_path)
     _exercise_required_tools(session, repair=True)
+    session.finalize_audit()
     return _process(session_root.parent)
 
 
@@ -236,8 +241,106 @@ def test_evaluation_mcp_enforces_opaque_uris_and_run_budget(tmp_path: Path) -> N
             )
 
     asyncio.run(exercise())
+    session.finalize_audit()
     records = load_audit(tmp_path / "audit.jsonl")
+    assert records.valid
     assert records[-1]["diagnostic_codes"] == ["budget_exhausted"]
+
+
+def _write_sealed_audit(path: Path, records: list[dict[str, object]]) -> None:
+    encoded = b"".join(_audit_line(record) for record in records)
+    footer = {
+        "type": "session_footer",
+        "record_count": len(records),
+        "records_sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+    path.write_bytes(encoded + _audit_line(footer))
+
+
+def _audit_record(index: int, engine_runs: int = 0) -> dict[str, object]:
+    return {
+        "type": "tool_call",
+        "timestamp": "2026-08-03T00:00:00+00:00",
+        "tool": "inferref_capabilities",
+        "call_index": index,
+        "engine_runs": engine_runs,
+        "status": "ok",
+        "operation": "capabilities",
+        "diagnostic_codes": [],
+    }
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["invalid_json", "non_object", "missing_footer", "wrong_count", "wrong_digest"],
+)
+def test_audit_corruption_fails_closed(tmp_path: Path, corruption: str) -> None:
+    path = tmp_path / "audit.jsonl"
+    _write_sealed_audit(path, [_audit_record(1)])
+    lines = path.read_bytes().splitlines(keepends=True)
+    if corruption == "invalid_json":
+        path.write_bytes(path.read_bytes() + b"{broken\n")
+    elif corruption == "non_object":
+        path.write_bytes(b"[]\n" + b"".join(lines[1:]))
+    elif corruption == "missing_footer":
+        path.write_bytes(lines[0])
+    else:
+        footer = json.loads(lines[-1])
+        if corruption == "wrong_count":
+            footer["record_count"] = 2
+        else:
+            footer["records_sha256"] = "0" * 64
+        path.write_bytes(b"".join(lines[:-1]) + _audit_line(footer))
+
+    audit = load_audit(path)
+
+    assert not audit.valid
+    assert audit.error
+
+
+@pytest.mark.parametrize(
+    "records",
+    [
+        [_audit_record(2)],
+        [_audit_record(1, 1), _audit_record(2, 0)],
+        [{**_audit_record(1), "diagnostic_codes": "not-a-list"}],
+    ],
+)
+def test_audit_schema_and_monotonicity_fail_closed(
+    tmp_path: Path, records: list[dict[str, object]]
+) -> None:
+    path = tmp_path / "audit.jsonl"
+    _write_sealed_audit(path, records)
+
+    audit = load_audit(path)
+
+    assert not audit.valid
+    assert audit.error
+
+
+def test_torn_audit_after_required_tools_is_infrastructure_failure(
+    tmp_path: Path,
+) -> None:
+    benchmark = _benchmark()
+    workspace = prepare_workspace(benchmark, tmp_path / "workspace")
+    initial, audit_path = _passing_session(benchmark, workspace, tmp_path)
+    with audit_path.open("ab") as stream:
+        stream.write(b"{torn\n")
+
+    result = assess_candidate(
+        benchmark,
+        agent="fake",
+        model="fake",
+        workspace=workspace,
+        agent_root=tmp_path / "agent",
+        process=_process(tmp_path),
+        initial_hashes=initial,
+        final_hashes=workspace_hashes(workspace),
+        audit=load_audit(audit_path),
+    )
+
+    assert result["classification"] == "infrastructure_failure"
+    assert result["audit_integrity"]["valid"] is False
 
 
 def test_fake_dual_agent_evaluation_passes_visible_and_holdouts(tmp_path: Path) -> None:
@@ -270,6 +373,7 @@ def test_final_engine_is_revalidated_after_historical_visible_pass(
     audit_path = tmp_path / "audit.jsonl"
     session = EvaluationSession(benchmark, workspace, tmp_path / "session", audit_path)
     _exercise_required_tools(session, repair=True)
+    session.finalize_audit()
 
     engine = workspace / "engine.py"
     source = engine.read_text(encoding="utf-8")
@@ -300,6 +404,126 @@ def test_final_engine_is_revalidated_after_historical_visible_pass(
     assert result["classification"] == "agent_failure"
 
 
+def _passing_session(
+    benchmark: EvaluationBenchmark, workspace: Path, root: Path
+) -> tuple[dict[str, object], Path]:
+    initial = workspace_hashes(workspace)
+    audit_path = root / "audit.jsonl"
+    session = EvaluationSession(benchmark, workspace, root / "session", audit_path)
+    _exercise_required_tools(session, repair=True)
+    session.finalize_audit()
+    return initial, audit_path
+
+
+def _symlink_or_skip(target: Path, link: Path, *, directory: bool = False) -> None:
+    try:
+        os.symlink(target, link, target_is_directory=directory)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+
+@pytest.mark.parametrize("protected_name", ["TASK.md"])
+def test_same_content_symlink_is_an_integrity_change(
+    tmp_path: Path, protected_name: str
+) -> None:
+    benchmark = _benchmark()
+    workspace = prepare_workspace(benchmark, tmp_path / "workspace")
+    initial, audit_path = _passing_session(benchmark, workspace, tmp_path)
+    protected = workspace / protected_name
+    external = tmp_path / "same-content.txt"
+    external.write_bytes(protected.read_bytes())
+    protected.unlink()
+    _symlink_or_skip(external, protected)
+
+    result = assess_candidate(
+        benchmark,
+        agent="fake",
+        model="fake",
+        workspace=workspace,
+        agent_root=tmp_path / "agent",
+        process=_process(tmp_path),
+        initial_hashes=initial,
+        final_hashes=workspace_hashes(workspace),
+        audit=load_audit(audit_path),
+    )
+
+    assert result["classification"] == "integrity_failure"
+    assert protected_name in result["integrity"]["protected_changes"]
+    assert (
+        result["integrity"]["protected_file_hashes"][protected_name]["after"]["kind"]
+        == "symlink"
+    )
+
+
+def test_editable_engine_symlink_is_rejected(tmp_path: Path) -> None:
+    benchmark = _benchmark()
+    workspace = prepare_workspace(benchmark, tmp_path / "workspace")
+    initial, audit_path = _passing_session(benchmark, workspace, tmp_path)
+    engine = workspace / "engine.py"
+    external = tmp_path / "engine.py"
+    external.write_bytes(engine.read_bytes())
+    engine.unlink()
+    _symlink_or_skip(external, engine)
+
+    result = assess_candidate(
+        benchmark,
+        agent="fake",
+        model="fake",
+        workspace=workspace,
+        agent_root=tmp_path / "agent",
+        process=_process(tmp_path),
+        initial_hashes=initial,
+        final_hashes=workspace_hashes(workspace),
+        audit=load_audit(audit_path),
+    )
+
+    assert result["classification"] == "integrity_failure"
+    assert "regular no-follow file" in result["message"]
+
+
+def test_new_empty_directory_is_an_integrity_change(tmp_path: Path) -> None:
+    benchmark = _benchmark()
+    workspace = prepare_workspace(benchmark, tmp_path / "workspace")
+    initial, audit_path = _passing_session(benchmark, workspace, tmp_path)
+    (workspace / "extra-empty-directory").mkdir()
+
+    result = assess_candidate(
+        benchmark,
+        agent="fake",
+        model="fake",
+        workspace=workspace,
+        agent_root=tmp_path / "agent",
+        process=_process(tmp_path),
+        initial_hashes=initial,
+        final_hashes=workspace_hashes(workspace),
+        audit=load_audit(audit_path),
+    )
+
+    assert result["classification"] == "integrity_failure"
+    assert "extra-empty-directory" in result["integrity"]["protected_changes"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction coverage")
+def test_workspace_manifest_rejects_windows_junction(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    target = tmp_path / "target"
+    workspace.mkdir()
+    target.mkdir()
+    junction = workspace / "junction"
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if completed.returncode != 0:
+        pytest.skip(f"junction creation is unavailable: {completed.stderr}")
+    try:
+        assert workspace_hashes(workspace)["junction"].kind == "symlink"
+    finally:
+        os.rmdir(junction)
+
+
 def test_success_policy_controls_required_agent_passes(tmp_path: Path) -> None:
     manifest = json.loads(BENCHMARK_PATH.read_text(encoding="utf-8"))
     manifest["success"]["required_agent_passes"] = 1
@@ -320,7 +544,20 @@ def test_success_policy_controls_required_agent_passes(tmp_path: Path) -> None:
     assert report["acceptance"]["policy"] == manifest["success"]
 
 
-def test_public_attestation_omits_private_transcript_and_paths(tmp_path: Path) -> None:
+def test_public_attestation_omits_private_transcript_and_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        evaluation_host,
+        "_repository_evidence",
+        lambda path: {
+            "commit": "a" * 40,
+            "dirty": False,
+            "status_sha256": hashlib.sha256(b"").hexdigest(),
+            "git_diff_sha256": hashlib.sha256(b"").hexdigest(),
+            "git_available": True,
+        },
+    )
     public_path = tmp_path / "public" / "attestation.json"
     report_root = tmp_path / "private-report"
     report = evaluate_benchmark(
@@ -340,11 +577,50 @@ def test_public_attestation_omits_private_transcript_and_paths(tmp_path: Path) -
     assert all(agent["engine_patch"] for agent in attestation["agents"])
     assert all(agent["final_engine_sha256"] for agent in attestation["agents"])
     assert all(agent["raw_transcript_sha256"] for agent in attestation["agents"])
+    assert attestation["repository"]["dirty"] is False
+    assert attestation["evaluator"]["source_tree_sha256"]
+    assert attestation["evaluator"]["files"]
+    assert {
+        "inferref/compare/compare.py",
+        "inferref/compare/tolerance.py",
+        "inferref/tensor/codec.py",
+        "inferref/ir/paths.py",
+        "inferref/agent/protocol.py",
+        "inferref/agent/adapter.py",
+    } <= set(attestation["evaluator"]["files"])
+    assert attestation["report_json_sha256"]
     rendered = json.dumps(attestation)
     assert str(tmp_path) not in rendered
     assert '"prompt"' not in rendered
     assert '"stdout"' not in rendered
     assert "thinking" not in rendered
+
+
+def test_formal_public_attestation_rejects_dirty_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        evaluation_host,
+        "_repository_evidence",
+        lambda path: {
+            "commit": "a" * 40,
+            "dirty": True,
+            "status_sha256": "status",
+            "git_diff_sha256": "diff",
+            "git_available": True,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="clean Git worktree"):
+        evaluate_benchmark(
+            BENCHMARK_PATH,
+            agents=("codex",),
+            report_dir=tmp_path / "report",
+            driver=_fake_repair_driver,
+            public_attestation=tmp_path / "public.json",
+        )
+
+    assert not (tmp_path / "report").exists()
 
 
 def test_visible_only_patch_is_classified_as_overfit(tmp_path: Path) -> None:
@@ -365,6 +641,7 @@ def test_visible_only_patch_is_classified_as_overfit(tmp_path: Path) -> None:
         benchmark, workspace, tmp_path / "session", tmp_path / "audit.jsonl"
     )
     _exercise_required_tools(session, repair=False)
+    session.finalize_audit()
     result = assess_candidate(
         benchmark,
         agent="fake",
@@ -423,11 +700,13 @@ def test_failure_classification_is_structured(
         )
         response = session.capabilities()
         session.audit("inferref_capabilities", response)
+        session.finalize_audit()
     elif mode in {"protected_change", "adapter_change"}:
         session = EvaluationSession(
             benchmark, workspace, tmp_path / "session", audit_path
         )
         _exercise_required_tools(session, repair=True)
+        session.finalize_audit()
         if mode == "protected_change":
             (workspace / "TASK.md").write_text("tampered", encoding="utf-8")
     elif mode == "malformed_audit":

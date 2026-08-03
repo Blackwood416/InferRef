@@ -7,10 +7,12 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +50,52 @@ REQUIRED_TOOLS = (
     "inferref_context",
     "inferref_run_engine",
 )
+
+
+@dataclass(frozen=True)
+class WorkspaceEntry:
+    """A no-follow filesystem entry used by evaluation integrity checks."""
+
+    kind: str
+    size: int | None
+    mode: int
+    sha256: str | None = None
+    link_target: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "size": self.size,
+            "mode": self.mode,
+            "sha256": self.sha256,
+            "link_target": self.link_target,
+        }
+
+
+@dataclass(frozen=True)
+class AuditLog(Sequence[dict[str, Any]]):
+    """Strictly parsed evaluation evidence, excluding its session footer."""
+
+    records: tuple[dict[str, Any], ...] = ()
+    valid: bool = False
+    error: str | None = None
+    footer: dict[str, Any] | None = None
+
+    def __getitem__(self, index):
+        return self.records[index]
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def to_integrity_dict(self) -> dict[str, Any]:
+        return {
+            "valid": self.valid,
+            "error": self.error,
+            "record_count": len(self.records),
+            "records_sha256": (
+                self.footer.get("records_sha256") if self.footer is not None else None
+            ),
+        }
 
 
 @dataclass(frozen=True)
@@ -247,6 +295,9 @@ class EvaluationSession:
     engine_runs: int = 0
     call_counts: dict[str, int] = field(default_factory=dict)
     successful_tools: set[str] = field(default_factory=set)
+    _audit_records: int = field(default=0, init=False, repr=False)
+    _audit_digest: Any = field(default_factory=hashlib.sha256, init=False, repr=False)
+    _audit_finalized: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.workspace = self.workspace.resolve()
@@ -254,22 +305,52 @@ class EvaluationSession:
         self.root.mkdir(parents=True, exist_ok=True)
         self.audit_path = self.audit_path.resolve()
         self.audit_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.audit_path.touch(exist_ok=False)
+        except FileExistsError as exc:
+            raise FileExistsError(
+                f"evaluation audit already exists: {self.audit_path}"
+            ) from exc
 
     def audit(self, tool: str, response: AgentResponse) -> None:
+        if self._audit_finalized:
+            raise RuntimeError("evaluation audit session is already finalized")
         self.call_counts[tool] = self.call_counts.get(tool, 0) + 1
         if response.status in {"ok", "pass"}:
             self.successful_tools.add(tool)
+        self._audit_records += 1
         record = {
+            "type": "tool_call",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "tool": tool,
-            "call_index": self.call_counts[tool],
+            "call_index": self._audit_records,
             "engine_runs": self.engine_runs,
             "status": response.status,
             "operation": response.operation,
-            "diagnostic_codes": [item.get("code") for item in response.diagnostics],
+            "diagnostic_codes": [
+                code
+                for item in response.diagnostics
+                if isinstance((code := item.get("code")), str)
+            ],
         }
-        with self.audit_path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+        encoded = _audit_line(record)
+        self._audit_digest.update(encoded)
+        with self.audit_path.open("ab") as stream:
+            stream.write(encoded)
+
+    def finalize_audit(self) -> None:
+        """Seal the evidence stream with a count and cumulative digest."""
+
+        if self._audit_finalized:
+            return
+        footer = {
+            "type": "session_footer",
+            "record_count": self._audit_records,
+            "records_sha256": self._audit_digest.hexdigest(),
+        }
+        with self.audit_path.open("ab") as stream:
+            stream.write(_audit_line(footer))
+        self._audit_finalized = True
 
     def capabilities(self) -> AgentResponse:
         from inferref.agent.service import capabilities
@@ -528,8 +609,8 @@ def execute_case(
             "input_changes": input_changes,
             "input_hashes": {
                 name: {
-                    "before": initial_input_hashes.get(name),
-                    "after": final_input_hashes.get(name),
+                    "before": _entry_dict(initial_input_hashes.get(name)),
+                    "after": _entry_dict(final_input_hashes.get(name)),
                 }
                 for name in sorted(set(initial_input_hashes) | set(final_input_hashes))
             },
@@ -568,19 +649,55 @@ def prepare_workspace(benchmark: EvaluationBenchmark, destination: Path) -> Path
     return destination
 
 
-def workspace_hashes(root: Path) -> dict[str, str]:
-    hashes: dict[str, str] = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_file():
-            hashes[path.relative_to(root).as_posix()] = hashlib.sha256(
-                path.read_bytes()
-            ).hexdigest()
-    return hashes
+def workspace_hashes(root: Path) -> dict[str, WorkspaceEntry]:
+    """Snapshot every entry below *root* without following links/reparse points."""
+
+    root = root.resolve(strict=True)
+    entries: dict[str, WorkspaceEntry] = {}
+
+    def walk(directory: Path, prefix: Path) -> None:
+        with os.scandir(directory) as stream:
+            children = sorted(stream, key=lambda item: item.name)
+        for child in children:
+            relative = prefix / child.name
+            name = relative.as_posix()
+            status = child.stat(follow_symlinks=False)
+            mode = stat.S_IMODE(status.st_mode)
+            reparse = _is_reparse_status(status)
+            if child.is_symlink() or reparse:
+                try:
+                    target = os.readlink(child.path)
+                except OSError:
+                    target = None
+                entries[name] = WorkspaceEntry(
+                    kind="symlink",
+                    size=status.st_size,
+                    mode=mode,
+                    link_target=target,
+                )
+            elif stat.S_ISREG(status.st_mode):
+                payload = _read_regular_file(Path(child.path))
+                entries[name] = WorkspaceEntry(
+                    kind="file",
+                    size=len(payload),
+                    mode=mode,
+                    sha256=hashlib.sha256(payload).hexdigest(),
+                )
+            elif stat.S_ISDIR(status.st_mode):
+                entries[name] = WorkspaceEntry(kind="directory", size=None, mode=mode)
+                walk(Path(child.path), relative)
+            else:
+                entries[name] = WorkspaceEntry(
+                    kind="other", size=status.st_size, mode=mode
+                )
+
+    walk(root, Path())
+    return entries
 
 
 def engine_patch(template: Path, candidate: Path) -> str:
-    before = template.read_text(encoding="utf-8").splitlines(keepends=True)
-    after = candidate.read_text(encoding="utf-8").splitlines(keepends=True)
+    before = _read_regular_file(template).decode("utf-8").splitlines(keepends=True)
+    after = _read_regular_file(candidate).decode("utf-8").splitlines(keepends=True)
     return "".join(
         difflib.unified_diff(
             before, after, fromfile="engine.py (baseline)", tofile="engine.py"
@@ -588,20 +705,124 @@ def engine_patch(template: Path, candidate: Path) -> str:
     )
 
 
-def load_audit(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    records = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
+def load_audit(path: Path) -> AuditLog:
+    """Load a sealed audit JSONL stream; any malformed evidence fails closed."""
+
+    try:
+        payload = _read_regular_file(path)
+    except OSError as exc:
+        return AuditLog(error=f"audit is unavailable: {exc}")
+    try:
+        payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        return AuditLog(error=f"audit is not UTF-8: {exc}")
+
+    raw_lines = payload.splitlines(keepends=True)
+    parsed: list[tuple[dict[str, Any], bytes]] = []
+    for line_number, raw_line in enumerate(raw_lines, start=1):
+        if not raw_line.strip():
             continue
         try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(item, dict):
-            records.append(item)
-    return records
+            item = json.loads(raw_line)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return AuditLog(error=f"audit line {line_number} is invalid JSON: {exc}")
+        if not isinstance(item, dict):
+            return AuditLog(error=f"audit line {line_number} must be an object")
+        parsed.append((item, raw_line))
+    if not parsed:
+        return AuditLog(error="audit contains no records")
+
+    footer, _ = parsed[-1]
+    if footer.get("type") != "session_footer":
+        return AuditLog(error="audit is missing its terminal session footer")
+    records_with_bytes = parsed[:-1]
+    records = tuple(item for item, _ in records_with_bytes)
+    expected_count = footer.get("record_count")
+    if (
+        not isinstance(expected_count, int)
+        or isinstance(expected_count, bool)
+        or expected_count != len(records)
+    ):
+        return AuditLog(records=records, error="audit footer record count mismatch")
+    expected_digest = footer.get("records_sha256")
+    digest = hashlib.sha256()
+    for _, raw_line in records_with_bytes:
+        digest.update(raw_line)
+    if not isinstance(expected_digest, str) or expected_digest != digest.hexdigest():
+        return AuditLog(records=records, error="audit footer digest mismatch")
+
+    previous_runs = 0
+    for index, record in enumerate(records, start=1):
+        error = _validate_audit_record(record, index=index, previous_runs=previous_runs)
+        if error is not None:
+            return AuditLog(records=records, error=error, footer=footer)
+        previous_runs = record["engine_runs"]
+    return AuditLog(records=records, valid=True, footer=footer)
+
+
+def _audit_line(record: dict[str, Any]) -> bytes:
+    return (
+        json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+
+
+def _validate_audit_record(
+    record: dict[str, Any], *, index: int, previous_runs: int
+) -> str | None:
+    if record.get("type") != "tool_call":
+        return f"audit record {index} has an invalid type"
+    if record.get("call_index") != index:
+        return f"audit call_index is not continuous at record {index}"
+    engine_runs = record.get("engine_runs")
+    if (
+        not isinstance(engine_runs, int)
+        or isinstance(engine_runs, bool)
+        or engine_runs < previous_runs
+        or engine_runs > previous_runs + 1
+    ):
+        return f"audit engine_runs is not monotonic at record {index}"
+    for key in ("timestamp", "tool", "status", "operation"):
+        if not isinstance(record.get(key), str) or not record[key]:
+            return f"audit record {index}.{key} must be a non-empty string"
+    codes = record.get("diagnostic_codes")
+    if not isinstance(codes, list) or not all(isinstance(code, str) for code in codes):
+        return f"audit record {index}.diagnostic_codes must be a string list"
+    return None
+
+
+def _is_reparse_status(status: os.stat_result) -> bool:
+    attributes = getattr(status, "st_file_attributes", 0)
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
+def _read_regular_file(path: Path) -> bytes:
+    """Read one regular file while rejecting a final symlink/reparse point."""
+
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode) or _is_reparse_status(before):
+        raise OSError(f"not a regular no-follow file: {path.name}")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or _is_reparse_status(opened):
+            raise OSError(f"not a regular no-follow file: {path.name}")
+        if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+            raise OSError(f"file changed while opening: {path.name}")
+        chunks = []
+        while chunk := os.read(descriptor, 1024 * 1024):
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+    after = os.lstat(path)
+    if (opened.st_dev, opened.st_ino) != (after.st_dev, after.st_ino):
+        raise OSError(f"file changed while reading: {path.name}")
+    return b"".join(chunks)
+
+
+def _entry_dict(entry: WorkspaceEntry | None) -> dict[str, Any] | None:
+    return entry.to_dict() if entry is not None else None
 
 
 def _write_input_view(

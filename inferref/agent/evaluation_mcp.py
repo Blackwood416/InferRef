@@ -81,7 +81,10 @@ def main(argv: list[str] | None = None) -> int:
         root=Path(args.session_root),
         audit_path=Path(args.audit),
     )
-    create_evaluation_server(session).run(transport="stdio")
+    try:
+        create_evaluation_server(session).run(transport="stdio")
+    finally:
+        session.finalize_audit()
     return 0
 
 

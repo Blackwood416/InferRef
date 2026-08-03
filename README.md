@@ -127,7 +127,9 @@ environment as a stdio server. The tools are `inferref_capabilities`,
 `inferref_context`, `inferref_extract_testcase`, `inferref_compare_outputs`, and
 `inferref_run_engine`. Read and write roots are host policy, not tool arguments;
 requests outside them are rejected. If omitted, both policies default to the
-server's current working directory.
+server's current working directory. These path checks prevent accidental and
+static lexical/resolve-based escapes; they are not a strong sandbox boundary
+against a same-user process racing directory symlinks or Windows reparse points.
 
 Adapter JSON is executable configuration: InferRef uses an argv array and
 `shell=False`, but the configured process must still be trusted. The complete
@@ -166,12 +168,14 @@ select its concrete model with `--claude-model MODEL`. The evaluator records the
 requested and resolved model but never copies the settings path or contents into
 the report or benchmark manifest.
 
-The private report contains bounded CLI output. The redacted attestation contains
-commit and evaluator hashes, model/CLI versions, tool order, final patch,
-visible/holdout results, transcript hashes, duration, and available usage/cost,
-but no reasoning, credentials, reference payloads, or absolute local paths. Full
-model event streams remain untracked. Ordinary CI uses a deterministic fake Agent
-to test this evaluator; it does not spend model tokens or claim autonomous repair.
+The private report contains bounded CLI output. A formal public attestation is
+only emitted from a clean Git worktree. Attestation v0.2 binds the repository
+commit and dirty state, a manifest/hash of the complete imported `inferref`
+source tree, the benchmark, the sealed MCP audit, final patch, visible/holdout
+results, transcript hashes, duration, and available usage/cost. It excludes
+reasoning, credentials, reference payloads, and absolute local paths. Full model
+event streams remain untracked. Ordinary CI uses a deterministic fake Agent to
+test this evaluator; it does not spend model tokens or claim autonomous repair.
 The machine-readable contract lives in
 [`benchmark.json`](examples/agent_eval/rope_sign/benchmark.json).
 
