@@ -78,9 +78,6 @@ and requires the C++ comparator to reject it.
 - KV-cache detector v1 remains the high-precision rule. A scored v2 detector for
   packed/fused/page-table caches should be designed separately rather than
   weakening v1.
-- The existing real dual-Agent attestation remains a historical v0.1 asset. A new
-  formal v0.2 pilot should be generated only after this source tree is committed
-  and clean.
 
 ## Real lifecycle findings
 
@@ -90,5 +87,20 @@ the evaluation MCP server because user-level configuration remained active. The
 redacted failure attestation is retained under `docs/dev/attestations` rather than
 rewritten as a pass. After config isolation and crash-consistent audit checkpoints,
 an isolated real Codex rerun passed with one engine run, final visible PASS, and
-all three holdouts PASS. A fresh strict 2/2 formal run remains required after the
-lifecycle fix is committed.
+all three holdouts PASS.
+
+A fresh strict run from clean commit `7927d9f` then passed 2/2:
+
+- Codex `gpt-5.6-sol`: one engine run; final visible and 3/3 holdouts PASS;
+- Claude Code / `deepseek-v4-flash[1m]`: two engine runs; final visible and 3/3
+  holdouts PASS;
+- both audit streams valid; repository dirty `false`; evaluator source unchanged;
+- source-tree SHA-256:
+  `4e6dfb6408b39abbfb2fb51eacb1f7eac72cac12aa81a5f78090a232c8606967`;
+- public attestation SHA-256:
+  `f65314dc256277bc291e85b07631a43c4d3cac0c9e959eac9be78ef68562b93`.
+
+Public evidence:
+
+- [failed infrastructure attempt at `535af43`](../attestations/2026-08-03-rope-dual-agent-535af43-codex-mcp-failure.json)
+- [strict 2/2 PASS at `7927d9f`](../attestations/2026-08-03-rope-dual-agent-7927d9f.json)

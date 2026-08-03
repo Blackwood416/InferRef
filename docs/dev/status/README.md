@@ -27,7 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
-| 2026-08-03 | [Evaluation evidence and container-alias hardening](2026-08-03-evaluation-evidence-hardening.md) | Clean-tree source manifest; sealed audit; no-follow workspace entries; recursive aliases; 412 tests |
+| 2026-08-03 | [Evaluation evidence and container-alias hardening](2026-08-03-evaluation-evidence-hardening.md) | Source manifest; crash-consistent audit; recursive aliases; formal v0.2 Agent gate 2/2; 414 tests |
 | 2026-08-02 | [Agent evaluation correctness hardening](2026-08-02-agent-evaluation-correctness-hardening.md) | Frozen final visible+holdouts; enforced success policy; public attestation; post-fix real 2/2 |
 | 2026-08-02 | [Real dual-Agent repair pilot PASS](2026-08-02-real-agent-pilot-pass.md) | Codex + DeepSeek/Claude Code 2/2; visible 2/2; hidden 6/6; no integrity violations |
 | 2026-08-02 | [Real Agent repair pilot v0.2](2026-08-02-real-agent-pilot-v02.md) | Blind harness complete; Codex PASS; Claude provider limited; gate 1/2; CI 19/19 |

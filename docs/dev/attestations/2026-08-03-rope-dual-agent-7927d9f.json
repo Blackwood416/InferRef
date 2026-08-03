@@ -1,0 +1,1351 @@
+{
+  "format": "inferref-agent-evaluation-attestation",
+  "format_version": "0.2",
+  "generated_at": "2026-08-03T11:18:44.769432+00:00",
+  "repository": {
+    "commit": "7927d9ff8bedb343418e5caa0e8f2006fd01cab5",
+    "dirty": false,
+    "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "git_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "git_available": true
+  },
+  "benchmark": {
+    "id": "rope-half-rotation-sign",
+    "format": "inferref-agent-evaluation",
+    "format_version": "0.2",
+    "sha256": "84ef708f9be345b1674555c64125b4633444eb74c71f411d98c1c64d0f4f6c8e",
+    "success_policy": {
+      "required_agent_passes": 2,
+      "visible_status": "pass",
+      "all_holdouts_pass": true,
+      "protected_paths_unchanged": true
+    }
+  },
+  "evaluator": {
+    "source_tree_sha256": "4e6dfb6408b39abbfb2fb51eacb1f7eac72cac12aa81a5f78090a232c8606967",
+    "source_tree_unchanged": true,
+    "files": {
+      "inferref/__init__.py": {
+        "kind": "file",
+        "size": 1575,
+        "mode": 438,
+        "sha256": "528783eb40243b96c4c7b471460961b79751a35fa20c9ed87f35554ec8641c94",
+        "link_target": null
+      },
+      "inferref/agent/__init__.py": {
+        "kind": "file",
+        "size": 674,
+        "mode": 438,
+        "sha256": "e8600b61f19b46bcd2fd819b27d512e3e505c0edea3ef1dcaaa0ed6e85c031be",
+        "link_target": null
+      },
+      "inferref/agent/adapter.py": {
+        "kind": "file",
+        "size": 18111,
+        "mode": 438,
+        "sha256": "4b4588880c9a26283342630cf67856bfc59a71ffa5efdc2732c16f71299c7281",
+        "link_target": null
+      },
+      "inferref/agent/evaluation.py": {
+        "kind": "file",
+        "size": 37682,
+        "mode": 438,
+        "sha256": "faec0b0581301a073aa4301f9aeec0e4fe6864bd4680a9e7e18f05e48dc7a536",
+        "link_target": null
+      },
+      "inferref/agent/evaluation_host.py": {
+        "kind": "file",
+        "size": 36072,
+        "mode": 438,
+        "sha256": "557f41ead9e331a426eb72e5dc9f3db326200a169312ddede9c3f8df797676d5",
+        "link_target": null
+      },
+      "inferref/agent/evaluation_mcp.py": {
+        "kind": "file",
+        "size": 3110,
+        "mode": 438,
+        "sha256": "b1accf44850c59e916a16f34488a388c7f1a21681d73892f75b47e769db656aa",
+        "link_target": null
+      },
+      "inferref/agent/mcp_server.py": {
+        "kind": "file",
+        "size": 6310,
+        "mode": 438,
+        "sha256": "8df78a5ca7480d752c8cb0b2c4c4fdef2c7fdfd7aa698b1ab9bef397a145cf2c",
+        "link_target": null
+      },
+      "inferref/agent/path_policy.py": {
+        "kind": "file",
+        "size": 1392,
+        "mode": 438,
+        "sha256": "50882bbe1be9f26826d26eb527573134ec11140f3a491c430ef37f80b335ab50",
+        "link_target": null
+      },
+      "inferref/agent/protocol.py": {
+        "kind": "file",
+        "size": 8945,
+        "mode": 438,
+        "sha256": "cff60c8ef505e481d114409c8e6e78139d5889859f575abb9f518353bec38045",
+        "link_target": null
+      },
+      "inferref/agent/service.py": {
+        "kind": "file",
+        "size": 13537,
+        "mode": 438,
+        "sha256": "c6b31d3b405a9ae8863c5bf190a332971d3cc231a627e0ee3970f4e2b5e2ccdc",
+        "link_target": null
+      },
+      "inferref/cli/__init__.py": {
+        "kind": "file",
+        "size": 128,
+        "mode": 438,
+        "sha256": "2f6d06d0f091b3c54d32595e3cbd118ea6fa5ba15da97cc3c2d1ef772edeec93",
+        "link_target": null
+      },
+      "inferref/cli/main.py": {
+        "kind": "file",
+        "size": 35333,
+        "mode": 438,
+        "sha256": "7efee40e0c7f35a42ada27e8e6762b0a79a6af3e7bf529e65dedffce1a92ffa5",
+        "link_target": null
+      },
+      "inferref/compare/__init__.py": {
+        "kind": "file",
+        "size": 1021,
+        "mode": 438,
+        "sha256": "3d58e429129813099b8bb9c0031eef4b2d3d1cb5d4440ee703baf6e084ca27e7",
+        "link_target": null
+      },
+      "inferref/compare/compare.py": {
+        "kind": "file",
+        "size": 19303,
+        "mode": 438,
+        "sha256": "2fa0dcb7ff567303148d282a9513d8fb47eeb5f68becb7e76b0a1b4daa34f100",
+        "link_target": null
+      },
+      "inferref/compare/layout.py": {
+        "kind": "file",
+        "size": 4220,
+        "mode": 438,
+        "sha256": "d8216c0f6d7eca1cd6f4efd1266e3777ad2636c0d7a8ec465a71ada6f2c57f9d",
+        "link_target": null
+      },
+      "inferref/compare/metrics.py": {
+        "kind": "file",
+        "size": 7158,
+        "mode": 438,
+        "sha256": "08a96e09218a6a517c4557ec21989e176f3c39a3a4aa28ed57383d6dc1737b4d",
+        "link_target": null
+      },
+      "inferref/compare/report.py": {
+        "kind": "file",
+        "size": 6149,
+        "mode": 438,
+        "sha256": "459de58212d78bda5f5990a9b88d378a753ae4e4b616f24cdfb81d478782bc21",
+        "link_target": null
+      },
+      "inferref/compare/tolerance.py": {
+        "kind": "file",
+        "size": 2501,
+        "mode": 438,
+        "sha256": "4da5c9e91750d724b7b6954bc8da50654930a612ccead247cd275498ad20164e",
+        "link_target": null
+      },
+      "inferref/frontend/__init__.py": {
+        "kind": "file",
+        "size": 78,
+        "mode": 438,
+        "sha256": "07822fc1a8cc81df0908fbd9e3cc9f0f06bba5da3f00f0966dc693634d8dab24",
+        "link_target": null
+      },
+      "inferref/frontend/pytorch/__init__.py": {
+        "kind": "file",
+        "size": 275,
+        "mode": 438,
+        "sha256": "786db2ee2057178dd23f2a6ff8a21169b34f72b3c1bf4a2057cbd32a4257a7cc",
+        "link_target": null
+      },
+      "inferref/frontend/pytorch/capture.py": {
+        "kind": "file",
+        "size": 7709,
+        "mode": 438,
+        "sha256": "edad176d97a1bc60fa0e30b8a157cae38a058f0f3defee8580c1780d690ec51d",
+        "link_target": null
+      },
+      "inferref/frontend/pytorch/dispatch.py": {
+        "kind": "file",
+        "size": 18339,
+        "mode": 438,
+        "sha256": "55810ab6af67aaada8dc2d4f772acf14437474beecd9cf566b82cb647aa51a93",
+        "link_target": null
+      },
+      "inferref/frontend/pytorch/identity.py": {
+        "kind": "file",
+        "size": 13017,
+        "mode": 438,
+        "sha256": "0d17b25d9d10fc73fcffd2448768986e813a7986964d83481826faea17b3b0b4",
+        "link_target": null
+      },
+      "inferref/frontend/pytorch/modules.py": {
+        "kind": "file",
+        "size": 5177,
+        "mode": 438,
+        "sha256": "8557a8c5651e93881afd8534639852aa2a129d27bf1d5fea423b5ca6b8f35758",
+        "link_target": null
+      },
+      "inferref/frontend/pytorch/params.py": {
+        "kind": "file",
+        "size": 4444,
+        "mode": 438,
+        "sha256": "4470ce5037d26bfd2bb583675da3653661861e0901f17c7ca803d8237249e017",
+        "link_target": null
+      },
+      "inferref/frontend/pytorch/runner.py": {
+        "kind": "file",
+        "size": 1252,
+        "mode": 438,
+        "sha256": "52143e9842206558f420ed3b7cc60f6f37df1f53100c07004442e7aeb08a8961",
+        "link_target": null
+      },
+      "inferref/frontend/pytorch/session.py": {
+        "kind": "file",
+        "size": 13357,
+        "mode": 438,
+        "sha256": "50b56d52791b34d3c83653696a629387e7e8eb1d8b35f39f25a6509403b51a29",
+        "link_target": null
+      },
+      "inferref/frontend/pytorch/sources.py": {
+        "kind": "file",
+        "size": 4406,
+        "mode": 438,
+        "sha256": "58a19b7c5892ada3c1cecd781e619cd205d75c65df2c08bcdef4702481cda283",
+        "link_target": null
+      },
+      "inferref/inspect/__init__.py": {
+        "kind": "file",
+        "size": 359,
+        "mode": 438,
+        "sha256": "2d5aaafb245a4b89c9582d22fe56c125c48263606ae678119ee66d77590ba11a",
+        "link_target": null
+      },
+      "inferref/inspect/analyze.py": {
+        "kind": "file",
+        "size": 10948,
+        "mode": 438,
+        "sha256": "b4f74bc8dcbec87d952a63fd56c0cc5d437bc303f5b305f02799046eaa968c61",
+        "link_target": null
+      },
+      "inferref/inspect/text.py": {
+        "kind": "file",
+        "size": 10803,
+        "mode": 438,
+        "sha256": "949b10137d6f1bdb7a3a4b1d80f09078c3cac91fb816e4eec7d552ab5037f1ba",
+        "link_target": null
+      },
+      "inferref/ir/__init__.py": {
+        "kind": "file",
+        "size": 2338,
+        "mode": 438,
+        "sha256": "ba17d3e2c196324d2a23851140d94e1b9cc6bceff5224064e06535e8764ebc2a",
+        "link_target": null
+      },
+      "inferref/ir/_common.py": {
+        "kind": "file",
+        "size": 2363,
+        "mode": 438,
+        "sha256": "7cbdf4874c38f04e450b2b9864c1f9be969dde5190f301231a9af5f6b688cd56",
+        "link_target": null
+      },
+      "inferref/ir/dtypes.py": {
+        "kind": "file",
+        "size": 2358,
+        "mode": 438,
+        "sha256": "e09a90cceece80f558bf99fe87a32e9c4c8e5781ca57e436997f4e3b1bfee745",
+        "link_target": null
+      },
+      "inferref/ir/graph.py": {
+        "kind": "file",
+        "size": 7295,
+        "mode": 438,
+        "sha256": "74f57325cfe0fcb813f8892a98d4a8953b3045f77dadda863ec980c9714d1617",
+        "link_target": null
+      },
+      "inferref/ir/manifest.py": {
+        "kind": "file",
+        "size": 8371,
+        "mode": 438,
+        "sha256": "b02421e9be2b2112910804fe036a3057137743711ac5a894efe2cd1b8827c170",
+        "link_target": null
+      },
+      "inferref/ir/module.py": {
+        "kind": "file",
+        "size": 2235,
+        "mode": 438,
+        "sha256": "6f850854db5d0b26831d5b4a574e891369ce26611fe0e9146a75f81b9eb57835",
+        "link_target": null
+      },
+      "inferref/ir/operator.py": {
+        "kind": "file",
+        "size": 7435,
+        "mode": 438,
+        "sha256": "4e3aea0d815928a7b5ffc692f3979ea5a72b1da0e2b547c86250158dcccd7f9b",
+        "link_target": null
+      },
+      "inferref/ir/package.py": {
+        "kind": "file",
+        "size": 8193,
+        "mode": 438,
+        "sha256": "a87eaca1c314fb39fd1ac6020f097dc67fdf0c6198c061b145c7b8c44adf4e5b",
+        "link_target": null
+      },
+      "inferref/ir/paths.py": {
+        "kind": "file",
+        "size": 2950,
+        "mode": 438,
+        "sha256": "216d2daca5faced1dbdb08ab60d737caa2c413b3be820add4886ea19a0e02ea9",
+        "link_target": null
+      },
+      "inferref/ir/region.py": {
+        "kind": "file",
+        "size": 2683,
+        "mode": 438,
+        "sha256": "c3bacde32e5f5540ed0f74daa11d85c9ce9d22bd8f7028473f47541ca199612b",
+        "link_target": null
+      },
+      "inferref/ir/source.py": {
+        "kind": "file",
+        "size": 2732,
+        "mode": 438,
+        "sha256": "e7d0a9244b20a51860ccf500e2c89a54a6c9281bfad95aba86a426f64d367c8b",
+        "link_target": null
+      },
+      "inferref/ir/storage.py": {
+        "kind": "file",
+        "size": 1486,
+        "mode": 438,
+        "sha256": "ac3add6294750b9e156c1589ca8f2b249ee00a71bbe1047eb75d6bc9a21fda9e",
+        "link_target": null
+      },
+      "inferref/ir/tensor_value.py": {
+        "kind": "file",
+        "size": 9052,
+        "mode": 438,
+        "sha256": "341cf6b35c921f344e3e83fe3140c5d2753a73389108d701e60997b0ef35580f",
+        "link_target": null
+      },
+      "inferref/ir/validate.py": {
+        "kind": "file",
+        "size": 25418,
+        "mode": 438,
+        "sha256": "35c2d766b07fa92de6b978df7cfd0564ee3615224c8c6402a21f86eb76c09eeb",
+        "link_target": null
+      },
+      "inferref/ir/values.py": {
+        "kind": "file",
+        "size": 7078,
+        "mode": 438,
+        "sha256": "7008c6cab715f9fd197c5d6c2669554e5ceb0e272c63ccc54726e9f615e947ea",
+        "link_target": null
+      },
+      "inferref/ir/version.py": {
+        "kind": "file",
+        "size": 1395,
+        "mode": 438,
+        "sha256": "f6837373b2b23d531071c43f4c13a22aa3399372a4005130e0660b3b4b8c9a2b",
+        "link_target": null
+      },
+      "inferref/region/__init__.py": {
+        "kind": "file",
+        "size": 659,
+        "mode": 438,
+        "sha256": "88d1efeb09eb8c150a29c99877f0a7054432685a4bf821447b2d2dafbfe1c91f",
+        "link_target": null
+      },
+      "inferref/region/boundary.py": {
+        "kind": "file",
+        "size": 3979,
+        "mode": 438,
+        "sha256": "7fb196d124246a6a64fccb83c766623abd728ed33bd947a0615681cb59640d74",
+        "link_target": null
+      },
+      "inferref/region/manager.py": {
+        "kind": "file",
+        "size": 4817,
+        "mode": 438,
+        "sha256": "5941a5bfe50e60aaee158ee8c7c0425cfd444b787205bbaa0d3579f4bbb85bcd",
+        "link_target": null
+      },
+      "inferref/semantic/__init__.py": {
+        "kind": "file",
+        "size": 1598,
+        "mode": 438,
+        "sha256": "0b4f5b9622145bc086ea826b7a86c18a01a6e6debfc7b1ac7999e4483083a67a",
+        "link_target": null
+      },
+      "inferref/semantic/base.py": {
+        "kind": "file",
+        "size": 3481,
+        "mode": 438,
+        "sha256": "510e62227df6eb29ee4750386f08892ffcae2aa33eb646213e9f00f12739c243",
+        "link_target": null
+      },
+      "inferref/semantic/cache_update.py": {
+        "kind": "file",
+        "size": 7909,
+        "mode": 438,
+        "sha256": "ae5a75dc07fd1978ac197ce30116ee3aed53dc7326efe34649ede8d6dc434266",
+        "link_target": null
+      },
+      "inferref/semantic/invocations.py": {
+        "kind": "file",
+        "size": 2881,
+        "mode": 438,
+        "sha256": "b8e5e4921644ea0b19dc3984596460b1bf2376646902d0d9e58e352205ef7698",
+        "link_target": null
+      },
+      "inferref/semantic/module_type.py": {
+        "kind": "file",
+        "size": 6258,
+        "mode": 438,
+        "sha256": "21c8f4c97e3a8b480ed5caa6d04965703915ee5935c43c28f0b43b97960d9fca",
+        "link_target": null
+      },
+      "inferref/semantic/registry.py": {
+        "kind": "file",
+        "size": 1316,
+        "mode": 438,
+        "sha256": "7d0d7857ac9a15e65f02c1e9741be18c0748615bf41ae159732059b6f0bd3949",
+        "link_target": null
+      },
+      "inferref/semantic/run.py": {
+        "kind": "file",
+        "size": 7063,
+        "mode": 438,
+        "sha256": "c20237392136dd3d20954eb097009280723a5ee1e3fa02891ba0d5c0fe276a3a",
+        "link_target": null
+      },
+      "inferref/semantic/source_function.py": {
+        "kind": "file",
+        "size": 6250,
+        "mode": 438,
+        "sha256": "c71c1d41cb1e996399e755e11093c23c5e90a7b1460baaf1147d346756534232",
+        "link_target": null
+      },
+      "inferref/tensor/__init__.py": {
+        "kind": "file",
+        "size": 932,
+        "mode": 438,
+        "sha256": "b0676186d8f7108f0f0ca77272e38f7768a07e1fba0c3aab4cac2eaf70f41ba4",
+        "link_target": null
+      },
+      "inferref/tensor/codec.py": {
+        "kind": "file",
+        "size": 13591,
+        "mode": 438,
+        "sha256": "7003e342d185c248a22b1e4eeede9a68384cc533e771ef27721fbeffbff7ad1d",
+        "link_target": null
+      },
+      "inferref/tensor/dtype_numpy.py": {
+        "kind": "file",
+        "size": 3904,
+        "mode": 438,
+        "sha256": "8e701415862f157b03b22dd0e455182e4e8135e06ce2b60014131f34b1f74549",
+        "link_target": null
+      },
+      "inferref/testcase/__init__.py": {
+        "kind": "file",
+        "size": 840,
+        "mode": 438,
+        "sha256": "6a2bf4a63f913aac7fec641c5d1aadfd9ad030d7865952c803e6888a05d4e8b3",
+        "link_target": null
+      },
+      "inferref/testcase/dedup.py": {
+        "kind": "file",
+        "size": 6031,
+        "mode": 438,
+        "sha256": "573e08184e99c183deae552c15d3e1d5226dcb16df76562dc866757322a79bc4",
+        "link_target": null
+      },
+      "inferref/testcase/extract.py": {
+        "kind": "file",
+        "size": 24296,
+        "mode": 438,
+        "sha256": "d6bf9c68b25f5aa595b1aa238242649e420974b0a1b5ebdda776026494379cb1",
+        "link_target": null
+      },
+      "inferref/testcase/validate.py": {
+        "kind": "file",
+        "size": 17719,
+        "mode": 438,
+        "sha256": "31ed7fa6199d7068559ecb664eb245c4ba8f5a646a77788e9d2b516b7ef2105a",
+        "link_target": null
+      }
+    }
+  },
+  "report_json_sha256": "2340a24d06a65aa306ad182ccb78f30795d6b22c7be1761d2028d4be6cba7e34",
+  "status": "pass",
+  "acceptance": {
+    "configured_agents": [
+      "codex",
+      "claude"
+    ],
+    "selected_agents": [
+      "codex",
+      "claude"
+    ],
+    "policy": {
+      "required_agent_passes": 2,
+      "visible_status": "pass",
+      "all_holdouts_pass": true,
+      "protected_paths_unchanged": true
+    },
+    "required_passes": 2,
+    "passed": 2
+  },
+  "agents": [
+    {
+      "agent": "codex",
+      "requested_model": "gpt-5.6-sol",
+      "resolved_model": null,
+      "cli_version": "codex-cli 0.146.0",
+      "status": "pass",
+      "classification": "pass",
+      "duration_ms": 33269.816,
+      "engine_runs": 1,
+      "final_engine_sha256": "b54e4093af5addc24735031ffc3ed39abb6d1e6f71f9b75fb17e27cd5e490a66",
+      "historical_visible_passed": true,
+      "final_visible": {
+        "case": {
+          "id": "visible",
+          "seed": 20260802,
+          "shape": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        "status": "pass",
+        "duration_ms": 316.55,
+        "first_failure": null,
+        "input_changes": []
+      },
+      "holdouts": [
+        {
+          "case": {
+            "id": "holdout-dim4",
+            "seed": 20260811,
+            "shape": [
+              1,
+              2,
+              3,
+              4
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 295.035,
+          "first_failure": null,
+          "input_changes": []
+        },
+        {
+          "case": {
+            "id": "holdout-dim12",
+            "seed": 20260817,
+            "shape": [
+              1,
+              1,
+              5,
+              12
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 295.277,
+          "first_failure": null,
+          "input_changes": []
+        },
+        {
+          "case": {
+            "id": "holdout-batch-heads",
+            "seed": 20260823,
+            "shape": [
+              2,
+              3,
+              5,
+              8
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 297.201,
+          "first_failure": null,
+          "input_changes": []
+        }
+      ],
+      "tool_audit": [
+        {
+          "tool": "inferref_capabilities",
+          "call_index": 1,
+          "engine_runs": 0,
+          "status": "ok",
+          "operation": "capabilities",
+          "diagnostic_codes": []
+        },
+        {
+          "tool": "inferref_context",
+          "call_index": 2,
+          "engine_runs": 0,
+          "status": "ok",
+          "operation": "context",
+          "diagnostic_codes": []
+        },
+        {
+          "tool": "inferref_run_engine",
+          "call_index": 3,
+          "engine_runs": 1,
+          "status": "pass",
+          "operation": "run_engine",
+          "diagnostic_codes": []
+        }
+      ],
+      "audit_integrity": {
+        "valid": true,
+        "error": null,
+        "record_count": 3,
+        "records_sha256": "41b9d081a2dc3c57631a83e359a2ca39613be8e90fa642972abe52ca12c66bb5"
+      },
+      "engine_patch": "--- engine.py (baseline)\n+++ engine.py\n@@ -17,7 +17,7 @@\n     half = value.shape[-1] // 2\n     first = value[..., :half]\n     second = value[..., half:]\n-    return np.concatenate((second, -first), axis=-1)\n+    return np.concatenate((-second, first), axis=-1)\n \n \n def apply_rope(value: np.ndarray, cos: np.ndarray, sin: np.ndarray) -> np.ndarray:\n",
+      "protected_file_hashes": {
+        "TASK.md": {
+          "before": {
+            "kind": "file",
+            "size": 613,
+            "mode": 438,
+            "sha256": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89",
+            "link_target": null
+          },
+          "after": {
+            "kind": "file",
+            "size": 613,
+            "mode": 438,
+            "sha256": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89",
+            "link_target": null
+          }
+        }
+      },
+      "host_protected_file_hashes": {
+        "benchmark/TASK.md": {
+          "before": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89",
+          "after": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89"
+        },
+        "benchmark/benchmark.json": {
+          "before": "84ef708f9be345b1674555c64125b4633444eb74c71f411d98c1c64d0f4f6c8e",
+          "after": "84ef708f9be345b1674555c64125b4633444eb74c71f411d98c1c64d0f4f6c8e"
+        },
+        "benchmark/engine.py": {
+          "before": "d28218a91ac703057b2f54cd7003411d7440dfe0da6e55995842ebb43d819e1b",
+          "after": "d28218a91ac703057b2f54cd7003411d7440dfe0da6e55995842ebb43d819e1b"
+        },
+        "evaluator/inferref/__init__.py": {
+          "before": "528783eb40243b96c4c7b471460961b79751a35fa20c9ed87f35554ec8641c94",
+          "after": "528783eb40243b96c4c7b471460961b79751a35fa20c9ed87f35554ec8641c94"
+        },
+        "evaluator/inferref/agent/__init__.py": {
+          "before": "e8600b61f19b46bcd2fd819b27d512e3e505c0edea3ef1dcaaa0ed6e85c031be",
+          "after": "e8600b61f19b46bcd2fd819b27d512e3e505c0edea3ef1dcaaa0ed6e85c031be"
+        },
+        "evaluator/inferref/agent/adapter.py": {
+          "before": "4b4588880c9a26283342630cf67856bfc59a71ffa5efdc2732c16f71299c7281",
+          "after": "4b4588880c9a26283342630cf67856bfc59a71ffa5efdc2732c16f71299c7281"
+        },
+        "evaluator/inferref/agent/evaluation.py": {
+          "before": "faec0b0581301a073aa4301f9aeec0e4fe6864bd4680a9e7e18f05e48dc7a536",
+          "after": "faec0b0581301a073aa4301f9aeec0e4fe6864bd4680a9e7e18f05e48dc7a536"
+        },
+        "evaluator/inferref/agent/evaluation_host.py": {
+          "before": "557f41ead9e331a426eb72e5dc9f3db326200a169312ddede9c3f8df797676d5",
+          "after": "557f41ead9e331a426eb72e5dc9f3db326200a169312ddede9c3f8df797676d5"
+        },
+        "evaluator/inferref/agent/evaluation_mcp.py": {
+          "before": "b1accf44850c59e916a16f34488a388c7f1a21681d73892f75b47e769db656aa",
+          "after": "b1accf44850c59e916a16f34488a388c7f1a21681d73892f75b47e769db656aa"
+        },
+        "evaluator/inferref/agent/mcp_server.py": {
+          "before": "8df78a5ca7480d752c8cb0b2c4c4fdef2c7fdfd7aa698b1ab9bef397a145cf2c",
+          "after": "8df78a5ca7480d752c8cb0b2c4c4fdef2c7fdfd7aa698b1ab9bef397a145cf2c"
+        },
+        "evaluator/inferref/agent/path_policy.py": {
+          "before": "50882bbe1be9f26826d26eb527573134ec11140f3a491c430ef37f80b335ab50",
+          "after": "50882bbe1be9f26826d26eb527573134ec11140f3a491c430ef37f80b335ab50"
+        },
+        "evaluator/inferref/agent/protocol.py": {
+          "before": "cff60c8ef505e481d114409c8e6e78139d5889859f575abb9f518353bec38045",
+          "after": "cff60c8ef505e481d114409c8e6e78139d5889859f575abb9f518353bec38045"
+        },
+        "evaluator/inferref/agent/service.py": {
+          "before": "c6b31d3b405a9ae8863c5bf190a332971d3cc231a627e0ee3970f4e2b5e2ccdc",
+          "after": "c6b31d3b405a9ae8863c5bf190a332971d3cc231a627e0ee3970f4e2b5e2ccdc"
+        },
+        "evaluator/inferref/cli/__init__.py": {
+          "before": "2f6d06d0f091b3c54d32595e3cbd118ea6fa5ba15da97cc3c2d1ef772edeec93",
+          "after": "2f6d06d0f091b3c54d32595e3cbd118ea6fa5ba15da97cc3c2d1ef772edeec93"
+        },
+        "evaluator/inferref/cli/main.py": {
+          "before": "7efee40e0c7f35a42ada27e8e6762b0a79a6af3e7bf529e65dedffce1a92ffa5",
+          "after": "7efee40e0c7f35a42ada27e8e6762b0a79a6af3e7bf529e65dedffce1a92ffa5"
+        },
+        "evaluator/inferref/compare/__init__.py": {
+          "before": "3d58e429129813099b8bb9c0031eef4b2d3d1cb5d4440ee703baf6e084ca27e7",
+          "after": "3d58e429129813099b8bb9c0031eef4b2d3d1cb5d4440ee703baf6e084ca27e7"
+        },
+        "evaluator/inferref/compare/compare.py": {
+          "before": "2fa0dcb7ff567303148d282a9513d8fb47eeb5f68becb7e76b0a1b4daa34f100",
+          "after": "2fa0dcb7ff567303148d282a9513d8fb47eeb5f68becb7e76b0a1b4daa34f100"
+        },
+        "evaluator/inferref/compare/layout.py": {
+          "before": "d8216c0f6d7eca1cd6f4efd1266e3777ad2636c0d7a8ec465a71ada6f2c57f9d",
+          "after": "d8216c0f6d7eca1cd6f4efd1266e3777ad2636c0d7a8ec465a71ada6f2c57f9d"
+        },
+        "evaluator/inferref/compare/metrics.py": {
+          "before": "08a96e09218a6a517c4557ec21989e176f3c39a3a4aa28ed57383d6dc1737b4d",
+          "after": "08a96e09218a6a517c4557ec21989e176f3c39a3a4aa28ed57383d6dc1737b4d"
+        },
+        "evaluator/inferref/compare/report.py": {
+          "before": "459de58212d78bda5f5990a9b88d378a753ae4e4b616f24cdfb81d478782bc21",
+          "after": "459de58212d78bda5f5990a9b88d378a753ae4e4b616f24cdfb81d478782bc21"
+        },
+        "evaluator/inferref/compare/tolerance.py": {
+          "before": "4da5c9e91750d724b7b6954bc8da50654930a612ccead247cd275498ad20164e",
+          "after": "4da5c9e91750d724b7b6954bc8da50654930a612ccead247cd275498ad20164e"
+        },
+        "evaluator/inferref/frontend/__init__.py": {
+          "before": "07822fc1a8cc81df0908fbd9e3cc9f0f06bba5da3f00f0966dc693634d8dab24",
+          "after": "07822fc1a8cc81df0908fbd9e3cc9f0f06bba5da3f00f0966dc693634d8dab24"
+        },
+        "evaluator/inferref/frontend/pytorch/__init__.py": {
+          "before": "786db2ee2057178dd23f2a6ff8a21169b34f72b3c1bf4a2057cbd32a4257a7cc",
+          "after": "786db2ee2057178dd23f2a6ff8a21169b34f72b3c1bf4a2057cbd32a4257a7cc"
+        },
+        "evaluator/inferref/frontend/pytorch/capture.py": {
+          "before": "edad176d97a1bc60fa0e30b8a157cae38a058f0f3defee8580c1780d690ec51d",
+          "after": "edad176d97a1bc60fa0e30b8a157cae38a058f0f3defee8580c1780d690ec51d"
+        },
+        "evaluator/inferref/frontend/pytorch/dispatch.py": {
+          "before": "55810ab6af67aaada8dc2d4f772acf14437474beecd9cf566b82cb647aa51a93",
+          "after": "55810ab6af67aaada8dc2d4f772acf14437474beecd9cf566b82cb647aa51a93"
+        },
+        "evaluator/inferref/frontend/pytorch/identity.py": {
+          "before": "0d17b25d9d10fc73fcffd2448768986e813a7986964d83481826faea17b3b0b4",
+          "after": "0d17b25d9d10fc73fcffd2448768986e813a7986964d83481826faea17b3b0b4"
+        },
+        "evaluator/inferref/frontend/pytorch/modules.py": {
+          "before": "8557a8c5651e93881afd8534639852aa2a129d27bf1d5fea423b5ca6b8f35758",
+          "after": "8557a8c5651e93881afd8534639852aa2a129d27bf1d5fea423b5ca6b8f35758"
+        },
+        "evaluator/inferref/frontend/pytorch/params.py": {
+          "before": "4470ce5037d26bfd2bb583675da3653661861e0901f17c7ca803d8237249e017",
+          "after": "4470ce5037d26bfd2bb583675da3653661861e0901f17c7ca803d8237249e017"
+        },
+        "evaluator/inferref/frontend/pytorch/runner.py": {
+          "before": "52143e9842206558f420ed3b7cc60f6f37df1f53100c07004442e7aeb08a8961",
+          "after": "52143e9842206558f420ed3b7cc60f6f37df1f53100c07004442e7aeb08a8961"
+        },
+        "evaluator/inferref/frontend/pytorch/session.py": {
+          "before": "50b56d52791b34d3c83653696a629387e7e8eb1d8b35f39f25a6509403b51a29",
+          "after": "50b56d52791b34d3c83653696a629387e7e8eb1d8b35f39f25a6509403b51a29"
+        },
+        "evaluator/inferref/frontend/pytorch/sources.py": {
+          "before": "58a19b7c5892ada3c1cecd781e619cd205d75c65df2c08bcdef4702481cda283",
+          "after": "58a19b7c5892ada3c1cecd781e619cd205d75c65df2c08bcdef4702481cda283"
+        },
+        "evaluator/inferref/inspect/__init__.py": {
+          "before": "2d5aaafb245a4b89c9582d22fe56c125c48263606ae678119ee66d77590ba11a",
+          "after": "2d5aaafb245a4b89c9582d22fe56c125c48263606ae678119ee66d77590ba11a"
+        },
+        "evaluator/inferref/inspect/analyze.py": {
+          "before": "b4f74bc8dcbec87d952a63fd56c0cc5d437bc303f5b305f02799046eaa968c61",
+          "after": "b4f74bc8dcbec87d952a63fd56c0cc5d437bc303f5b305f02799046eaa968c61"
+        },
+        "evaluator/inferref/inspect/text.py": {
+          "before": "949b10137d6f1bdb7a3a4b1d80f09078c3cac91fb816e4eec7d552ab5037f1ba",
+          "after": "949b10137d6f1bdb7a3a4b1d80f09078c3cac91fb816e4eec7d552ab5037f1ba"
+        },
+        "evaluator/inferref/ir/__init__.py": {
+          "before": "ba17d3e2c196324d2a23851140d94e1b9cc6bceff5224064e06535e8764ebc2a",
+          "after": "ba17d3e2c196324d2a23851140d94e1b9cc6bceff5224064e06535e8764ebc2a"
+        },
+        "evaluator/inferref/ir/_common.py": {
+          "before": "7cbdf4874c38f04e450b2b9864c1f9be969dde5190f301231a9af5f6b688cd56",
+          "after": "7cbdf4874c38f04e450b2b9864c1f9be969dde5190f301231a9af5f6b688cd56"
+        },
+        "evaluator/inferref/ir/dtypes.py": {
+          "before": "e09a90cceece80f558bf99fe87a32e9c4c8e5781ca57e436997f4e3b1bfee745",
+          "after": "e09a90cceece80f558bf99fe87a32e9c4c8e5781ca57e436997f4e3b1bfee745"
+        },
+        "evaluator/inferref/ir/graph.py": {
+          "before": "74f57325cfe0fcb813f8892a98d4a8953b3045f77dadda863ec980c9714d1617",
+          "after": "74f57325cfe0fcb813f8892a98d4a8953b3045f77dadda863ec980c9714d1617"
+        },
+        "evaluator/inferref/ir/manifest.py": {
+          "before": "b02421e9be2b2112910804fe036a3057137743711ac5a894efe2cd1b8827c170",
+          "after": "b02421e9be2b2112910804fe036a3057137743711ac5a894efe2cd1b8827c170"
+        },
+        "evaluator/inferref/ir/module.py": {
+          "before": "6f850854db5d0b26831d5b4a574e891369ce26611fe0e9146a75f81b9eb57835",
+          "after": "6f850854db5d0b26831d5b4a574e891369ce26611fe0e9146a75f81b9eb57835"
+        },
+        "evaluator/inferref/ir/operator.py": {
+          "before": "4e3aea0d815928a7b5ffc692f3979ea5a72b1da0e2b547c86250158dcccd7f9b",
+          "after": "4e3aea0d815928a7b5ffc692f3979ea5a72b1da0e2b547c86250158dcccd7f9b"
+        },
+        "evaluator/inferref/ir/package.py": {
+          "before": "a87eaca1c314fb39fd1ac6020f097dc67fdf0c6198c061b145c7b8c44adf4e5b",
+          "after": "a87eaca1c314fb39fd1ac6020f097dc67fdf0c6198c061b145c7b8c44adf4e5b"
+        },
+        "evaluator/inferref/ir/paths.py": {
+          "before": "216d2daca5faced1dbdb08ab60d737caa2c413b3be820add4886ea19a0e02ea9",
+          "after": "216d2daca5faced1dbdb08ab60d737caa2c413b3be820add4886ea19a0e02ea9"
+        },
+        "evaluator/inferref/ir/region.py": {
+          "before": "c3bacde32e5f5540ed0f74daa11d85c9ce9d22bd8f7028473f47541ca199612b",
+          "after": "c3bacde32e5f5540ed0f74daa11d85c9ce9d22bd8f7028473f47541ca199612b"
+        },
+        "evaluator/inferref/ir/source.py": {
+          "before": "e7d0a9244b20a51860ccf500e2c89a54a6c9281bfad95aba86a426f64d367c8b",
+          "after": "e7d0a9244b20a51860ccf500e2c89a54a6c9281bfad95aba86a426f64d367c8b"
+        },
+        "evaluator/inferref/ir/storage.py": {
+          "before": "ac3add6294750b9e156c1589ca8f2b249ee00a71bbe1047eb75d6bc9a21fda9e",
+          "after": "ac3add6294750b9e156c1589ca8f2b249ee00a71bbe1047eb75d6bc9a21fda9e"
+        },
+        "evaluator/inferref/ir/tensor_value.py": {
+          "before": "341cf6b35c921f344e3e83fe3140c5d2753a73389108d701e60997b0ef35580f",
+          "after": "341cf6b35c921f344e3e83fe3140c5d2753a73389108d701e60997b0ef35580f"
+        },
+        "evaluator/inferref/ir/validate.py": {
+          "before": "35c2d766b07fa92de6b978df7cfd0564ee3615224c8c6402a21f86eb76c09eeb",
+          "after": "35c2d766b07fa92de6b978df7cfd0564ee3615224c8c6402a21f86eb76c09eeb"
+        },
+        "evaluator/inferref/ir/values.py": {
+          "before": "7008c6cab715f9fd197c5d6c2669554e5ceb0e272c63ccc54726e9f615e947ea",
+          "after": "7008c6cab715f9fd197c5d6c2669554e5ceb0e272c63ccc54726e9f615e947ea"
+        },
+        "evaluator/inferref/ir/version.py": {
+          "before": "f6837373b2b23d531071c43f4c13a22aa3399372a4005130e0660b3b4b8c9a2b",
+          "after": "f6837373b2b23d531071c43f4c13a22aa3399372a4005130e0660b3b4b8c9a2b"
+        },
+        "evaluator/inferref/region/__init__.py": {
+          "before": "88d1efeb09eb8c150a29c99877f0a7054432685a4bf821447b2d2dafbfe1c91f",
+          "after": "88d1efeb09eb8c150a29c99877f0a7054432685a4bf821447b2d2dafbfe1c91f"
+        },
+        "evaluator/inferref/region/boundary.py": {
+          "before": "7fb196d124246a6a64fccb83c766623abd728ed33bd947a0615681cb59640d74",
+          "after": "7fb196d124246a6a64fccb83c766623abd728ed33bd947a0615681cb59640d74"
+        },
+        "evaluator/inferref/region/manager.py": {
+          "before": "5941a5bfe50e60aaee158ee8c7c0425cfd444b787205bbaa0d3579f4bbb85bcd",
+          "after": "5941a5bfe50e60aaee158ee8c7c0425cfd444b787205bbaa0d3579f4bbb85bcd"
+        },
+        "evaluator/inferref/semantic/__init__.py": {
+          "before": "0b4f5b9622145bc086ea826b7a86c18a01a6e6debfc7b1ac7999e4483083a67a",
+          "after": "0b4f5b9622145bc086ea826b7a86c18a01a6e6debfc7b1ac7999e4483083a67a"
+        },
+        "evaluator/inferref/semantic/base.py": {
+          "before": "510e62227df6eb29ee4750386f08892ffcae2aa33eb646213e9f00f12739c243",
+          "after": "510e62227df6eb29ee4750386f08892ffcae2aa33eb646213e9f00f12739c243"
+        },
+        "evaluator/inferref/semantic/cache_update.py": {
+          "before": "ae5a75dc07fd1978ac197ce30116ee3aed53dc7326efe34649ede8d6dc434266",
+          "after": "ae5a75dc07fd1978ac197ce30116ee3aed53dc7326efe34649ede8d6dc434266"
+        },
+        "evaluator/inferref/semantic/invocations.py": {
+          "before": "b8e5e4921644ea0b19dc3984596460b1bf2376646902d0d9e58e352205ef7698",
+          "after": "b8e5e4921644ea0b19dc3984596460b1bf2376646902d0d9e58e352205ef7698"
+        },
+        "evaluator/inferref/semantic/module_type.py": {
+          "before": "21c8f4c97e3a8b480ed5caa6d04965703915ee5935c43c28f0b43b97960d9fca",
+          "after": "21c8f4c97e3a8b480ed5caa6d04965703915ee5935c43c28f0b43b97960d9fca"
+        },
+        "evaluator/inferref/semantic/registry.py": {
+          "before": "7d0d7857ac9a15e65f02c1e9741be18c0748615bf41ae159732059b6f0bd3949",
+          "after": "7d0d7857ac9a15e65f02c1e9741be18c0748615bf41ae159732059b6f0bd3949"
+        },
+        "evaluator/inferref/semantic/run.py": {
+          "before": "c20237392136dd3d20954eb097009280723a5ee1e3fa02891ba0d5c0fe276a3a",
+          "after": "c20237392136dd3d20954eb097009280723a5ee1e3fa02891ba0d5c0fe276a3a"
+        },
+        "evaluator/inferref/semantic/source_function.py": {
+          "before": "c71c1d41cb1e996399e755e11093c23c5e90a7b1460baaf1147d346756534232",
+          "after": "c71c1d41cb1e996399e755e11093c23c5e90a7b1460baaf1147d346756534232"
+        },
+        "evaluator/inferref/tensor/__init__.py": {
+          "before": "b0676186d8f7108f0f0ca77272e38f7768a07e1fba0c3aab4cac2eaf70f41ba4",
+          "after": "b0676186d8f7108f0f0ca77272e38f7768a07e1fba0c3aab4cac2eaf70f41ba4"
+        },
+        "evaluator/inferref/tensor/codec.py": {
+          "before": "7003e342d185c248a22b1e4eeede9a68384cc533e771ef27721fbeffbff7ad1d",
+          "after": "7003e342d185c248a22b1e4eeede9a68384cc533e771ef27721fbeffbff7ad1d"
+        },
+        "evaluator/inferref/tensor/dtype_numpy.py": {
+          "before": "8e701415862f157b03b22dd0e455182e4e8135e06ce2b60014131f34b1f74549",
+          "after": "8e701415862f157b03b22dd0e455182e4e8135e06ce2b60014131f34b1f74549"
+        },
+        "evaluator/inferref/testcase/__init__.py": {
+          "before": "6a2bf4a63f913aac7fec641c5d1aadfd9ad030d7865952c803e6888a05d4e8b3",
+          "after": "6a2bf4a63f913aac7fec641c5d1aadfd9ad030d7865952c803e6888a05d4e8b3"
+        },
+        "evaluator/inferref/testcase/dedup.py": {
+          "before": "573e08184e99c183deae552c15d3e1d5226dcb16df76562dc866757322a79bc4",
+          "after": "573e08184e99c183deae552c15d3e1d5226dcb16df76562dc866757322a79bc4"
+        },
+        "evaluator/inferref/testcase/extract.py": {
+          "before": "d6bf9c68b25f5aa595b1aa238242649e420974b0a1b5ebdda776026494379cb1",
+          "after": "d6bf9c68b25f5aa595b1aa238242649e420974b0a1b5ebdda776026494379cb1"
+        },
+        "evaluator/inferref/testcase/validate.py": {
+          "before": "31ed7fa6199d7068559ecb664eb245c4ba8f5a646a77788e9d2b516b7ef2105a",
+          "after": "31ed7fa6199d7068559ecb664eb245c4ba8f5a646a77788e9d2b516b7ef2105a"
+        }
+      },
+      "raw_transcript_sha256": "4ebed16748e71147120c85b28840454f2fa78aeba7401986f6989ebebea72eb4",
+      "raw_stderr_sha256": "2a64aec5bd6ec0ee50ea85c766c24d05092074bbafeb639895f6decdcd89081e",
+      "usage": {
+        "usage.input_tokens": 89298,
+        "usage.cached_input_tokens": 72192,
+        "usage.cache_write_input_tokens": 0,
+        "usage.output_tokens": 468,
+        "usage.reasoning_output_tokens": 37
+      }
+    },
+    {
+      "agent": "claude",
+      "requested_model": "opus",
+      "resolved_model": "deepseek-v4-flash[1m]",
+      "cli_version": "2.1.116 (Claude Code)",
+      "status": "pass",
+      "classification": "pass",
+      "duration_ms": 27717.236,
+      "engine_runs": 2,
+      "final_engine_sha256": "b54e4093af5addc24735031ffc3ed39abb6d1e6f71f9b75fb17e27cd5e490a66",
+      "historical_visible_passed": true,
+      "final_visible": {
+        "case": {
+          "id": "visible",
+          "seed": 20260802,
+          "shape": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        "status": "pass",
+        "duration_ms": 296.631,
+        "first_failure": null,
+        "input_changes": []
+      },
+      "holdouts": [
+        {
+          "case": {
+            "id": "holdout-dim4",
+            "seed": 20260811,
+            "shape": [
+              1,
+              2,
+              3,
+              4
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 315.017,
+          "first_failure": null,
+          "input_changes": []
+        },
+        {
+          "case": {
+            "id": "holdout-dim12",
+            "seed": 20260817,
+            "shape": [
+              1,
+              1,
+              5,
+              12
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 316.797,
+          "first_failure": null,
+          "input_changes": []
+        },
+        {
+          "case": {
+            "id": "holdout-batch-heads",
+            "seed": 20260823,
+            "shape": [
+              2,
+              3,
+              5,
+              8
+            ]
+          },
+          "status": "pass",
+          "duration_ms": 296.711,
+          "first_failure": null,
+          "input_changes": []
+        }
+      ],
+      "tool_audit": [
+        {
+          "tool": "inferref_capabilities",
+          "call_index": 1,
+          "engine_runs": 0,
+          "status": "ok",
+          "operation": "capabilities",
+          "diagnostic_codes": []
+        },
+        {
+          "tool": "inferref_context",
+          "call_index": 2,
+          "engine_runs": 0,
+          "status": "ok",
+          "operation": "context",
+          "diagnostic_codes": []
+        },
+        {
+          "tool": "inferref_run_engine",
+          "call_index": 3,
+          "engine_runs": 1,
+          "status": "fail",
+          "operation": "run_engine",
+          "diagnostic_codes": []
+        },
+        {
+          "tool": "inferref_run_engine",
+          "call_index": 4,
+          "engine_runs": 2,
+          "status": "pass",
+          "operation": "run_engine",
+          "diagnostic_codes": []
+        }
+      ],
+      "audit_integrity": {
+        "valid": true,
+        "error": null,
+        "record_count": 4,
+        "records_sha256": "b3ede53469a2d9e8476e3545228f2278cceb0a82374bc02540c0ce470b8c2ba1"
+      },
+      "engine_patch": "--- engine.py (baseline)\n+++ engine.py\n@@ -17,7 +17,7 @@\n     half = value.shape[-1] // 2\n     first = value[..., :half]\n     second = value[..., half:]\n-    return np.concatenate((second, -first), axis=-1)\n+    return np.concatenate((-second, first), axis=-1)\n \n \n def apply_rope(value: np.ndarray, cos: np.ndarray, sin: np.ndarray) -> np.ndarray:\n",
+      "protected_file_hashes": {
+        "TASK.md": {
+          "before": {
+            "kind": "file",
+            "size": 613,
+            "mode": 438,
+            "sha256": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89",
+            "link_target": null
+          },
+          "after": {
+            "kind": "file",
+            "size": 613,
+            "mode": 438,
+            "sha256": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89",
+            "link_target": null
+          }
+        }
+      },
+      "host_protected_file_hashes": {
+        "benchmark/TASK.md": {
+          "before": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89",
+          "after": "6486313cfe2ed9f48be5e341601b89c841f42ae9939dab1d89587270f2ce7c89"
+        },
+        "benchmark/benchmark.json": {
+          "before": "84ef708f9be345b1674555c64125b4633444eb74c71f411d98c1c64d0f4f6c8e",
+          "after": "84ef708f9be345b1674555c64125b4633444eb74c71f411d98c1c64d0f4f6c8e"
+        },
+        "benchmark/engine.py": {
+          "before": "d28218a91ac703057b2f54cd7003411d7440dfe0da6e55995842ebb43d819e1b",
+          "after": "d28218a91ac703057b2f54cd7003411d7440dfe0da6e55995842ebb43d819e1b"
+        },
+        "evaluator/inferref/__init__.py": {
+          "before": "528783eb40243b96c4c7b471460961b79751a35fa20c9ed87f35554ec8641c94",
+          "after": "528783eb40243b96c4c7b471460961b79751a35fa20c9ed87f35554ec8641c94"
+        },
+        "evaluator/inferref/agent/__init__.py": {
+          "before": "e8600b61f19b46bcd2fd819b27d512e3e505c0edea3ef1dcaaa0ed6e85c031be",
+          "after": "e8600b61f19b46bcd2fd819b27d512e3e505c0edea3ef1dcaaa0ed6e85c031be"
+        },
+        "evaluator/inferref/agent/adapter.py": {
+          "before": "4b4588880c9a26283342630cf67856bfc59a71ffa5efdc2732c16f71299c7281",
+          "after": "4b4588880c9a26283342630cf67856bfc59a71ffa5efdc2732c16f71299c7281"
+        },
+        "evaluator/inferref/agent/evaluation.py": {
+          "before": "faec0b0581301a073aa4301f9aeec0e4fe6864bd4680a9e7e18f05e48dc7a536",
+          "after": "faec0b0581301a073aa4301f9aeec0e4fe6864bd4680a9e7e18f05e48dc7a536"
+        },
+        "evaluator/inferref/agent/evaluation_host.py": {
+          "before": "557f41ead9e331a426eb72e5dc9f3db326200a169312ddede9c3f8df797676d5",
+          "after": "557f41ead9e331a426eb72e5dc9f3db326200a169312ddede9c3f8df797676d5"
+        },
+        "evaluator/inferref/agent/evaluation_mcp.py": {
+          "before": "b1accf44850c59e916a16f34488a388c7f1a21681d73892f75b47e769db656aa",
+          "after": "b1accf44850c59e916a16f34488a388c7f1a21681d73892f75b47e769db656aa"
+        },
+        "evaluator/inferref/agent/mcp_server.py": {
+          "before": "8df78a5ca7480d752c8cb0b2c4c4fdef2c7fdfd7aa698b1ab9bef397a145cf2c",
+          "after": "8df78a5ca7480d752c8cb0b2c4c4fdef2c7fdfd7aa698b1ab9bef397a145cf2c"
+        },
+        "evaluator/inferref/agent/path_policy.py": {
+          "before": "50882bbe1be9f26826d26eb527573134ec11140f3a491c430ef37f80b335ab50",
+          "after": "50882bbe1be9f26826d26eb527573134ec11140f3a491c430ef37f80b335ab50"
+        },
+        "evaluator/inferref/agent/protocol.py": {
+          "before": "cff60c8ef505e481d114409c8e6e78139d5889859f575abb9f518353bec38045",
+          "after": "cff60c8ef505e481d114409c8e6e78139d5889859f575abb9f518353bec38045"
+        },
+        "evaluator/inferref/agent/service.py": {
+          "before": "c6b31d3b405a9ae8863c5bf190a332971d3cc231a627e0ee3970f4e2b5e2ccdc",
+          "after": "c6b31d3b405a9ae8863c5bf190a332971d3cc231a627e0ee3970f4e2b5e2ccdc"
+        },
+        "evaluator/inferref/cli/__init__.py": {
+          "before": "2f6d06d0f091b3c54d32595e3cbd118ea6fa5ba15da97cc3c2d1ef772edeec93",
+          "after": "2f6d06d0f091b3c54d32595e3cbd118ea6fa5ba15da97cc3c2d1ef772edeec93"
+        },
+        "evaluator/inferref/cli/main.py": {
+          "before": "7efee40e0c7f35a42ada27e8e6762b0a79a6af3e7bf529e65dedffce1a92ffa5",
+          "after": "7efee40e0c7f35a42ada27e8e6762b0a79a6af3e7bf529e65dedffce1a92ffa5"
+        },
+        "evaluator/inferref/compare/__init__.py": {
+          "before": "3d58e429129813099b8bb9c0031eef4b2d3d1cb5d4440ee703baf6e084ca27e7",
+          "after": "3d58e429129813099b8bb9c0031eef4b2d3d1cb5d4440ee703baf6e084ca27e7"
+        },
+        "evaluator/inferref/compare/compare.py": {
+          "before": "2fa0dcb7ff567303148d282a9513d8fb47eeb5f68becb7e76b0a1b4daa34f100",
+          "after": "2fa0dcb7ff567303148d282a9513d8fb47eeb5f68becb7e76b0a1b4daa34f100"
+        },
+        "evaluator/inferref/compare/layout.py": {
+          "before": "d8216c0f6d7eca1cd6f4efd1266e3777ad2636c0d7a8ec465a71ada6f2c57f9d",
+          "after": "d8216c0f6d7eca1cd6f4efd1266e3777ad2636c0d7a8ec465a71ada6f2c57f9d"
+        },
+        "evaluator/inferref/compare/metrics.py": {
+          "before": "08a96e09218a6a517c4557ec21989e176f3c39a3a4aa28ed57383d6dc1737b4d",
+          "after": "08a96e09218a6a517c4557ec21989e176f3c39a3a4aa28ed57383d6dc1737b4d"
+        },
+        "evaluator/inferref/compare/report.py": {
+          "before": "459de58212d78bda5f5990a9b88d378a753ae4e4b616f24cdfb81d478782bc21",
+          "after": "459de58212d78bda5f5990a9b88d378a753ae4e4b616f24cdfb81d478782bc21"
+        },
+        "evaluator/inferref/compare/tolerance.py": {
+          "before": "4da5c9e91750d724b7b6954bc8da50654930a612ccead247cd275498ad20164e",
+          "after": "4da5c9e91750d724b7b6954bc8da50654930a612ccead247cd275498ad20164e"
+        },
+        "evaluator/inferref/frontend/__init__.py": {
+          "before": "07822fc1a8cc81df0908fbd9e3cc9f0f06bba5da3f00f0966dc693634d8dab24",
+          "after": "07822fc1a8cc81df0908fbd9e3cc9f0f06bba5da3f00f0966dc693634d8dab24"
+        },
+        "evaluator/inferref/frontend/pytorch/__init__.py": {
+          "before": "786db2ee2057178dd23f2a6ff8a21169b34f72b3c1bf4a2057cbd32a4257a7cc",
+          "after": "786db2ee2057178dd23f2a6ff8a21169b34f72b3c1bf4a2057cbd32a4257a7cc"
+        },
+        "evaluator/inferref/frontend/pytorch/capture.py": {
+          "before": "edad176d97a1bc60fa0e30b8a157cae38a058f0f3defee8580c1780d690ec51d",
+          "after": "edad176d97a1bc60fa0e30b8a157cae38a058f0f3defee8580c1780d690ec51d"
+        },
+        "evaluator/inferref/frontend/pytorch/dispatch.py": {
+          "before": "55810ab6af67aaada8dc2d4f772acf14437474beecd9cf566b82cb647aa51a93",
+          "after": "55810ab6af67aaada8dc2d4f772acf14437474beecd9cf566b82cb647aa51a93"
+        },
+        "evaluator/inferref/frontend/pytorch/identity.py": {
+          "before": "0d17b25d9d10fc73fcffd2448768986e813a7986964d83481826faea17b3b0b4",
+          "after": "0d17b25d9d10fc73fcffd2448768986e813a7986964d83481826faea17b3b0b4"
+        },
+        "evaluator/inferref/frontend/pytorch/modules.py": {
+          "before": "8557a8c5651e93881afd8534639852aa2a129d27bf1d5fea423b5ca6b8f35758",
+          "after": "8557a8c5651e93881afd8534639852aa2a129d27bf1d5fea423b5ca6b8f35758"
+        },
+        "evaluator/inferref/frontend/pytorch/params.py": {
+          "before": "4470ce5037d26bfd2bb583675da3653661861e0901f17c7ca803d8237249e017",
+          "after": "4470ce5037d26bfd2bb583675da3653661861e0901f17c7ca803d8237249e017"
+        },
+        "evaluator/inferref/frontend/pytorch/runner.py": {
+          "before": "52143e9842206558f420ed3b7cc60f6f37df1f53100c07004442e7aeb08a8961",
+          "after": "52143e9842206558f420ed3b7cc60f6f37df1f53100c07004442e7aeb08a8961"
+        },
+        "evaluator/inferref/frontend/pytorch/session.py": {
+          "before": "50b56d52791b34d3c83653696a629387e7e8eb1d8b35f39f25a6509403b51a29",
+          "after": "50b56d52791b34d3c83653696a629387e7e8eb1d8b35f39f25a6509403b51a29"
+        },
+        "evaluator/inferref/frontend/pytorch/sources.py": {
+          "before": "58a19b7c5892ada3c1cecd781e619cd205d75c65df2c08bcdef4702481cda283",
+          "after": "58a19b7c5892ada3c1cecd781e619cd205d75c65df2c08bcdef4702481cda283"
+        },
+        "evaluator/inferref/inspect/__init__.py": {
+          "before": "2d5aaafb245a4b89c9582d22fe56c125c48263606ae678119ee66d77590ba11a",
+          "after": "2d5aaafb245a4b89c9582d22fe56c125c48263606ae678119ee66d77590ba11a"
+        },
+        "evaluator/inferref/inspect/analyze.py": {
+          "before": "b4f74bc8dcbec87d952a63fd56c0cc5d437bc303f5b305f02799046eaa968c61",
+          "after": "b4f74bc8dcbec87d952a63fd56c0cc5d437bc303f5b305f02799046eaa968c61"
+        },
+        "evaluator/inferref/inspect/text.py": {
+          "before": "949b10137d6f1bdb7a3a4b1d80f09078c3cac91fb816e4eec7d552ab5037f1ba",
+          "after": "949b10137d6f1bdb7a3a4b1d80f09078c3cac91fb816e4eec7d552ab5037f1ba"
+        },
+        "evaluator/inferref/ir/__init__.py": {
+          "before": "ba17d3e2c196324d2a23851140d94e1b9cc6bceff5224064e06535e8764ebc2a",
+          "after": "ba17d3e2c196324d2a23851140d94e1b9cc6bceff5224064e06535e8764ebc2a"
+        },
+        "evaluator/inferref/ir/_common.py": {
+          "before": "7cbdf4874c38f04e450b2b9864c1f9be969dde5190f301231a9af5f6b688cd56",
+          "after": "7cbdf4874c38f04e450b2b9864c1f9be969dde5190f301231a9af5f6b688cd56"
+        },
+        "evaluator/inferref/ir/dtypes.py": {
+          "before": "e09a90cceece80f558bf99fe87a32e9c4c8e5781ca57e436997f4e3b1bfee745",
+          "after": "e09a90cceece80f558bf99fe87a32e9c4c8e5781ca57e436997f4e3b1bfee745"
+        },
+        "evaluator/inferref/ir/graph.py": {
+          "before": "74f57325cfe0fcb813f8892a98d4a8953b3045f77dadda863ec980c9714d1617",
+          "after": "74f57325cfe0fcb813f8892a98d4a8953b3045f77dadda863ec980c9714d1617"
+        },
+        "evaluator/inferref/ir/manifest.py": {
+          "before": "b02421e9be2b2112910804fe036a3057137743711ac5a894efe2cd1b8827c170",
+          "after": "b02421e9be2b2112910804fe036a3057137743711ac5a894efe2cd1b8827c170"
+        },
+        "evaluator/inferref/ir/module.py": {
+          "before": "6f850854db5d0b26831d5b4a574e891369ce26611fe0e9146a75f81b9eb57835",
+          "after": "6f850854db5d0b26831d5b4a574e891369ce26611fe0e9146a75f81b9eb57835"
+        },
+        "evaluator/inferref/ir/operator.py": {
+          "before": "4e3aea0d815928a7b5ffc692f3979ea5a72b1da0e2b547c86250158dcccd7f9b",
+          "after": "4e3aea0d815928a7b5ffc692f3979ea5a72b1da0e2b547c86250158dcccd7f9b"
+        },
+        "evaluator/inferref/ir/package.py": {
+          "before": "a87eaca1c314fb39fd1ac6020f097dc67fdf0c6198c061b145c7b8c44adf4e5b",
+          "after": "a87eaca1c314fb39fd1ac6020f097dc67fdf0c6198c061b145c7b8c44adf4e5b"
+        },
+        "evaluator/inferref/ir/paths.py": {
+          "before": "216d2daca5faced1dbdb08ab60d737caa2c413b3be820add4886ea19a0e02ea9",
+          "after": "216d2daca5faced1dbdb08ab60d737caa2c413b3be820add4886ea19a0e02ea9"
+        },
+        "evaluator/inferref/ir/region.py": {
+          "before": "c3bacde32e5f5540ed0f74daa11d85c9ce9d22bd8f7028473f47541ca199612b",
+          "after": "c3bacde32e5f5540ed0f74daa11d85c9ce9d22bd8f7028473f47541ca199612b"
+        },
+        "evaluator/inferref/ir/source.py": {
+          "before": "e7d0a9244b20a51860ccf500e2c89a54a6c9281bfad95aba86a426f64d367c8b",
+          "after": "e7d0a9244b20a51860ccf500e2c89a54a6c9281bfad95aba86a426f64d367c8b"
+        },
+        "evaluator/inferref/ir/storage.py": {
+          "before": "ac3add6294750b9e156c1589ca8f2b249ee00a71bbe1047eb75d6bc9a21fda9e",
+          "after": "ac3add6294750b9e156c1589ca8f2b249ee00a71bbe1047eb75d6bc9a21fda9e"
+        },
+        "evaluator/inferref/ir/tensor_value.py": {
+          "before": "341cf6b35c921f344e3e83fe3140c5d2753a73389108d701e60997b0ef35580f",
+          "after": "341cf6b35c921f344e3e83fe3140c5d2753a73389108d701e60997b0ef35580f"
+        },
+        "evaluator/inferref/ir/validate.py": {
+          "before": "35c2d766b07fa92de6b978df7cfd0564ee3615224c8c6402a21f86eb76c09eeb",
+          "after": "35c2d766b07fa92de6b978df7cfd0564ee3615224c8c6402a21f86eb76c09eeb"
+        },
+        "evaluator/inferref/ir/values.py": {
+          "before": "7008c6cab715f9fd197c5d6c2669554e5ceb0e272c63ccc54726e9f615e947ea",
+          "after": "7008c6cab715f9fd197c5d6c2669554e5ceb0e272c63ccc54726e9f615e947ea"
+        },
+        "evaluator/inferref/ir/version.py": {
+          "before": "f6837373b2b23d531071c43f4c13a22aa3399372a4005130e0660b3b4b8c9a2b",
+          "after": "f6837373b2b23d531071c43f4c13a22aa3399372a4005130e0660b3b4b8c9a2b"
+        },
+        "evaluator/inferref/region/__init__.py": {
+          "before": "88d1efeb09eb8c150a29c99877f0a7054432685a4bf821447b2d2dafbfe1c91f",
+          "after": "88d1efeb09eb8c150a29c99877f0a7054432685a4bf821447b2d2dafbfe1c91f"
+        },
+        "evaluator/inferref/region/boundary.py": {
+          "before": "7fb196d124246a6a64fccb83c766623abd728ed33bd947a0615681cb59640d74",
+          "after": "7fb196d124246a6a64fccb83c766623abd728ed33bd947a0615681cb59640d74"
+        },
+        "evaluator/inferref/region/manager.py": {
+          "before": "5941a5bfe50e60aaee158ee8c7c0425cfd444b787205bbaa0d3579f4bbb85bcd",
+          "after": "5941a5bfe50e60aaee158ee8c7c0425cfd444b787205bbaa0d3579f4bbb85bcd"
+        },
+        "evaluator/inferref/semantic/__init__.py": {
+          "before": "0b4f5b9622145bc086ea826b7a86c18a01a6e6debfc7b1ac7999e4483083a67a",
+          "after": "0b4f5b9622145bc086ea826b7a86c18a01a6e6debfc7b1ac7999e4483083a67a"
+        },
+        "evaluator/inferref/semantic/base.py": {
+          "before": "510e62227df6eb29ee4750386f08892ffcae2aa33eb646213e9f00f12739c243",
+          "after": "510e62227df6eb29ee4750386f08892ffcae2aa33eb646213e9f00f12739c243"
+        },
+        "evaluator/inferref/semantic/cache_update.py": {
+          "before": "ae5a75dc07fd1978ac197ce30116ee3aed53dc7326efe34649ede8d6dc434266",
+          "after": "ae5a75dc07fd1978ac197ce30116ee3aed53dc7326efe34649ede8d6dc434266"
+        },
+        "evaluator/inferref/semantic/invocations.py": {
+          "before": "b8e5e4921644ea0b19dc3984596460b1bf2376646902d0d9e58e352205ef7698",
+          "after": "b8e5e4921644ea0b19dc3984596460b1bf2376646902d0d9e58e352205ef7698"
+        },
+        "evaluator/inferref/semantic/module_type.py": {
+          "before": "21c8f4c97e3a8b480ed5caa6d04965703915ee5935c43c28f0b43b97960d9fca",
+          "after": "21c8f4c97e3a8b480ed5caa6d04965703915ee5935c43c28f0b43b97960d9fca"
+        },
+        "evaluator/inferref/semantic/registry.py": {
+          "before": "7d0d7857ac9a15e65f02c1e9741be18c0748615bf41ae159732059b6f0bd3949",
+          "after": "7d0d7857ac9a15e65f02c1e9741be18c0748615bf41ae159732059b6f0bd3949"
+        },
+        "evaluator/inferref/semantic/run.py": {
+          "before": "c20237392136dd3d20954eb097009280723a5ee1e3fa02891ba0d5c0fe276a3a",
+          "after": "c20237392136dd3d20954eb097009280723a5ee1e3fa02891ba0d5c0fe276a3a"
+        },
+        "evaluator/inferref/semantic/source_function.py": {
+          "before": "c71c1d41cb1e996399e755e11093c23c5e90a7b1460baaf1147d346756534232",
+          "after": "c71c1d41cb1e996399e755e11093c23c5e90a7b1460baaf1147d346756534232"
+        },
+        "evaluator/inferref/tensor/__init__.py": {
+          "before": "b0676186d8f7108f0f0ca77272e38f7768a07e1fba0c3aab4cac2eaf70f41ba4",
+          "after": "b0676186d8f7108f0f0ca77272e38f7768a07e1fba0c3aab4cac2eaf70f41ba4"
+        },
+        "evaluator/inferref/tensor/codec.py": {
+          "before": "7003e342d185c248a22b1e4eeede9a68384cc533e771ef27721fbeffbff7ad1d",
+          "after": "7003e342d185c248a22b1e4eeede9a68384cc533e771ef27721fbeffbff7ad1d"
+        },
+        "evaluator/inferref/tensor/dtype_numpy.py": {
+          "before": "8e701415862f157b03b22dd0e455182e4e8135e06ce2b60014131f34b1f74549",
+          "after": "8e701415862f157b03b22dd0e455182e4e8135e06ce2b60014131f34b1f74549"
+        },
+        "evaluator/inferref/testcase/__init__.py": {
+          "before": "6a2bf4a63f913aac7fec641c5d1aadfd9ad030d7865952c803e6888a05d4e8b3",
+          "after": "6a2bf4a63f913aac7fec641c5d1aadfd9ad030d7865952c803e6888a05d4e8b3"
+        },
+        "evaluator/inferref/testcase/dedup.py": {
+          "before": "573e08184e99c183deae552c15d3e1d5226dcb16df76562dc866757322a79bc4",
+          "after": "573e08184e99c183deae552c15d3e1d5226dcb16df76562dc866757322a79bc4"
+        },
+        "evaluator/inferref/testcase/extract.py": {
+          "before": "d6bf9c68b25f5aa595b1aa238242649e420974b0a1b5ebdda776026494379cb1",
+          "after": "d6bf9c68b25f5aa595b1aa238242649e420974b0a1b5ebdda776026494379cb1"
+        },
+        "evaluator/inferref/testcase/validate.py": {
+          "before": "31ed7fa6199d7068559ecb664eb245c4ba8f5a646a77788e9d2b516b7ef2105a",
+          "after": "31ed7fa6199d7068559ecb664eb245c4ba8f5a646a77788e9d2b516b7ef2105a"
+        }
+      },
+      "raw_transcript_sha256": "36a729f6d1118d09e1b7b39bc661055feb1b88a2a19baaf0a9a359ad0b903fe9",
+      "raw_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "usage": {
+        "message.usage.input_tokens": 7978,
+        "message.usage.cache_creation_input_tokens": 0,
+        "message.usage.cache_read_input_tokens": 13440,
+        "message.usage.output_tokens": 0,
+        "total_cost_usd": 0.171661,
+        "usage.input_tokens": 13851,
+        "usage.cache_creation_input_tokens": 0,
+        "usage.cache_read_input_tokens": 77312,
+        "usage.output_tokens": 2550,
+        "usage.cache_creation.ephemeral_1h_input_tokens": 0,
+        "usage.cache_creation.ephemeral_5m_input_tokens": 0,
+        "modelusage.deepseek-v4-flash[1m].inputtokens": 13851,
+        "modelusage.deepseek-v4-flash[1m].outputtokens": 2550,
+        "modelusage.deepseek-v4-flash[1m].cachereadinputtokens": 77312,
+        "modelusage.deepseek-v4-flash[1m].cachecreationinputtokens": 0,
+        "modelusage.deepseek-v4-flash[1m].costusd": 0.171661,
+        "modelusage.deepseek-v4-flash[1m].maxoutputtokens": 32000
+      }
+    }
+  ]
+}
