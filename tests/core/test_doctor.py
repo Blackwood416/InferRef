@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import builtins
 
 from inferref.cli.main import EXIT_OK, main
 from inferref.doctor import DOCTOR_FORMAT, DOCTOR_FORMAT_VERSION, run_doctor
@@ -37,3 +38,18 @@ def test_doctor_cpu_is_required_and_smoked_when_torch_is_present() -> None:
         assert report["status"] != "fail"
     else:
         assert report["status"] == "fail"
+
+
+def test_explicit_cpu_fails_when_torch_is_missing(monkeypatch) -> None:
+    real_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "torch":
+            raise ImportError("blocked for doctor contract test")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+    report = run_doctor("cpu")
+    assert report["status"] == "fail"
+    check = next(item for item in report["checks"] if item["id"] == "frontend.torch")
+    assert check["status"] == "fail"

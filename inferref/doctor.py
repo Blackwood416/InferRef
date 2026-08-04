@@ -53,7 +53,7 @@ def run_doctor(device: str | None = None) -> dict[str, Any]:
     try:
         import torch
     except Exception as exc:
-        status = "fail" if requested not in (None, "cpu") else "warn"
+        status = "fail" if requested is not None else "warn"
         checks.append(
             DoctorCheck(
                 "frontend.torch",
