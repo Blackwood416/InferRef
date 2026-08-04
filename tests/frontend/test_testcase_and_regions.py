@@ -56,7 +56,8 @@ def test_extract_single_operator(traced: TracePackage, tmp_path: Path) -> None:
 
     manifest = json.loads((out / "testcase.json").read_text(encoding="utf-8"))
     assert manifest["format"] == "inferref-testcase"
-    assert manifest["format_version"] == "0.1"
+    assert manifest["format_version"] == "0.2"
+    assert manifest["requirements"]["dtypes"]
     assert manifest["origin"]["operator_id"] == mm.id
     assert len(manifest["inputs"]) == 2         # activation, weight^T
     assert len(manifest["outputs"]) == 1

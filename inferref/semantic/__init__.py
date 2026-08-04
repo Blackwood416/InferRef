@@ -19,7 +19,12 @@ from inferref.semantic.base import (
 from inferref.semantic.cache_update import CacheUpdateDetector
 from inferref.semantic.invocations import is_contiguous, split_invocations
 from inferref.semantic.module_type import ModuleTypeDetector, semantic_for_type
-from inferref.semantic.registry import builtin_detectors, detector_names, select
+from inferref.semantic.registry import (
+    builtin_detectors,
+    detector_names,
+    plugin_descriptors,
+    select,
+)
 from inferref.semantic.run import (
     DetectionResult,
     apply_detections,
@@ -49,6 +54,7 @@ __all__ = [
     "clear_semantic_annotations",
     "detect",
     "detector_names",
+    "plugin_descriptors",
     "is_contiguous",
     "select",
     "semantic_for_function",

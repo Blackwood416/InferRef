@@ -37,6 +37,15 @@ jobs:
           & $env:INFERREF_XPU_PYTHON -m pytest tests/frontend/test_accelerator_contract.py `
             -q -rs --junitxml=xpu-junit.xml
 
+      - name: Run required tiny Transformers models
+        shell: pwsh
+        env:
+          INFERREF_ACCELERATOR: xpu
+          INFERREF_REQUIRE_XPU_MODELS: '1'
+        run: |
+          & $env:INFERREF_XPU_PYTHON -m pytest tests/frontend/test_xpu_transformers.py `
+            -q -rs --junitxml=xpu-transformers-junit.xml
+
       - name: Upload XPU evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -45,3 +54,4 @@ jobs:
           path: |
             inferref-doctor-xpu.json
             xpu-junit.xml
+            xpu-transformers-junit.xml

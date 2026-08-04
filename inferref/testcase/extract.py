@@ -38,6 +38,7 @@ from inferref.ir.values import (
     Value,
 )
 from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_FORMAT_VERSION
+from inferref.testcase.requirements import derive_requirements
 
 
 class ExtractionError(RuntimeError):
@@ -517,6 +518,7 @@ def _write_testcase(
         "nodes": node_records,
         "values": manifest_values,
     }
+    manifest["requirements"] = derive_requirements(manifest)
     if result.non_portable:
         # IR §41: say so explicitly rather than shipping a testcase that cannot run.
         manifest["non_portable_values"] = sorted(set(result.non_portable))

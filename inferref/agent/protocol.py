@@ -13,13 +13,84 @@ from typing import Any
 AGENT_PROTOCOL_FORMAT = "inferref-agent-response"
 AGENT_PROTOCOL_VERSION = "0.1"
 ENGINE_ADAPTER_FORMAT = "inferref-engine-adapter"
-ENGINE_ADAPTER_VERSION = "0.1"
+ENGINE_ADAPTER_VERSION = "0.2"
+ENGINE_ADAPTER_READ_VERSIONS = ("0.1", "0.2")
 
 _ADAPTER_PLACEHOLDERS = frozenset({"testcase", "output", "adapter_dir", "python"})
 
 
 class AgentProtocolError(ValueError):
     """Raised when an Agent or adapter request violates its wire contract."""
+
+
+ADAPTER_FEATURES = frozenset(
+    {"multiple_outputs", "strided_inputs", "alias_effects", "mutation_effects"}
+)
+
+
+def _string_array(value: Any, where: str) -> tuple[str, ...]:
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(item, str) and item for item in value)
+        or len(set(value)) != len(value)
+    ):
+        raise AgentProtocolError(f"{where} must be a non-empty unique string array")
+    return tuple(value)
+
+
+@dataclass(frozen=True)
+class AdapterCapabilities:
+    """Declarative limits checked before an engine process is started."""
+
+    device_types: tuple[str, ...]
+    dtypes: tuple[str, ...]
+    max_rank: int
+    features: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "AdapterCapabilities":
+        if not isinstance(data, dict):
+            raise AgentProtocolError("adapter capabilities must be an object")
+        devices = _string_array(data.get("device_types"), "capabilities.device_types")
+        dtypes = _string_array(data.get("dtypes"), "capabilities.dtypes")
+        raw_features = data.get("features", [])
+        if raw_features == []:
+            features: tuple[str, ...] = ()
+        else:
+            features = _string_array(raw_features, "capabilities.features")
+        unknown = set(features) - ADAPTER_FEATURES
+        if unknown:
+            raise AgentProtocolError(
+                "unknown adapter capability feature(s): " + ", ".join(sorted(unknown))
+            )
+        max_rank = data.get("max_rank")
+        if not isinstance(max_rank, int) or isinstance(max_rank, bool) or max_rank < 0:
+            raise AgentProtocolError("capabilities.max_rank must be a non-negative integer")
+        return cls(devices, dtypes, max_rank, features)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "device_types": list(self.device_types),
+            "dtypes": list(self.dtypes),
+            "max_rank": self.max_rank,
+            "features": list(self.features),
+        }
+
+    def incompatibilities(self, requirements: Mapping[str, Any]) -> list[dict[str, Any]]:
+        issues: list[dict[str, Any]] = []
+        for dtype in requirements.get("dtypes", []):
+            if dtype not in self.dtypes:
+                issues.append({"kind": "dtype", "required": dtype})
+        rank = requirements.get("max_rank", 0)
+        if isinstance(rank, int) and rank > self.max_rank:
+            issues.append(
+                {"kind": "max_rank", "required": rank, "supported": self.max_rank}
+            )
+        for feature in requirements.get("features", []):
+            if feature not in self.features:
+                issues.append({"kind": "feature", "required": feature})
+        return issues
 
 
 @dataclass(frozen=True)
@@ -79,6 +150,9 @@ class EngineAdapter:
     max_output_chars: int = 65_536
     max_artifact_bytes: int = 1_073_741_824
     max_artifact_files: int = 10_000
+    target_device: str | None = None
+    capabilities: AdapterCapabilities | None = None
+    format_version: str = ENGINE_ADAPTER_VERSION
     source: Path | None = field(default=None, compare=False)
 
     @classmethod
@@ -91,10 +165,11 @@ class EngineAdapter:
             raise AgentProtocolError(
                 f"not an InferRef engine adapter: format={data.get('format')!r}"
             )
-        if data.get("format_version") != ENGINE_ADAPTER_VERSION:
+        format_version = data.get("format_version")
+        if format_version not in ENGINE_ADAPTER_READ_VERSIONS:
             raise AgentProtocolError(
                 f"unsupported engine adapter format_version "
-                f"{data.get('format_version')!r}; expected {ENGINE_ADAPTER_VERSION!r}"
+                f"{format_version!r}; expected one of {ENGINE_ADAPTER_READ_VERSIONS!r}"
             )
         raw_command = data.get("command")
         if (
@@ -149,6 +224,19 @@ class EngineAdapter:
             raise AgentProtocolError(
                 "adapter environment must be a string-to-string object"
             )
+        target_device = data.get("target_device")
+        raw_capabilities = data.get("capabilities")
+        if format_version == ENGINE_ADAPTER_VERSION:
+            if not isinstance(target_device, str) or not target_device:
+                raise AgentProtocolError("adapter target_device must be a non-empty string")
+            capabilities = AdapterCapabilities.from_dict(raw_capabilities)
+            if target_device.split(":", 1)[0] not in capabilities.device_types:
+                raise AgentProtocolError(
+                    "adapter target_device must be included in capabilities.device_types"
+                )
+        else:
+            target_device = None
+            capabilities = None
 
         adapter = cls(
             name=name.strip(),
@@ -159,6 +247,9 @@ class EngineAdapter:
             max_output_chars=max_output,
             max_artifact_bytes=max_artifacts,
             max_artifact_files=max_artifact_files,
+            target_device=target_device,
+            capabilities=capabilities,
+            format_version=format_version,
             source=source,
         )
         adapter._validate_placeholders()
@@ -195,7 +286,7 @@ class EngineAdapter:
     def to_dict(self) -> dict[str, Any]:
         return {
             "format": ENGINE_ADAPTER_FORMAT,
-            "format_version": ENGINE_ADAPTER_VERSION,
+            "format_version": self.format_version,
             "name": self.name,
             "command": list(self.command),
             "timeout_seconds": self.timeout_seconds,
@@ -206,6 +297,9 @@ class EngineAdapter:
             "max_output_chars": self.max_output_chars,
             "max_artifact_bytes": self.max_artifact_bytes,
             "max_artifact_files": self.max_artifact_files,
+            "target_device": self.target_device,
+            "capability_status": "declared" if self.capabilities else "unchecked",
+            "capabilities": self.capabilities.to_dict() if self.capabilities else None,
             "source": str(self.source) if self.source else None,
         }
 

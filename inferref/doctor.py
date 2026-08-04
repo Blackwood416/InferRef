@@ -65,6 +65,22 @@ def run_doctor(device: str | None = None) -> dict[str, Any]:
     else:
         checks.extend(_torch_checks(torch, requested))
 
+    from inferref.semantic.registry import plugin_descriptors
+
+    for plugin in plugin_descriptors(load=True):
+        checks.append(
+            DoctorCheck(
+                f"semantic.plugin.{plugin.name}",
+                "pass" if plugin.status == "loaded" else "warn",
+                (
+                    f"{plugin.distribution or 'unknown distribution'} "
+                    f"{plugin.version or ''}: {plugin.status}"
+                ).strip(),
+                plugin.to_dict(),
+                remediation=plugin.error,
+            )
+        )
+
     status = "fail" if any(item.status == "fail" for item in checks) else (
         "warn"
         if requested is None and any(item.status == "warn" for item in checks)

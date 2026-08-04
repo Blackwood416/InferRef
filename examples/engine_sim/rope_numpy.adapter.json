@@ -1,7 +1,14 @@
 {
   "format": "inferref-engine-adapter",
-  "format_version": "0.1",
+  "format_version": "0.2",
   "name": "rope-numpy",
+  "target_device": "cpu",
+  "capabilities": {
+    "device_types": ["cpu"],
+    "dtypes": ["float32", "float16", "bfloat16"],
+    "max_rank": 8,
+    "features": ["multiple_outputs", "strided_inputs"]
+  },
   "command": [
     "{python}",
     "rope_numpy.py",

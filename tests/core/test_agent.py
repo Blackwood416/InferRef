@@ -98,6 +98,18 @@ def _make_adapter(
         "max_output_chars": max_output_chars,
         "max_artifact_bytes": max_artifact_bytes,
         "max_artifact_files": max_artifact_files,
+        "target_device": "cpu",
+        "capabilities": {
+            "device_types": ["cpu"],
+            "dtypes": ["float32", "float16", "bfloat16", "int64"],
+            "max_rank": 8,
+            "features": [
+                "multiple_outputs",
+                "strided_inputs",
+                "alias_effects",
+                "mutation_effects",
+            ],
+        },
     }
     if mode is not None:
         payload["environment"] = {"INFERREF_ENGINE_MODE": mode}

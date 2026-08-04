@@ -14,13 +14,17 @@ FORMAT_VERSION = "0.1"
 TENSOR_FORMAT_VERSION = 1
 
 #: Version of this InferRef implementation.
-INFERREF_VERSION = "0.3.1"
+INFERREF_VERSION = "0.4.0"
 
 #: Format string for a testcase package (IR §54).
 TESTCASE_FORMAT = "inferref-testcase"
 
 #: Testcase manifest version (IR §54).
-TESTCASE_FORMAT_VERSION = "0.1"
+TESTCASE_FORMAT_VERSION = "0.2"
+
+# The 0.2 writer adds derived requirements; legacy 0.1 testcases remain
+# readable and derive the same information at load time.
+TESTCASE_READ_VERSIONS = ("0.1", "0.2")
 
 
 def check_format_version(fmt: str, version: str) -> None:

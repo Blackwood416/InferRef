@@ -37,6 +37,7 @@ from inferref.agent.evaluation_host import (
 )
 from inferref.agent.evaluation_mcp import create_evaluation_server
 from inferref.agent.protocol import AgentProtocolError
+from inferref.ir.version import INFERREF_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARK_PATH = REPO_ROOT / "examples" / "agent_eval" / "rope_sign" / "benchmark.json"
@@ -732,7 +733,7 @@ def test_development_attestation_omits_private_transcript_and_paths(
     assert attestation["runtime"]["unchanged"] is True
     assert attestation["runtime"]["before"]["python"]
     assert attestation["runtime"]["before"]["numpy"]
-    assert attestation["runtime"]["before"]["inferref"] == "0.3.0"
+    assert attestation["runtime"]["before"]["inferref"] == INFERREF_VERSION
     assert attestation["runtime"]["before"]["byteorder"] in {"little", "big"}
     assert attestation["runtime"]["before"]["import"]["mode"] == "repository_source"
     assert attestation["report_json_sha256"]

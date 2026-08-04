@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from inferref.ir.paths import PathBoundaryError, resolve_contained_path
-from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_FORMAT_VERSION
+from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_READ_VERSIONS
+from inferref.testcase.requirements import derive_requirements
 from inferref.tensor import codec
 
 
@@ -113,14 +114,15 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
             f"format must be {TESTCASE_FORMAT!r}, got {manifest.get('format')!r}",
             "format",
         )
-    if manifest.get("format_version") != TESTCASE_FORMAT_VERSION:
+    if manifest.get("format_version") not in TESTCASE_READ_VERSIONS:
         _error(
             result,
             "format_version_unsupported",
             "unsupported testcase format_version "
-            f"{manifest.get('format_version')!r}; expected {TESTCASE_FORMAT_VERSION!r}",
+            f"{manifest.get('format_version')!r}; expected one of {TESTCASE_READ_VERSIONS!r}",
             "format_version",
         )
+    _validate_requirements(result, manifest)
 
     values = _records(result, manifest, "values")
     nodes = _records(result, manifest, "nodes")
@@ -496,6 +498,37 @@ def _effect_array(
 
 def _is_integer(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_requirements(
+    result: TestcaseValidationResult, manifest: dict[str, Any]
+) -> None:
+    requirements = manifest.get("requirements")
+    if manifest.get("format_version") == "0.1" and requirements is None:
+        return
+    if not isinstance(requirements, dict):
+        _error(result, "requirements_invalid", "requirements must be an object", "requirements")
+        return
+    dtypes = requirements.get("dtypes")
+    features = requirements.get("features")
+    max_rank = requirements.get("max_rank")
+    if not isinstance(dtypes, list) or not all(isinstance(x, str) and x for x in dtypes):
+        _error(result, "requirements_invalid", "dtypes must be a string array", "requirements.dtypes")
+    if not isinstance(features, list) or not all(
+        isinstance(x, str) and x for x in features
+    ):
+        _error(result, "requirements_invalid", "features must be a string array", "requirements.features")
+    if not isinstance(max_rank, int) or isinstance(max_rank, bool) or max_rank < 0:
+        _error(result, "requirements_invalid", "max_rank must be non-negative", "requirements.max_rank")
+    if isinstance(dtypes, list) and isinstance(features, list) and isinstance(max_rank, int):
+        expected = derive_requirements({k: v for k, v in manifest.items() if k != "requirements"})
+        if requirements != expected:
+            _error(
+                result,
+                "requirements_mismatch",
+                f"declared requirements {requirements!r} != derived {expected!r}",
+                "requirements",
+            )
 
 
 def _error(

@@ -14,7 +14,10 @@ $python = Join-Path $environment 'Scripts\python.exe'
 uv pip install --python $python `
     --index-url https://download.pytorch.org/whl/xpu `
     'torch==2.13.0+xpu'
-uv pip install --python $python 'numpy==2.5.1' 'pytest>=7,<10'
+uv pip install --python $python `
+    'numpy==2.5.1' `
+    'pytest>=7,<10' `
+    'transformers==5.14.1'
 
 & $python -c @'
 import torch

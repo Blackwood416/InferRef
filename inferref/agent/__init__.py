@@ -5,6 +5,7 @@ from inferref.agent.protocol import (
     AGENT_PROTOCOL_VERSION,
     ENGINE_ADAPTER_FORMAT,
     ENGINE_ADAPTER_VERSION,
+    AdapterCapabilities,
     AgentResponse,
     EngineAdapter,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "AGENT_PROTOCOL_VERSION",
     "ENGINE_ADAPTER_FORMAT",
     "ENGINE_ADAPTER_VERSION",
+    "AdapterCapabilities",
     "AgentResponse",
     "EngineAdapter",
     "capabilities",

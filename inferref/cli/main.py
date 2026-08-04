@@ -588,6 +588,34 @@ def cmd_agent_evaluate(args: argparse.Namespace) -> int:
     return EXIT_OK if report["status"] == "pass" else EXIT_FAIL
 
 
+# -- suite -----------------------------------------------------------------
+
+
+def cmd_suite_validate(args: argparse.Namespace) -> int:
+    from inferref.suite import validate_suite
+
+    report = validate_suite(args.suite)
+    _emit(report, f"Suite {report['name']}: {report['cases']} valid case(s)", args.json)
+    return EXIT_OK
+
+
+def cmd_suite_run(args: argparse.Namespace) -> int:
+    from inferref.suite import run_suite
+
+    report = run_suite(
+        args.suite,
+        args.adapter,
+        args.runs_dir,
+        allow_unsupported=args.allow_unsupported,
+    )
+    _emit(
+        report,
+        f"Suite run: {report['status'].upper()} ({report['counts']['pass']}/{report['counts']['total']} passed)",
+        args.json,
+    )
+    return EXIT_OK if report["status"] == "pass" else EXIT_FAIL
+
+
 # -- export ----------------------------------------------------------------
 
 
@@ -940,6 +968,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_json(q)
     q.set_defaults(func=cmd_agent_evaluate)
+
+    # suite
+    p = sub.add_parser("suite", help="validate and run testcase suites")
+    ssub = p.add_subparsers(dest="suite_command", metavar="<subcommand>")
+    q = ssub.add_parser("validate", help="validate a suite and all referenced testcases")
+    q.add_argument("suite", help="suite JSON manifest")
+    _add_json(q)
+    q.set_defaults(func=cmd_suite_validate)
+
+    q = ssub.add_parser("run", help="run every testcase through one engine adapter")
+    q.add_argument("suite", help="suite JSON manifest")
+    q.add_argument("--adapter", required=True, help="engine adapter JSON")
+    q.add_argument("--runs-dir", required=True, help="output directory for case runs")
+    q.add_argument(
+        "--allow-unsupported",
+        action="store_true",
+        help="accept capability-declared unsupported cases for inventory runs",
+    )
+    _add_json(q)
+    q.set_defaults(func=cmd_suite_run)
 
     # export
     p = sub.add_parser("export", help="export a trace as a single JSON document")

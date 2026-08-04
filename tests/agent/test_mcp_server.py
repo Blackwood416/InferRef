@@ -12,6 +12,7 @@ mcp = pytest.importorskip("mcp")
 from mcp import Client
 
 from inferref.agent.mcp_server import create_server
+from inferref.ir.version import INFERREF_VERSION
 
 
 def test_mcp_capabilities_roundtrip_in_memory() -> None:
@@ -21,7 +22,7 @@ def test_mcp_capabilities_roundtrip_in_memory() -> None:
             payload = result.structured_content
             assert payload["operation"] == "capabilities"
             assert payload["status"] == "ok"
-            assert payload["data"]["inferref_version"] == "0.3.0"
+            assert payload["data"]["inferref_version"] == INFERREF_VERSION
 
     asyncio.run(exercise())
 

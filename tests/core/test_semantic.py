@@ -681,6 +681,46 @@ def test_registry() -> None:
         select(["nope"])
 
 
+def test_detector_entry_point_is_explicit_and_validated(monkeypatch) -> None:
+    from inferref.semantic import registry
+
+    class PluginDetector:
+        name = "project_gate"
+
+        def detect(self, _package):
+            return []
+
+    class Distribution:
+        name = "project-detectors"
+        version = "1.2.3"
+
+    class Entry:
+        name = "project_gate"
+        value = "project.detectors:create"
+        dist = Distribution()
+
+        def load(self):
+            return PluginDetector
+
+    class Entries(list):
+        def select(self, *, group):
+            return self if group == registry.ENTRY_POINT_GROUP else []
+
+    monkeypatch.setattr(registry.metadata, "entry_points", lambda: Entries([Entry()]))
+
+    # Installed plugins do not alter the default detector set.
+    assert [item.name for item in select(None)] == [
+        "module_type",
+        "source_function",
+        "cache_update",
+    ]
+    assert "project_gate" in detector_names()
+    assert [item.name for item in select(["project_gate"])] == ["project_gate"]
+    descriptor = registry.plugin_descriptors(load=True)[0]
+    assert descriptor.status == "loaded"
+    assert descriptor.version == "1.2.3"
+
+
 def test_selecting_one_detector_excludes_the_other() -> None:
     package = _rope_package()
     found = detect(package, detector_names=["module_type"])
