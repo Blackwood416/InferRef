@@ -10,6 +10,7 @@ from inferref.suite.schema import (
     validate_suite,
 )
 from inferref.suite.run import run_suite
+from inferref.suite.report import render_suite_report
 
 __all__ = [
     "SUITE_FORMAT",
@@ -19,5 +20,6 @@ __all__ = [
     "SuiteError",
     "load_suite",
     "run_suite",
+    "render_suite_report",
     "validate_suite",
 ]

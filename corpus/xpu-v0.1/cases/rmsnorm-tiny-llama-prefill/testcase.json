@@ -1,0 +1,153 @@
+{
+  "format": "inferref-testcase",
+  "format_version": "0.2",
+  "name": "rmsnorm-tiny-llama-prefill",
+  "origin": {
+    "generator": "corpus/xpu-v0.1/generate.py",
+    "seed": 20260804
+  },
+  "reproducible": true,
+  "inputs": [
+    {
+      "name": "x",
+      "value_id": 1,
+      "payload": "inputs/x.irtensor",
+      "dtype": "float16",
+      "shape": [
+        1,
+        7,
+        32
+      ],
+      "stride": [
+        224,
+        32,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 224,
+      "nbytes": 448
+    },
+    {
+      "name": "weight",
+      "value_id": 2,
+      "payload": "inputs/weight.irtensor",
+      "dtype": "float16",
+      "shape": [
+        32
+      ],
+      "stride": [
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 32,
+      "nbytes": 64
+    },
+    {
+      "name": "epsilon",
+      "value_id": 3,
+      "payload": "inputs/epsilon.irtensor",
+      "dtype": "float32",
+      "shape": [
+        1
+      ],
+      "stride": [
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 1,
+      "nbytes": 4
+    }
+  ],
+  "outputs": [
+    {
+      "name": "y",
+      "value_id": 4,
+      "payload": "reference/y.irtensor",
+      "dtype": "float16",
+      "shape": [
+        1,
+        7,
+        32
+      ],
+      "stride": [
+        224,
+        32,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 224,
+      "nbytes": 448
+    }
+  ],
+  "nodes": [],
+  "values": [
+    {
+      "id": 1,
+      "dtype": "float16",
+      "shape": [
+        1,
+        7,
+        32
+      ],
+      "stride": [
+        224,
+        32,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 224,
+      "nbytes": 448
+    },
+    {
+      "id": 2,
+      "dtype": "float16",
+      "shape": [
+        32
+      ],
+      "stride": [
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 32,
+      "nbytes": 64
+    },
+    {
+      "id": 3,
+      "dtype": "float32",
+      "shape": [
+        1
+      ],
+      "stride": [
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 1,
+      "nbytes": 4
+    },
+    {
+      "id": 4,
+      "dtype": "float16",
+      "shape": [
+        1,
+        7,
+        32
+      ],
+      "stride": [
+        224,
+        32,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 224,
+      "nbytes": 448
+    }
+  ],
+  "requirements": {
+    "dtypes": [
+      "float16",
+      "float32"
+    ],
+    "max_rank": 3,
+    "features": []
+  }
+}

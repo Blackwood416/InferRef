@@ -616,6 +616,18 @@ def cmd_suite_run(args: argparse.Namespace) -> int:
     return EXIT_OK if report["status"] == "pass" else EXIT_FAIL
 
 
+def cmd_suite_report(args: argparse.Namespace) -> int:
+    from inferref.suite import render_suite_report
+
+    report = render_suite_report(args.run, args.output)
+    _emit(
+        report,
+        f"Wrote suite report to {report['html']} and {report['json']}",
+        args.json,
+    )
+    return EXIT_OK
+
+
 # -- export ----------------------------------------------------------------
 
 
@@ -977,9 +989,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json(q)
     q.set_defaults(func=cmd_suite_validate)
 
-    q = ssub.add_parser("run", help="run every testcase through one engine adapter")
+    q = ssub.add_parser("run", help="run every testcase through one or more engine adapters")
     q.add_argument("suite", help="suite JSON manifest")
-    q.add_argument("--adapter", required=True, help="engine adapter JSON")
+    q.add_argument(
+        "--adapter",
+        required=True,
+        action="append",
+        help="engine adapter JSON; repeat to build a case-by-engine matrix",
+    )
     q.add_argument("--runs-dir", required=True, help="output directory for case runs")
     q.add_argument(
         "--allow-unsupported",
@@ -988,6 +1005,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_json(q)
     q.set_defaults(func=cmd_suite_run)
+
+    q = ssub.add_parser("report", help="render a suite run as static HTML and JSON")
+    q.add_argument("run", help="inferref-suite-run JSON")
+    q.add_argument("--output", required=True, help="output HTML path")
+    _add_json(q)
+    q.set_defaults(func=cmd_suite_report)
 
     # export
     p = sub.add_parser("export", help="export a trace as a single JSON document")

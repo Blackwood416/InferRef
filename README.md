@@ -22,13 +22,18 @@ Run a reusable testcase suite against an engine adapter:
 
 ```bash
 inferref suite validate suite.json
-inferref suite run suite.json --adapter engine.adapter.json --runs-dir runs/
+inferref suite run suite.json --adapter sycl.adapter.json --adapter cpu.adapter.json --runs-dir runs/
+inferref suite report runs/inferref-suite-run.json --output report.html
 ```
 
 Adapter v0.2 declares its target device, dtypes, rank and effect support.
 Testcase v0.2 records matching derived requirements, allowing InferRef to
 return `unsupported` before starting an incompatible engine. Legacy 0.1
 adapters and testcases remain readable.
+
+InferRef 0.5 also includes an optional native C++/SYCL engine and a deterministic
+XPU corpus. It reads `.irtensor` directly and has no Python/PyTorch engine-side
+dependency. See [the Windows XPU/SYCL gate](docs/xpu-sycl.md).
 
 ```text
 Model → Reference Trace → Trace IR → Testcase → Engine → Compare → First Divergence

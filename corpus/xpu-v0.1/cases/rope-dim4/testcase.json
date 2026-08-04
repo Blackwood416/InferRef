@@ -1,0 +1,250 @@
+{
+  "format": "inferref-testcase",
+  "format_version": "0.2",
+  "name": "rope-dim4",
+  "origin": {
+    "generator": "corpus/xpu-v0.1/generate.py",
+    "seed": 20260804
+  },
+  "reproducible": true,
+  "inputs": [
+    {
+      "name": "query",
+      "value_id": 1,
+      "payload": "inputs/query.irtensor",
+      "dtype": "float32",
+      "shape": [
+        2,
+        3,
+        5,
+        4
+      ],
+      "stride": [
+        60,
+        20,
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 120,
+      "nbytes": 480
+    },
+    {
+      "name": "key",
+      "value_id": 2,
+      "payload": "inputs/key.irtensor",
+      "dtype": "float32",
+      "shape": [
+        2,
+        2,
+        5,
+        4
+      ],
+      "stride": [
+        40,
+        20,
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 80,
+      "nbytes": 320
+    },
+    {
+      "name": "cos",
+      "value_id": 3,
+      "payload": "inputs/cos.irtensor",
+      "dtype": "float32",
+      "shape": [
+        5,
+        4
+      ],
+      "stride": [
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 20,
+      "nbytes": 80
+    },
+    {
+      "name": "sin",
+      "value_id": 4,
+      "payload": "inputs/sin.irtensor",
+      "dtype": "float32",
+      "shape": [
+        5,
+        4
+      ],
+      "stride": [
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 20,
+      "nbytes": 80
+    }
+  ],
+  "outputs": [
+    {
+      "name": "q_embed",
+      "value_id": 5,
+      "payload": "reference/q_embed.irtensor",
+      "dtype": "float32",
+      "shape": [
+        2,
+        3,
+        5,
+        4
+      ],
+      "stride": [
+        60,
+        20,
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 120,
+      "nbytes": 480
+    },
+    {
+      "name": "k_embed",
+      "value_id": 6,
+      "payload": "reference/k_embed.irtensor",
+      "dtype": "float32",
+      "shape": [
+        2,
+        2,
+        5,
+        4
+      ],
+      "stride": [
+        40,
+        20,
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 80,
+      "nbytes": 320
+    }
+  ],
+  "nodes": [],
+  "values": [
+    {
+      "id": 1,
+      "dtype": "float32",
+      "shape": [
+        2,
+        3,
+        5,
+        4
+      ],
+      "stride": [
+        60,
+        20,
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 120,
+      "nbytes": 480
+    },
+    {
+      "id": 2,
+      "dtype": "float32",
+      "shape": [
+        2,
+        2,
+        5,
+        4
+      ],
+      "stride": [
+        40,
+        20,
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 80,
+      "nbytes": 320
+    },
+    {
+      "id": 3,
+      "dtype": "float32",
+      "shape": [
+        5,
+        4
+      ],
+      "stride": [
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 20,
+      "nbytes": 80
+    },
+    {
+      "id": 4,
+      "dtype": "float32",
+      "shape": [
+        5,
+        4
+      ],
+      "stride": [
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 20,
+      "nbytes": 80
+    },
+    {
+      "id": 5,
+      "dtype": "float32",
+      "shape": [
+        2,
+        3,
+        5,
+        4
+      ],
+      "stride": [
+        60,
+        20,
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 120,
+      "nbytes": 480
+    },
+    {
+      "id": 6,
+      "dtype": "float32",
+      "shape": [
+        2,
+        2,
+        5,
+        4
+      ],
+      "stride": [
+        40,
+        20,
+        4,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 80,
+      "nbytes": 320
+    }
+  ],
+  "requirements": {
+    "dtypes": [
+      "float32"
+    ],
+    "max_rank": 4,
+    "features": [
+      "multiple_outputs"
+    ]
+  }
+}

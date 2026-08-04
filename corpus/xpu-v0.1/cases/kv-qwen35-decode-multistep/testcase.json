@@ -1,0 +1,144 @@
+{
+  "format": "inferref-testcase",
+  "format_version": "0.2",
+  "name": "kv-qwen35-decode-multistep",
+  "origin": {
+    "generator": "corpus/xpu-v0.1/generate.py",
+    "seed": 20260804
+  },
+  "reproducible": true,
+  "inputs": [
+    {
+      "name": "cache",
+      "value_id": 1,
+      "payload": "inputs/cache.irtensor",
+      "dtype": "float32",
+      "shape": [
+        1,
+        2,
+        5,
+        8
+      ],
+      "stride": [
+        80,
+        40,
+        8,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 80,
+      "nbytes": 320
+    },
+    {
+      "name": "update",
+      "value_id": 2,
+      "payload": "inputs/update.irtensor",
+      "dtype": "float32",
+      "shape": [
+        1,
+        2,
+        3,
+        8
+      ],
+      "stride": [
+        48,
+        24,
+        8,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 48,
+      "nbytes": 192
+    }
+  ],
+  "outputs": [
+    {
+      "name": "cache_out",
+      "value_id": 3,
+      "payload": "reference/cache_out.irtensor",
+      "dtype": "float32",
+      "shape": [
+        1,
+        2,
+        8,
+        8
+      ],
+      "stride": [
+        128,
+        64,
+        8,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 128,
+      "nbytes": 512
+    }
+  ],
+  "nodes": [],
+  "values": [
+    {
+      "id": 1,
+      "dtype": "float32",
+      "shape": [
+        1,
+        2,
+        5,
+        8
+      ],
+      "stride": [
+        80,
+        40,
+        8,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 80,
+      "nbytes": 320
+    },
+    {
+      "id": 2,
+      "dtype": "float32",
+      "shape": [
+        1,
+        2,
+        3,
+        8
+      ],
+      "stride": [
+        48,
+        24,
+        8,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 48,
+      "nbytes": 192
+    },
+    {
+      "id": 3,
+      "dtype": "float32",
+      "shape": [
+        1,
+        2,
+        8,
+        8
+      ],
+      "stride": [
+        128,
+        64,
+        8,
+        1
+      ],
+      "storage_offset": 0,
+      "numel": 128,
+      "nbytes": 512
+    }
+  ],
+  "requirements": {
+    "dtypes": [
+      "float32"
+    ],
+    "max_rank": 4,
+    "features": []
+  }
+}

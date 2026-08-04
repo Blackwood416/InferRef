@@ -13,6 +13,8 @@ repro/
 engine-out/
 engine-output/
 .scratch/
+xpu-sycl-evidence/
 
 # C++
 cpp/build/
+cpp/build-*/

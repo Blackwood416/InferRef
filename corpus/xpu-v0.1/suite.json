@@ -1,0 +1,132 @@
+{
+  "format": "inferref-suite",
+  "format_version": "0.1",
+  "name": "inferref-xpu-v0.1",
+  "cases": [
+    {
+      "id": "rmsnorm-float32",
+      "testcase": "cases/rmsnorm-float32",
+      "tags": [
+        "rmsnorm",
+        "float32",
+        "prefill"
+      ]
+    },
+    {
+      "id": "rmsnorm-float16",
+      "testcase": "cases/rmsnorm-float16",
+      "tags": [
+        "rmsnorm",
+        "float16",
+        "prefill"
+      ]
+    },
+    {
+      "id": "rmsnorm-bfloat16",
+      "testcase": "cases/rmsnorm-bfloat16",
+      "tags": [
+        "rmsnorm",
+        "bfloat16",
+        "prefill"
+      ]
+    },
+    {
+      "id": "rope-dim4",
+      "testcase": "cases/rope-dim4",
+      "tags": [
+        "rope",
+        "decode",
+        "head-dim-4"
+      ]
+    },
+    {
+      "id": "rope-dim12",
+      "testcase": "cases/rope-dim12",
+      "tags": [
+        "rope",
+        "decode",
+        "head-dim-12"
+      ]
+    },
+    {
+      "id": "kv-append",
+      "testcase": "cases/kv-append",
+      "tags": [
+        "kv-cache",
+        "decode",
+        "append"
+      ]
+    },
+    {
+      "id": "kv-index",
+      "testcase": "cases/kv-index",
+      "tags": [
+        "kv-cache",
+        "decode",
+        "indexed-update"
+      ]
+    },
+    {
+      "id": "kv-packed",
+      "testcase": "cases/kv-packed",
+      "tags": [
+        "kv-cache",
+        "prefill",
+        "packed"
+      ]
+    },
+    {
+      "id": "rmsnorm-tiny-llama-prefill",
+      "testcase": "cases/rmsnorm-tiny-llama-prefill",
+      "tags": [
+        "rmsnorm",
+        "tiny-llama",
+        "prefill",
+        "model-derived"
+      ]
+    },
+    {
+      "id": "rope-tiny-llama-decode",
+      "testcase": "cases/rope-tiny-llama-decode",
+      "tags": [
+        "rope",
+        "tiny-llama",
+        "decode",
+        "model-derived"
+      ]
+    },
+    {
+      "id": "kv-qwen35-prefill",
+      "testcase": "cases/kv-qwen35-prefill",
+      "tags": [
+        "kv-cache",
+        "tiny-qwen3.5",
+        "prefill",
+        "hybrid",
+        "model-derived"
+      ]
+    },
+    {
+      "id": "kv-qwen35-decode-step",
+      "testcase": "cases/kv-qwen35-decode-step",
+      "tags": [
+        "kv-cache",
+        "tiny-qwen3.5",
+        "decode",
+        "step",
+        "model-derived"
+      ]
+    },
+    {
+      "id": "kv-qwen35-decode-multistep",
+      "testcase": "cases/kv-qwen35-decode-multistep",
+      "tags": [
+        "kv-cache",
+        "tiny-qwen3.5",
+        "decode",
+        "multistep",
+        "model-derived"
+      ]
+    }
+  ]
+}

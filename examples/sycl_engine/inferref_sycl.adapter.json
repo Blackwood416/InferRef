@@ -1,0 +1,20 @@
+{
+  "format": "inferref-engine-adapter",
+  "format_version": "0.2",
+  "name": "inferref-sycl-xpu",
+  "target_device": "xpu",
+  "capabilities": {
+    "device_types": ["xpu"],
+    "dtypes": ["float32", "float16", "bfloat16"],
+    "max_rank": 5,
+    "features": ["multiple_outputs", "strided_inputs", "alias_effects", "mutation_effects"]
+  },
+  "command": [
+    "{adapter_dir}/../../cpp/build-sycl-icx/inferref_sycl_engine.exe",
+    "--testcase",
+    "{testcase}",
+    "--output",
+    "{output}"
+  ],
+  "timeout_seconds": 120
+}

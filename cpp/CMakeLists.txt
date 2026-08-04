@@ -25,5 +25,23 @@ target_link_libraries(inferref_compare PRIVATE inferref_headers)
 add_executable(inferref_selftest examples/selftest/main.cpp)
 target_link_libraries(inferref_selftest PRIVATE inferref_headers)
 
+option(INFERREF_BUILD_SYCL "Build the native Intel XPU testcase engine" OFF)
+if(INFERREF_BUILD_SYCL)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "IntelLLVM")
+        message(FATAL_ERROR "INFERREF_BUILD_SYCL requires an IntelLLVM SYCL compiler (for example icx-cl -fsycl)")
+    endif()
+    add_executable(inferref_sycl_engine examples/sycl_engine/main.cpp)
+    target_link_libraries(inferref_sycl_engine PRIVATE inferref_headers)
+    if(WIN32)
+        # oneAPI 2026 removed the legacy /Qsycl spelling.  /fsycl works with
+        # both icx-cl and older IntelLLVM releases that support SYCL.
+        target_compile_options(inferref_sycl_engine PRIVATE /fsycl)
+        target_link_options(inferref_sycl_engine PRIVATE /fsycl)
+    else()
+        target_compile_options(inferref_sycl_engine PRIVATE -fsycl)
+        target_link_options(inferref_sycl_engine PRIVATE -fsycl)
+    endif()
+endif()
+
 enable_testing()
 add_test(NAME irtensor_selftest COMMAND inferref_selftest)

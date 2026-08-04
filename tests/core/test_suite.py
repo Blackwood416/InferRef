@@ -8,7 +8,7 @@ import numpy as np
 
 from inferref.agent.protocol import ENGINE_ADAPTER_FORMAT, ENGINE_ADAPTER_VERSION
 from inferref.cli.main import EXIT_FAIL, EXIT_OK, main
-from inferref.suite import load_suite, run_suite, validate_suite
+from inferref.suite import load_suite, render_suite_report, run_suite, validate_suite
 from inferref.tensor import codec
 
 
@@ -97,3 +97,26 @@ def test_suite_cli(tmp_path: Path, capsys) -> None:
     capsys.readouterr()
     assert main(["suite", "run", str(suite), "--adapter", str(adapter), "--runs-dir", str(tmp_path / "cli-runs"), "--json"]) == EXIT_OK
     assert json.loads(capsys.readouterr().out)["status"] == "pass"
+
+
+def test_suite_matrix_and_static_report(tmp_path: Path, capsys) -> None:
+    suite, adapter = _fixture(tmp_path)
+    second = tmp_path / "adapter-second.json"
+    second.write_text(adapter.read_text(encoding="utf-8"), encoding="utf-8")
+
+    report = run_suite(suite, [adapter, second], tmp_path / "matrix-runs")
+    assert report["format_version"] == "0.2"
+    assert report["counts"] == {"total": 2, "pass": 2, "unsupported": 0, "failed": 0}
+    assert [item["id"] for item in report["adapters"]] == ["python", "python-2"]
+    assert len(report["cases"][0]["results"]) == 2
+
+    output = tmp_path / "report" / "index.html"
+    rendered = render_suite_report(report, output)
+    assert rendered["status"] == "pass"
+    assert output.is_file()
+    assert output.with_suffix(".json").is_file()
+    assert "python-2" in output.read_text(encoding="utf-8")
+
+    run_path = tmp_path / "matrix-runs" / "inferref-suite-run.json"
+    assert main(["suite", "report", str(run_path), "--output", str(tmp_path / "cli-report.html"), "--json"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out)["format"] == "inferref-suite-report"
