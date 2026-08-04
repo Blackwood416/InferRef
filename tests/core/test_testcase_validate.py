@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from inferref.tensor import codec
+from inferref.testcase.requirements import derive_requirements
 from inferref.testcase.validate import TestcaseValidationError as ValidationError
 from inferref.testcase.validate import (
     require_valid_testcase,
@@ -269,3 +270,59 @@ def test_arbitrary_json_manifest_never_leaks_validation_exception(
         manifest_path.write_text(json.dumps(arbitrary(4)), encoding="utf-8")
         result = validate_testcase(root)
         assert result.root == root.resolve()
+
+
+def test_known_executable_contract_validates_input_roles_and_shapes(
+    tmp_path: Path,
+) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    manifest["format_version"] = "0.2"
+    manifest["contracts"] = ["rmsnorm/last-dim/v1"]
+    manifest["requirements"] = derive_requirements(manifest)
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+
+    assert "contract_input_missing" in {issue.code for issue in result.errors}
+
+
+def test_invalid_contract_identifier_is_structured_error(tmp_path: Path) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    manifest["format_version"] = "0.2"
+    manifest["contracts"] = ["rope"]
+    manifest["requirements"] = derive_requirements(manifest)
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+
+    assert "contracts_invalid" in {issue.code for issue in result.errors}
+
+
+def test_contract_rejects_empty_kernel_input_before_execution(tmp_path: Path) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    manifest["format_version"] = "0.2"
+    next_id = 3
+    for name, array in (
+        ("x", np.empty((0, 3), dtype=np.float32)),
+        ("weight", np.ones(3, dtype=np.float32)),
+        ("epsilon", np.asarray(1e-5, dtype=np.float32)),
+    ):
+        payload = codec.write_array(root / "inputs" / f"{name}.irtensor", array)
+        metadata = codec.read(payload).to_metadata()
+        manifest["inputs"].append(
+            {
+                "name": name,
+                "value_id": next_id,
+                "payload": f"inputs/{name}.irtensor",
+                **metadata,
+            }
+        )
+        manifest["values"].append({"id": next_id, **metadata})
+        next_id += 1
+    manifest["contracts"] = ["rmsnorm/last-dim/v1"]
+    manifest["requirements"] = derive_requirements(manifest)
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+
+    assert "contract_shape_invalid" in {issue.code for issue in result.errors}

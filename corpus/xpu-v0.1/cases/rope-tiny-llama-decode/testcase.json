@@ -238,6 +238,9 @@
       "nbytes": 64
     }
   ],
+  "contracts": [
+    "rope/rotate-half/v1"
+  ],
   "requirements": {
     "dtypes": [
       "float16"
@@ -245,6 +248,9 @@
     "max_rank": 4,
     "features": [
       "multiple_outputs"
+    ],
+    "contracts": [
+      "rope/rotate-half/v1"
     ]
   }
 }

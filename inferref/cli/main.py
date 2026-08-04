@@ -57,7 +57,7 @@ def _load(path: str | Path) -> TracePackage:
 def cmd_doctor(args: argparse.Namespace) -> int:
     from inferref.doctor import render_doctor, run_doctor
 
-    report = run_doctor(args.device)
+    report = run_doctor(args.device, verify_plugins=args.verify_plugins)
     _emit(report, render_doctor(report), args.json)
     return EXIT_FAIL if report["status"] == "fail" else EXIT_OK
 
@@ -269,6 +269,7 @@ def cmd_testcase_extract(args: argparse.Namespace) -> int:
                 name=args.name,
                 input_names=input_names,
                 output_names=output_names,
+                contracts=args.contract,
             )
         elif args.op is not None:
             result = extract_operator(
@@ -278,6 +279,7 @@ def cmd_testcase_extract(args: argparse.Namespace) -> int:
                 name=args.name,
                 input_names=input_names,
                 output_names=output_names,
+                contracts=args.contract,
             )
         else:
             print("error: pass either --op or --region", file=sys.stderr)
@@ -533,6 +535,7 @@ def cmd_agent_extract(args: argparse.Namespace) -> int:
         name=args.name,
         input_names=args.input_names.split(",") if args.input_names else None,
         output_names=args.output_names.split(",") if args.output_names else None,
+        contracts=args.contract,
     )
     return _agent_emit(response, args)
 
@@ -607,13 +610,14 @@ def cmd_suite_run(args: argparse.Namespace) -> int:
         args.adapter,
         args.runs_dir,
         allow_unsupported=args.allow_unsupported,
+        fail_fast=args.fail_fast,
     )
     _emit(
         report,
         f"Suite run: {report['status'].upper()} ({report['counts']['pass']}/{report['counts']['total']} passed)",
         args.json,
     )
-    return EXIT_OK if report["status"] == "pass" else EXIT_FAIL
+    return EXIT_OK if report["exit_code_policy_satisfied"] else EXIT_FAIL
 
 
 def cmd_suite_report(args: argparse.Namespace) -> int:
@@ -676,6 +680,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--device",
         default="auto",
         help="require a device such as cpu, cuda, cuda:1 or xpu (default: inventory)",
+    )
+    p.add_argument(
+        "--verify-plugins",
+        action="store_true",
+        help="import and instantiate discovered detector plugins",
     )
     _add_json(p)
     p.set_defaults(func=cmd_doctor)
@@ -825,6 +834,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-names",
         help="comma-separated names for the boundary outputs, e.g. q_embed,k_embed",
     )
+    q.add_argument(
+        "--contract",
+        action="append",
+        help="versioned executable contract; repeat for multiple contracts",
+    )
     _add_json(q)
     q.set_defaults(func=cmd_testcase_extract)
 
@@ -923,6 +937,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--name", help="testcase name")
     q.add_argument("--input-names", help="comma-separated boundary input names")
     q.add_argument("--output-names", help="comma-separated boundary output names")
+    q.add_argument("--contract", action="append", help="versioned executable contract")
     _add_json(q)
     q.set_defaults(func=cmd_agent_extract)
 
@@ -1002,6 +1017,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-unsupported",
         action="store_true",
         help="accept capability-declared unsupported cases for inventory runs",
+    )
+    q.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="stop on the first cell configuration/infrastructure exception",
     )
     _add_json(q)
     q.set_defaults(func=cmd_suite_run)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import platform
+import re
 import sys
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,9 +32,14 @@ class DoctorCheck:
         }
 
 
-def run_doctor(device: str | None = None) -> dict[str, Any]:
+def run_doctor(
+    device: str | None = None, *, verify_plugins: bool = False
+) -> dict[str, Any]:
     """Inspect the core install and optionally require a usable device."""
     requested = _normalise_device(device)
+    invalid_device = requested is not None and re.fullmatch(
+        r"(?:cpu|cuda|xpu)(?::[0-9]+)?", requested
+    ) is None
     checks = [
         DoctorCheck(
             "runtime.python",
@@ -43,6 +49,15 @@ def run_doctor(device: str | None = None) -> dict[str, Any]:
         ),
         DoctorCheck("runtime.inferref", "pass", f"InferRef {INFERREF_VERSION}"),
     ]
+    if invalid_device:
+        checks.append(
+            DoctorCheck(
+                "device.request",
+                "fail",
+                f"invalid device specification {requested!r}",
+                remediation="Use cpu, cuda[:INDEX], or xpu[:INDEX].",
+            )
+        )
     try:
         import numpy
 
@@ -63,11 +78,11 @@ def run_doctor(device: str | None = None) -> dict[str, Any]:
             )
         )
     else:
-        checks.extend(_torch_checks(torch, requested))
+        checks.extend(_torch_checks(torch, None if invalid_device else requested))
 
     from inferref.semantic.registry import plugin_descriptors
 
-    for plugin in plugin_descriptors(load=True):
+    for plugin in plugin_descriptors(load=verify_plugins):
         checks.append(
             DoctorCheck(
                 f"semantic.plugin.{plugin.name}",
@@ -91,6 +106,7 @@ def run_doctor(device: str | None = None) -> dict[str, Any]:
         "format_version": DOCTOR_FORMAT_VERSION,
         "status": status,
         "requested_device": requested,
+        "plugin_verification": verify_plugins,
         "runtime": {
             "python": platform.python_version(),
             "platform": platform.platform(),

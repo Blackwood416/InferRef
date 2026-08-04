@@ -76,6 +76,7 @@ def create_server(
         name: str | None = None,
         input_names: list[str] | None = None,
         output_names: list[str] | None = None,
+        contracts: list[str] | None = None,
     ) -> dict[str, Any]:
         """Extract one operator or region as a portable engine testcase."""
 
@@ -94,6 +95,7 @@ def create_server(
             name=name,
             input_names=input_names,
             output_names=output_names,
+            contracts=contracts,
         ).to_dict()
 
     @server.tool()

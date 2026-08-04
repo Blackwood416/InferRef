@@ -13,6 +13,7 @@ Check the local frontend and accelerator before tracing:
 inferref doctor                 # inventory the installation
 inferref doctor --device xpu    # require an Intel XPU and test host capture
 inferref doctor --device cuda   # require CUDA/ROCm-as-CUDA
+inferref doctor --verify-plugins # explicitly import and validate detector plugins
 ```
 
 Trace execution device metadata is inferred from the tensors observed at

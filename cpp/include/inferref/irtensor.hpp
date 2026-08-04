@@ -119,6 +119,61 @@ inline constexpr std::uint32_t kFlagCanonicalContiguous = 1u << 0;
 
 inline constexpr std::uint16_t kTensorFormatVersion = 1;
 
+// IEEE-754 round-to-nearest-even encoders shared by native engines and tests.
+inline std::uint16_t EncodeFloat16(float value)
+{
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const std::uint32_t sign = (bits >> 16) & 0x8000u;
+    const std::uint32_t exponent = (bits >> 23) & 0xffu;
+    const std::uint32_t mantissa = bits & 0x7fffffu;
+    if (exponent == 0xffu)
+    {
+        if (mantissa == 0) return static_cast<std::uint16_t>(sign | 0x7c00u);
+        std::uint32_t payload = (mantissa >> 13) | 0x0200u;
+        return static_cast<std::uint16_t>(sign | 0x7c00u | (payload & 0x03ffu));
+    }
+
+    int half_exponent = static_cast<int>(exponent) - 127 + 15;
+    if (half_exponent >= 31) return static_cast<std::uint16_t>(sign | 0x7c00u);
+    if (half_exponent <= 0)
+    {
+        if (half_exponent < -10) return static_cast<std::uint16_t>(sign);
+        const std::uint32_t significand = mantissa | 0x800000u;
+        const int shift = 14 - half_exponent;
+        std::uint32_t rounded = significand >> shift;
+        const std::uint32_t remainder = significand & ((1u << shift) - 1u);
+        const std::uint32_t halfway = 1u << (shift - 1);
+        if (remainder > halfway || (remainder == halfway && (rounded & 1u))) ++rounded;
+        return static_cast<std::uint16_t>(sign | rounded);
+    }
+
+    std::uint32_t rounded_mantissa = mantissa >> 13;
+    const std::uint32_t remainder = mantissa & 0x1fffu;
+    if (remainder > 0x1000u || (remainder == 0x1000u && (rounded_mantissa & 1u)))
+    {
+        ++rounded_mantissa;
+        if (rounded_mantissa == 0x0400u)
+        {
+            rounded_mantissa = 0;
+            ++half_exponent;
+            if (half_exponent >= 31) return static_cast<std::uint16_t>(sign | 0x7c00u);
+        }
+    }
+    return static_cast<std::uint16_t>(
+        sign | (static_cast<std::uint32_t>(half_exponent) << 10) | rounded_mantissa);
+}
+
+inline std::uint16_t EncodeBFloat16(float value)
+{
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    if ((bits & 0x7f800000u) == 0x7f800000u && (bits & 0x007fffffu) != 0)
+        return 0x7fc0u;
+    bits += 0x7fffu + ((bits >> 16) & 1u);
+    return static_cast<std::uint16_t>(bits >> 16);
+}
+
 class IRTensorError : public std::runtime_error
 {
 public:

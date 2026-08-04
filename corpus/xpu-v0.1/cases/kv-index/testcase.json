@@ -162,11 +162,17 @@
       "nbytes": 192
     }
   ],
+  "contracts": [
+    "kv-cache/indexed-update/v1"
+  ],
   "requirements": {
     "dtypes": [
       "float32"
     ],
     "max_rank": 4,
-    "features": []
+    "features": [],
+    "contracts": [
+      "kv-cache/indexed-update/v1"
+    ]
   }
 }

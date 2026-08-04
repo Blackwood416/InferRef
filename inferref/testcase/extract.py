@@ -38,7 +38,7 @@ from inferref.ir.values import (
     Value,
 )
 from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_FORMAT_VERSION
-from inferref.testcase.requirements import derive_requirements
+from inferref.testcase.requirements import derive_requirements, is_contract_id
 
 
 class ExtractionError(RuntimeError):
@@ -306,6 +306,7 @@ def extract_operator(
     name: str | None = None,
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
+    contracts: Sequence[str] | None = None,
 ) -> ExtractedTestcase:
     """Extract a single-operator testcase (SPEC §23; IR §53)."""
     graph = package.graph
@@ -323,6 +324,7 @@ def extract_operator(
         operators=[op],
         input_names=input_names,
         output_names=output_names,
+        contracts=contracts,
     )
 
 
@@ -334,6 +336,7 @@ def extract_region(
     name: str | None = None,
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
+    contracts: Sequence[str] | None = None,
 ) -> ExtractedTestcase:
     """Extract a region testcase (SPEC §37; IR §53)."""
     graph = package.graph
@@ -350,6 +353,7 @@ def extract_region(
         operators=operators,
         input_names=input_names,
         output_names=output_names,
+        contracts=contracts,
     )
 
 
@@ -365,6 +369,7 @@ def _write_testcase(
     operators: Sequence[OperatorRecord],
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
+    contracts: Sequence[str] | None = None,
 ) -> ExtractedTestcase:
     graph = package.graph
     output.mkdir(parents=True, exist_ok=True)
@@ -507,6 +512,12 @@ def _write_testcase(
         if value.id in referenced_value_ids
     ]
 
+    selected_contracts = list(dict.fromkeys(contracts or ()))
+    invalid_contracts = [item for item in selected_contracts if not is_contract_id(item)]
+    if invalid_contracts:
+        raise ExtractionError(
+            "invalid versioned executable contract(s): " + ", ".join(invalid_contracts)
+        )
     manifest = {
         "format": TESTCASE_FORMAT,
         "format_version": TESTCASE_FORMAT_VERSION,
@@ -518,6 +529,8 @@ def _write_testcase(
         "nodes": node_records,
         "values": manifest_values,
     }
+    if selected_contracts:
+        manifest["contracts"] = selected_contracts
     manifest["requirements"] = derive_requirements(manifest)
     if result.non_portable:
         # IR §41: say so explicitly rather than shipping a testcase that cannot run.

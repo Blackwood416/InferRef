@@ -67,6 +67,7 @@ def render_suite_report(
         "format": "inferref-suite-report",
         "format_version": "0.1",
         "status": data.get("status"),
+        "accepted": data.get("accepted", data.get("status") == "pass"),
         "suite": data.get("suite", {}).get("name"),
         "adapters": adapters,
         "counts": data.get("counts", {}),
@@ -105,7 +106,7 @@ def render_suite_report(
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>InferRef suite report — {html.escape(str(report['suite']))}</title>
-<style>body{{font:14px system-ui,sans-serif;margin:2rem;color:#17202a;background:#f7f8fa}}h1{{margin-bottom:.25rem}}p{{color:#566573}}table{{border-collapse:collapse;width:100%;background:white;box-shadow:0 1px 4px #ccd}}th,td{{padding:.75rem;border:1px solid #d5d8dc;text-align:left;vertical-align:top}}thead th{{background:#273746;color:white}}td.pass{{background:#eafaf1}}td.fail,td.mismatch,td.error{{background:#fdedec}}td.unsupported{{background:#fef9e7}}small{{display:block;color:#566573;margin-top:.3rem;font-weight:400}}</style></head>
+<style>body{{font:14px system-ui,sans-serif;margin:2rem;color:#17202a;background:#f7f8fa}}h1{{margin-bottom:.25rem}}p{{color:#566573}}table{{border-collapse:collapse;width:100%;background:white;box-shadow:0 1px 4px #ccd}}th,td{{padding:.75rem;border:1px solid #d5d8dc;text-align:left;vertical-align:top}}thead th{{background:#273746;color:white}}td.pass{{background:#eafaf1}}td.fail,td.mismatch,td.error,td.infrastructure_error{{background:#fdedec}}td.unsupported{{background:#fef9e7}}small{{display:block;color:#566573;margin-top:.3rem;font-weight:400}}</style></head>
 <body><h1>{html.escape(str(report['suite']))}</h1><p>Status: <strong>{html.escape(str(report['status']).upper())}</strong> · {report['counts'].get('pass', 0)}/{report['counts'].get('total', 0)} cells passed</p>
 <table><thead><tr><th>Case</th>{headings}</tr></thead><tbody>{''.join(body)}</tbody></table></body></html>"""
     output_path.write_text(document, encoding="utf-8")

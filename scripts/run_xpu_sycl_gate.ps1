@@ -32,6 +32,7 @@ foreach ($Line in (& cmd.exe /d /s /c $EnvironmentCommand)) {
         Set-Item -Path "Env:$($Matches[1])" -Value $Matches[2]
     }
 }
+$env:ONEAPI_DEVICE_SELECTOR = "level_zero:gpu"
 
 New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
 $SuiteRuns = Join-Path $EvidenceDirectory "suite-runs"
@@ -55,8 +56,14 @@ if ($LASTEXITCODE -ne 0) { throw "SYCL build or positive suite gate failed ($LAS
 
 $Comparator = Join-Path $BuildDirectory "inferref_compare.exe"
 $SuiteReport = Get-Content -LiteralPath (Join-Path $EvidenceDirectory "suite-run.json") -Raw | ConvertFrom-Json
+$DeviceEvidence = @()
 foreach ($CaseResult in $SuiteReport.cases) {
     $Run = $CaseResult.results[0].run
+    $Device = Get-Content -LiteralPath (Join-Path $Run.output "inferref-sycl-device.json") -Raw | ConvertFrom-Json
+    if ($Device.device_type -ne "gpu" -or $Device.backend -ne "ext_oneapi_level_zero" -or $Device.vendor -notmatch "Intel") {
+        throw "case $($CaseResult.id) did not execute on an Intel Level Zero GPU"
+    }
+    $DeviceEvidence += [PSCustomObject]@{ case = $CaseResult.id; device = $Device }
     $Manifest = Get-Content -LiteralPath (Join-Path $Run.testcase "testcase.json") -Raw | ConvertFrom-Json
     foreach ($Output in $Manifest.outputs) {
         & $Comparator (Join-Path $Run.testcase $Output.payload) (Join-Path $Run.output "$($Output.name).irtensor") | Out-Null
@@ -65,6 +72,7 @@ foreach ($CaseResult in $SuiteReport.cases) {
         }
     }
 }
+$DeviceEvidence | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "device-evidence.json") -Encoding utf8
 $NegativeCases = @(
     @{ Name = "rmsnorm"; Case = "rmsnorm-float32"; Output = "y" },
     @{ Name = "rope"; Case = "rope-dim4"; Output = "q_embed" },

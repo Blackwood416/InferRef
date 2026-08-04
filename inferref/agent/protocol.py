@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from inferref.testcase.requirements import is_contract_id
+
 AGENT_PROTOCOL_FORMAT = "inferref-agent-response"
 AGENT_PROTOCOL_VERSION = "0.1"
 ENGINE_ADAPTER_FORMAT = "inferref-engine-adapter"
@@ -47,6 +49,7 @@ class AdapterCapabilities:
     dtypes: tuple[str, ...]
     max_rank: int
     features: tuple[str, ...] = ()
+    contracts: tuple[str, ...] | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> "AdapterCapabilities":
@@ -67,15 +70,31 @@ class AdapterCapabilities:
         max_rank = data.get("max_rank")
         if not isinstance(max_rank, int) or isinstance(max_rank, bool) or max_rank < 0:
             raise AgentProtocolError("capabilities.max_rank must be a non-negative integer")
-        return cls(devices, dtypes, max_rank, features)
+        raw_contracts = data.get("contracts")
+        contracts = (
+            None
+            if raw_contracts is None
+            else _string_array(raw_contracts, "capabilities.contracts")
+        )
+        if contracts is not None:
+            invalid = [item for item in contracts if not is_contract_id(item)]
+            if invalid:
+                raise AgentProtocolError(
+                    "capabilities.contracts contains invalid versioned contract(s): "
+                    + ", ".join(invalid)
+                )
+        return cls(devices, dtypes, max_rank, features, contracts)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "device_types": list(self.device_types),
             "dtypes": list(self.dtypes),
             "max_rank": self.max_rank,
             "features": list(self.features),
         }
+        if self.contracts is not None:
+            result["contracts"] = list(self.contracts)
+        return result
 
     def incompatibilities(self, requirements: Mapping[str, Any]) -> list[dict[str, Any]]:
         issues: list[dict[str, Any]] = []
@@ -90,7 +109,17 @@ class AdapterCapabilities:
         for feature in requirements.get("features", []):
             if feature not in self.features:
                 issues.append({"kind": "feature", "required": feature})
+        required_contracts = requirements.get("contracts", [])
+        if required_contracts and self.contracts is not None:
+            for contract in required_contracts:
+                if contract not in self.contracts:
+                    issues.append({"kind": "contract", "required": contract})
         return issues
+
+    def assessment(self, requirements: Mapping[str, Any]) -> str:
+        if requirements.get("contracts") and self.contracts is None:
+            return "unchecked"
+        return "supported"
 
 
 @dataclass(frozen=True)

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from inferref.agent.protocol import ENGINE_ADAPTER_FORMAT, ENGINE_ADAPTER_VERSION
 from inferref.cli.main import EXIT_FAIL, EXIT_OK, main
@@ -25,7 +26,7 @@ codec.write_array(out / 'out.irtensor', np.asarray(x + 1, dtype=np.float32))
 """
 
 
-def _case(root: Path) -> Path:
+def _case(root: Path, *, contract: str | None = None) -> Path:
     x = np.arange(6, dtype=np.float32).reshape(2, 3)
     inp = codec.write_array(root / "inputs" / "x.irtensor", x)
     out = codec.write_array(root / "reference" / "out.irtensor", x + 1)
@@ -40,14 +41,27 @@ def _case(root: Path) -> Path:
         "outputs": [{"name": "out", "value_id": 2, "payload": "reference/out.irtensor", **om}],
         "nodes": [],
         "values": [{"id": 1, **im}, {"id": 2, **om}],
-        "requirements": {"dtypes": ["float32"], "max_rank": 2, "features": []},
+        "requirements": {
+            "dtypes": ["float32"],
+            "max_rank": 2,
+            "features": [],
+            **({"contracts": [contract]} if contract else {}),
+        },
     }
+    if contract:
+        manifest["contracts"] = [contract]
     (root / "testcase.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
 
 
-def _fixture(tmp_path: Path, *, dtypes: list[str] | None = None):
-    case = _case(tmp_path / "cases" / "add")
+def _fixture(
+    tmp_path: Path,
+    *,
+    dtypes: list[str] | None = None,
+    case_contract: str | None = None,
+    adapter_contracts: list[str] | None = None,
+):
+    case = _case(tmp_path / "cases" / "add", contract=case_contract)
     suite = tmp_path / "suite.json"
     suite.write_text(json.dumps({
         "format": "inferref-suite", "format_version": "0.1", "name": "tiny",
@@ -56,10 +70,15 @@ def _fixture(tmp_path: Path, *, dtypes: list[str] | None = None):
     script = tmp_path / "engine.py"
     script.write_text(ENGINE, encoding="utf-8")
     adapter = tmp_path / "adapter.json"
+    capabilities = {
+        "device_types": ["cpu"], "dtypes": dtypes or ["float32"], "max_rank": 8, "features": []
+    }
+    if adapter_contracts is not None:
+        capabilities["contracts"] = adapter_contracts
     adapter.write_text(json.dumps({
         "format": ENGINE_ADAPTER_FORMAT, "format_version": ENGINE_ADAPTER_VERSION,
         "name": "python", "target_device": "cpu",
-        "capabilities": {"device_types": ["cpu"], "dtypes": dtypes or ["float32"], "max_rank": 8, "features": []},
+        "capabilities": capabilities,
         "command": ["{python}", str(script), "{testcase}", "{output}"],
     }), encoding="utf-8")
     return suite, adapter
@@ -91,6 +110,74 @@ def test_suite_rejects_escape_and_preflights_unsupported(tmp_path: Path) -> None
         raise AssertionError("suite path escape was accepted")
 
 
+def test_allow_unsupported_preserves_semantic_status(tmp_path: Path) -> None:
+    suite, adapter = _fixture(tmp_path, dtypes=["float16"])
+    report = run_suite(suite, adapter, tmp_path / "inventory", allow_unsupported=True)
+    assert report["status"] == "unsupported"
+    assert report["accepted"] is True
+    assert report["exit_code_policy_satisfied"] is True
+    assert report["counts"]["pass"] == 0
+
+
+def test_operation_contract_preflight_and_legacy_unchecked(tmp_path: Path) -> None:
+    contract = "softmax/last-dim/v1"
+    suite, unchecked = _fixture(tmp_path, case_contract=contract)
+    unchecked_report = run_suite(suite, unchecked, tmp_path / "unchecked")
+    assert unchecked_report["status"] == "pass"
+    assert unchecked_report["cases"][0]["run"]["capability_status"] == "unchecked"
+
+    adapter_data = json.loads(unchecked.read_text(encoding="utf-8"))
+    adapter_data["capabilities"]["contracts"] = ["rmsnorm/last-dim/v1"]
+    incompatible = tmp_path / "incompatible.adapter.json"
+    incompatible.write_text(json.dumps(adapter_data), encoding="utf-8")
+    unsupported = run_suite(suite, incompatible, tmp_path / "unsupported")
+    run = unsupported["cases"][0]["run"]
+    assert run["status"] == "unsupported"
+    assert run["execution"] is None
+    assert run["unsupported"] == [{"kind": "contract", "required": contract}]
+
+
+def test_allow_unsupported_matrix_is_partial_when_some_cells_run(tmp_path: Path) -> None:
+    suite, supported = _fixture(
+        tmp_path,
+        case_contract="softmax/last-dim/v1",
+        adapter_contracts=["softmax/last-dim/v1"],
+    )
+    unsupported_data = json.loads(supported.read_text(encoding="utf-8"))
+    unsupported_data["name"] = "unsupported"
+    unsupported_data["capabilities"]["contracts"] = ["rmsnorm/last-dim/v1"]
+    unsupported = tmp_path / "unsupported.adapter.json"
+    unsupported.write_text(json.dumps(unsupported_data), encoding="utf-8")
+    report = run_suite(
+        suite,
+        [supported, unsupported],
+        tmp_path / "partial",
+        allow_unsupported=True,
+    )
+    assert report["status"] == "partial"
+    assert report["accepted"] is True
+    assert report["counts"]["pass"] == 1
+    assert report["counts"]["unsupported"] == 1
+
+
+def test_suite_isolates_cell_configuration_errors(tmp_path: Path) -> None:
+    suite, valid = _fixture(tmp_path)
+    broken_data = json.loads(valid.read_text(encoding="utf-8"))
+    broken_data["name"] = "broken"
+    broken_data["cwd"] = "missing-directory"
+    broken = tmp_path / "broken.adapter.json"
+    broken.write_text(json.dumps(broken_data), encoding="utf-8")
+
+    report = run_suite(suite, [broken, valid], tmp_path / "isolated")
+    results = report["cases"][0]["results"]
+    assert [item["status"] for item in results] == ["infrastructure_error", "pass"]
+    assert results[0]["run"]["error"]["type"] == "AgentProtocolError"
+    assert report["status"] == "fail"
+
+    with pytest.raises(Exception, match="working directory"):
+        run_suite(suite, broken, tmp_path / "fail-fast", fail_fast=True)
+
+
 def test_suite_cli(tmp_path: Path, capsys) -> None:
     suite, adapter = _fixture(tmp_path)
     assert main(["suite", "validate", str(suite), "--json"]) == EXIT_OK
@@ -107,7 +194,8 @@ def test_suite_matrix_and_static_report(tmp_path: Path, capsys) -> None:
     report = run_suite(suite, [adapter, second], tmp_path / "matrix-runs")
     assert report["format_version"] == "0.2"
     assert report["counts"] == {"total": 2, "pass": 2, "unsupported": 0, "failed": 0}
-    assert [item["id"] for item in report["adapters"]] == ["python", "python-2"]
+    adapter_ids = [item["id"] for item in report["adapters"]]
+    assert adapter_ids == ["python", "python-2"]
     assert len(report["cases"][0]["results"]) == 2
 
     output = tmp_path / "report" / "index.html"
@@ -115,8 +203,55 @@ def test_suite_matrix_and_static_report(tmp_path: Path, capsys) -> None:
     assert rendered["status"] == "pass"
     assert output.is_file()
     assert output.with_suffix(".json").is_file()
-    assert "python-2" in output.read_text(encoding="utf-8")
+    assert adapter_ids[1] in output.read_text(encoding="utf-8")
 
     run_path = tmp_path / "matrix-runs" / "inferref-suite-run.json"
     assert main(["suite", "report", str(run_path), "--output", str(tmp_path / "cli-report.html"), "--json"]) == EXIT_OK
     assert json.loads(capsys.readouterr().out)["format"] == "inferref-suite-report"
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "../escape",
+        "/absolute",
+        "C:\\absolute",
+        "a/b",
+        "a\\b",
+        ".",
+        "..",
+        "case.",
+        "case ",
+        "CON",
+        "nul.txt",
+        "LPT1",
+    ],
+)
+def test_suite_rejects_nonportable_case_ids(tmp_path: Path, case_id: str) -> None:
+    suite, _ = _fixture(tmp_path)
+    data = json.loads(suite.read_text(encoding="utf-8"))
+    data["cases"][0]["id"] = case_id
+    suite.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_suite(suite)
+
+
+def test_suite_rejects_casefold_collisions(tmp_path: Path) -> None:
+    suite, _ = _fixture(tmp_path)
+    data = json.loads(suite.read_text(encoding="utf-8"))
+    data["cases"] = [
+        {"id": "Case", "testcase": "cases/add"},
+        {"id": "case", "testcase": "cases/add"},
+    ]
+    suite.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="collides"):
+        load_suite(suite)
+
+
+def test_suite_output_uses_hash_backed_contained_artifact_key(tmp_path: Path) -> None:
+    suite, adapter = _fixture(tmp_path)
+    runs = tmp_path / "runs"
+    report = run_suite(suite, adapter, runs)
+    output = Path(report["cases"][0]["run"]["output"]).resolve()
+    assert output.is_relative_to(runs.resolve())
+    assert "add-" in output.parent.name

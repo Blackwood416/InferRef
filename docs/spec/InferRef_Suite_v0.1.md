@@ -13,16 +13,33 @@
 }
 ```
 
-Case IDs are unique. Testcase paths are relative, must remain below the Suite
+Case IDs match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`, cannot use Windows
+reserved names or trailing dots/spaces, and must remain unique after portable
+case folding. Testcase paths are relative, must remain below the Suite
 directory after canonical resolution, and are validated with the standalone
 testcase validator before execution.
+
+Logical IDs are never used directly as filesystem paths. Adapter and case run
+directories use slug plus SHA-256 artifact keys, followed by a final containment
+check below `runs_dir`.
 
 ## Execution
 
 `inferref suite run` accepts one or more repeated `--adapter` arguments. Every
 case is run against every adapter in deterministic case-major order. Unless
 `--allow-unsupported` is set, mismatch, execution error, and unsupported all
-fail the run. The option is intended only for capability inventory.
+fail the run. The option is intended only for capability inventory and changes
+the CLI acceptance/exit policy, not the numerical status.
+
+Run status is `pass` only when every cell executes and passes, `partial` when
+at least one cell passes and the remainder are allowed unsupported cells,
+`unsupported` when no cell executes and every cell is unsupported, and `fail`
+when any real failure occurs. `accepted` and `exit_code_policy_satisfied` record
+the separate CLI policy decision.
+
+Expected per-cell configuration and validation exceptions are isolated as
+`infrastructure_error`, allowing other engines/cases to finish. `--fail-fast`
+restores exception-first behavior for development.
 
 The writer emits `inferref-suite-run` v0.2. It includes stable adapter IDs,
 per-case `results`, complete engine run records, aggregate cell counts, and

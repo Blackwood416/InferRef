@@ -34,10 +34,12 @@ def execute_adapter(testcase: str | Path, adapter: EngineAdapter, runs_root: str
         blockers = ", ".join(issue.code for issue in validation.issues) or "unknown"
         raise AgentProtocolError(f"testcase is not independently reproducible after validation (blockers: {blockers})")
     requirements = testcase_requirements(validation.manifest)
+    capability_status = "unchecked"
     if adapter.capabilities is not None:
+        capability_status = adapter.capabilities.assessment(requirements)
         incompatible = adapter.capabilities.incompatibilities(requirements)
         if incompatible:
-            return {"run_id": None, "adapter": adapter.to_dict(), "testcase": str(testcase_path), "requirements": requirements, "status": "unsupported", "execution": None, "comparison": None, "unsupported": incompatible}
+            return {"run_id": None, "adapter": adapter.to_dict(), "testcase": str(testcase_path), "requirements": requirements, "capability_status": "unsupported", "status": "unsupported", "execution": None, "comparison": None, "unsupported": incompatible}
 
     cwd = adapter.working_directory()
     if not cwd.is_dir():
@@ -68,7 +70,7 @@ def execute_adapter(testcase: str | Path, adapter: EngineAdapter, runs_root: str
         if process is not None and process.poll() is None: terminate_process_tree(process)
         execution.update({"status": "error", "exit_code": None, "stdout": "", "stderr": str(exc)})
     execution["duration_ms"] = round((time.perf_counter() - started) * 1000, 3)
-    result: dict[str, Any] = {"run_id": run_id, "adapter": adapter.to_dict(), "testcase": str(testcase_path), "output": str(output_path), "execution": execution, "comparison": None, "requirements": requirements}
+    result: dict[str, Any] = {"run_id": run_id, "adapter": adapter.to_dict(), "testcase": str(testcase_path), "output": str(output_path), "execution": execution, "comparison": None, "requirements": requirements, "capability_status": capability_status}
     if execution["status"] != "completed": result["status"] = execution["status"]
     elif execution["exit_code"] != 0: result["status"] = "execution_error"
     else:

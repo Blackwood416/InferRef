@@ -11,7 +11,9 @@ mcp = pytest.importorskip("mcp")
 
 from mcp import Client
 
+import inferref.agent.mcp_server as mcp_server_module
 from inferref.agent.mcp_server import create_server
+from inferref.agent.protocol import AgentResponse
 from inferref.ir.version import INFERREF_VERSION
 
 
@@ -55,3 +57,41 @@ def test_mcp_rejects_paths_outside_host_roots(tmp_path: Path) -> None:
             assert extraction_payload["diagnostics"][0]["code"] == "path_not_allowed"
 
     asyncio.run(exercise())
+
+
+def test_mcp_extract_forwards_executable_contracts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    allowed = tmp_path / "allowed"
+    trace = allowed / "trace"
+    allowed.mkdir()
+    trace.mkdir()
+    observed: dict[str, object] = {}
+
+    def fake_extract(trace_path: Path, output_path: Path, **kwargs: object) -> AgentResponse:
+        observed.update(kwargs)
+        return AgentResponse(
+            operation="extract_testcase",
+            status="pass",
+            data={"trace": str(trace_path), "output": str(output_path)},
+        )
+
+    monkeypatch.setattr(mcp_server_module, "extract_testcase", fake_extract)
+
+    async def exercise() -> None:
+        async with Client(
+            create_server(read_roots=[allowed], write_roots=[allowed])
+        ) as client:
+            result = await client.call_tool(
+                "inferref_extract_testcase",
+                {
+                    "trace": str(trace),
+                    "output": str(allowed / "testcase"),
+                    "op_id": 1,
+                    "contracts": ["rope/rotate-half/v1"],
+                },
+            )
+            assert result.structured_content["status"] == "pass"
+
+    asyncio.run(exercise())
+    assert observed["contracts"] == ["rope/rotate-half/v1"]

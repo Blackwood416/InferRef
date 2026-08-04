@@ -7,7 +7,13 @@
     "device_types": ["xpu"],
     "dtypes": ["float32", "float16", "bfloat16"],
     "max_rank": 5,
-    "features": ["multiple_outputs", "strided_inputs", "alias_effects", "mutation_effects"]
+    "features": ["multiple_outputs"],
+    "contracts": [
+      "rmsnorm/last-dim/v1",
+      "rope/rotate-half/v1",
+      "kv-cache/append/v1",
+      "kv-cache/indexed-update/v1"
+    ]
   },
   "command": [
     "{adapter_dir}/../../cpp/build-sycl-icx/inferref_sycl_engine.exe",

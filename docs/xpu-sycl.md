@@ -18,6 +18,12 @@ reports, and verifies Python/C++ comparator agreement. It also executes
 deliberately corrupted RMSNorm, RoPE, and KV-cache outputs and requires both
 comparators to reject them.
 
+The engine creates its queue with `gpu_selector_v`, rejects non-Intel devices
+and non-Level-Zero backends, and writes `inferref-sycl-device` v0.1 evidence for
+every case. The gate fixes `ONEAPI_DEVICE_SELECTOR=level_zero:gpu`, validates
+every evidence record, and uploads an aggregate `device-evidence.json` with
+device name, vendor, driver, backend, type, and global memory.
+
 `inferref_sycl_engine` is a native executable and does not import or link
 Python/PyTorch. It reads and writes `.irtensor` directly. The gate records its
 native dependency table and rejects Python/PyTorch dependencies.

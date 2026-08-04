@@ -113,6 +113,45 @@ def test_bfloat16_decodes_without_torch() -> None:
     assert np.allclose(bfloat16_bytes_to_float32(view.data), values)
 
 
+def test_float16_and_bfloat16_ieee_edge_vectors() -> None:
+    values = np.array(
+        [
+            0.0,
+            -0.0,
+            np.ldexp(1.0, -24),
+            np.ldexp(1023.0, -24),
+            np.ldexp(1.0, -14),
+            65504.0,
+            np.inf,
+            -np.inf,
+            np.nan,
+            1.0 + np.ldexp(1.0, -11),
+            1.0 + np.ldexp(3.0, -11),
+        ],
+        dtype=np.float32,
+    )
+    half = values.astype("<f2").view("<u2")
+    assert half[:8].tolist() == [
+        0x0000,
+        0x8000,
+        0x0001,
+        0x03FF,
+        0x0400,
+        0x7BFF,
+        0x7C00,
+        0xFC00,
+    ]
+    assert half[8] & 0x7FFF > 0x7C00
+    assert half[9:].tolist() == [0x3C00, 0x3C02]
+
+    bfloat = float32_to_bfloat16_bytes(values)
+    assert bfloat[0] == 0x0000
+    assert bfloat[1] == 0x8000
+    assert bfloat[6] == 0x7F80
+    assert bfloat[7] == 0xFF80
+    assert bfloat[8] == 0x7FC0
+
+
 def test_stride_is_metadata_not_payload_layout() -> None:
     """IR §20: the payload is canonical contiguous whatever the stride says."""
     payload = np.arange(6, dtype="<f4")

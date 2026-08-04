@@ -118,6 +118,7 @@ def extract_testcase(
     name: str | None = None,
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
+    contracts: Sequence[str] | None = None,
 ) -> AgentResponse:
     """Extract one operator/region and return an Agent protocol envelope."""
 
@@ -137,6 +138,7 @@ def extract_testcase(
                 name=name,
                 input_names=input_names,
                 output_names=output_names,
+                contracts=contracts,
             )
         else:
             result = extract_operator(
@@ -146,6 +148,7 @@ def extract_testcase(
                 name=name,
                 input_names=input_names,
                 output_names=output_names,
+                contracts=contracts,
             )
         status = "pass" if result.reproducible else "fail"
         actions: tuple[dict[str, Any], ...]

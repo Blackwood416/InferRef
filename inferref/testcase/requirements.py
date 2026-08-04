@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+
+CONTRACT_ID_PATTERN = r"^[a-z0-9][a-z0-9_.-]*(?:/[a-z0-9][a-z0-9_.-]*)+/v[1-9][0-9]*$"
+_CONTRACT_ID = re.compile(CONTRACT_ID_PATTERN)
+
+
+def is_contract_id(value: object) -> bool:
+    return isinstance(value, str) and _CONTRACT_ID.fullmatch(value) is not None
 
 
 def derive_requirements(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -33,7 +42,11 @@ def derive_requirements(manifest: dict[str, Any]) -> dict[str, Any]:
             features.add("alias_effects")
         if effects.get("mutated_storages"):
             features.add("mutation_effects")
-    return {"dtypes": dtypes, "max_rank": max_rank, "features": sorted(features)}
+    result = {"dtypes": dtypes, "max_rank": max_rank, "features": sorted(features)}
+    contracts = manifest.get("contracts")
+    if isinstance(contracts, list):
+        result["contracts"] = list(contracts)
+    return result
 
 
 def testcase_requirements(manifest: dict[str, Any]) -> dict[str, Any]:

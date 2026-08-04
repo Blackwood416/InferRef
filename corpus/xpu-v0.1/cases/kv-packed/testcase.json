@@ -146,11 +146,17 @@
       "nbytes": 512
     }
   ],
+  "contracts": [
+    "kv-cache/append/v1"
+  ],
   "requirements": {
     "dtypes": [
       "float32"
     ],
     "max_rank": 5,
-    "features": []
+    "features": [],
+    "contracts": [
+      "kv-cache/append/v1"
+    ]
   }
 }

@@ -46,7 +46,7 @@ def _write(path: Path, value: np.ndarray, dtype: str) -> tuple[Path, np.ndarray]
     return written, codec.read(written).as_comparable().astype(np.float32)
 
 
-def _case(name: str, inputs: dict[str, tuple[np.ndarray, str]], outputs: dict[str, tuple[np.ndarray, str]], tags: list[str]) -> dict:
+def _case(name: str, inputs: dict[str, tuple[np.ndarray, str]], outputs: dict[str, tuple[np.ndarray, str]], tags: list[str], contract: str) -> dict:
     root = ROOT / "cases" / name
     records_in, records_out, values = [], [], []
     value_id = 1
@@ -60,7 +60,7 @@ def _case(name: str, inputs: dict[str, tuple[np.ndarray, str]], outputs: dict[st
         meta = codec.read(path).to_metadata()
         records_out.append({"name": label, "value_id": value_id, "payload": f"reference/{label}.irtensor", **meta})
         values.append({"id": value_id, **meta}); value_id += 1
-    manifest = {"format": "inferref-testcase", "format_version": "0.2", "name": name, "origin": {"generator": "corpus/xpu-v0.1/generate.py", "seed": 20260804}, "reproducible": True, "inputs": records_in, "outputs": records_out, "nodes": [], "values": values}
+    manifest = {"format": "inferref-testcase", "format_version": "0.2", "name": name, "origin": {"generator": "corpus/xpu-v0.1/generate.py", "seed": 20260804}, "reproducible": True, "inputs": records_in, "outputs": records_out, "nodes": [], "values": values, "contracts": [contract]}
     manifest["requirements"] = derive_requirements(manifest)
     (root / "testcase.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return {"id": name, "testcase": f"cases/{name}", "tags": tags}
@@ -75,7 +75,7 @@ def generate() -> None:
         eps = np.array(1e-5, dtype=np.float32)
         y = x / np.sqrt(np.mean(x * x, axis=-1, keepdims=True) + eps) * w
         name = f"rmsnorm-{dtype}"
-        cases.append(_case(name, {"x": (x, dtype), "weight": (w, dtype), "epsilon": (eps, "float32")}, {"y": (y, dtype)}, ["rmsnorm", dtype, "prefill"]))
+        cases.append(_case(name, {"x": (x, dtype), "weight": (w, dtype), "epsilon": (eps, "float32")}, {"y": (y, dtype)}, ["rmsnorm", dtype, "prefill"], "rmsnorm/last-dim/v1"))
     for dim in (4, 12):
         query = rng.normal(size=(2, 3, 5, dim)).astype(np.float32)
         key = rng.normal(size=(2, 2, 5, dim)).astype(np.float32)
@@ -86,15 +86,15 @@ def generate() -> None:
             rotated = np.concatenate((-x[..., half:], x[..., :half]), axis=-1)
             return x * cos[None, None] + rotated * sin[None, None]
         name = f"rope-dim{dim}"
-        cases.append(_case(name, {"query": (query, "float32"), "key": (key, "float32"), "cos": (cos, "float32"), "sin": (sin, "float32")}, {"q_embed": (rope(query), "float32"), "k_embed": (rope(key), "float32")}, ["rope", "decode", f"head-dim-{dim}"]))
+        cases.append(_case(name, {"query": (query, "float32"), "key": (key, "float32"), "cos": (cos, "float32"), "sin": (sin, "float32")}, {"q_embed": (rope(query), "float32"), "k_embed": (rope(key), "float32")}, ["rope", "decode", f"head-dim-{dim}"], "rope/rotate-half/v1"))
     cache = rng.normal(size=(1, 2, 3, 8)).astype(np.float32)
     update = rng.normal(size=(1, 2, 1, 8)).astype(np.float32)
-    cases.append(_case("kv-append", {"cache": (cache, "float32"), "update": (update, "float32")}, {"cache_out": (np.concatenate((cache, update), axis=-2), "float32")}, ["kv-cache", "decode", "append"]))
+    cases.append(_case("kv-append", {"cache": (cache, "float32"), "update": (update, "float32")}, {"cache_out": (np.concatenate((cache, update), axis=-2), "float32")}, ["kv-cache", "decode", "append"], "kv-cache/append/v1"))
     indexed = cache.copy(); indexed[:, :, 1:2, :] = update
-    cases.append(_case("kv-index", {"cache": (cache, "float32"), "update": (update, "float32"), "index": (np.array(1, dtype=np.float32), "float32")}, {"cache_out": (indexed, "float32")}, ["kv-cache", "decode", "indexed-update"]))
+    cases.append(_case("kv-index", {"cache": (cache, "float32"), "update": (update, "float32"), "index": (np.array(1, dtype=np.float32), "float32")}, {"cache_out": (indexed, "float32")}, ["kv-cache", "decode", "indexed-update"], "kv-cache/indexed-update/v1"))
     packed = rng.normal(size=(1, 2, 2, 3, 8)).astype(np.float32)
     packed_update = rng.normal(size=(1, 2, 2, 1, 8)).astype(np.float32)
-    cases.append(_case("kv-packed", {"cache": (packed, "float32"), "update": (packed_update, "float32")}, {"cache_out": (np.concatenate((packed, packed_update), axis=-2), "float32")}, ["kv-cache", "prefill", "packed"]))
+    cases.append(_case("kv-packed", {"cache": (packed, "float32"), "update": (packed_update, "float32")}, {"cache_out": (np.concatenate((packed, packed_update), axis=-2), "float32")}, ["kv-cache", "prefill", "packed"], "kv-cache/append/v1"))
 
     # Weight-free model-derived TraceSet slices.  Shapes mirror tiny Llama and
     # Qwen3.5 prefill/decode contracts without distributing model parameters.
@@ -107,6 +107,7 @@ def generate() -> None:
         {"x": (llama_x, "float16"), "weight": (llama_w, "float16"), "epsilon": (llama_eps, "float32")},
         {"y": (llama_y, "float16")},
         ["rmsnorm", "tiny-llama", "prefill", "model-derived"],
+        "rmsnorm/last-dim/v1",
     ))
 
     llama_dim = 16
@@ -126,6 +127,7 @@ def generate() -> None:
         {"query": (llama_q, "float16"), "key": (llama_k, "float16"), "cos": (llama_cos, "float16"), "sin": (llama_sin, "float16")},
         {"q_embed": (llama_rope(llama_q), "float16"), "k_embed": (llama_rope(llama_k), "float16")},
         ["rope", "tiny-llama", "decode", "model-derived"],
+        "rope/rotate-half/v1",
     ))
 
     qwen_prefill = rng.normal(size=(1, 2, 2, 4, 8)).astype(np.float32)
@@ -135,6 +137,7 @@ def generate() -> None:
         {"cache": (qwen_prefill, "float32"), "update": (qwen_prefill_update, "float32")},
         {"cache_out": (np.concatenate((qwen_prefill, qwen_prefill_update), axis=-2), "float32")},
         ["kv-cache", "tiny-qwen3.5", "prefill", "hybrid", "model-derived"],
+        "kv-cache/append/v1",
     ))
     qwen_decode = rng.normal(size=(1, 2, 5, 8)).astype(np.float32)
     for steps, suffix in ((1, "step"), (3, "multistep")):
@@ -144,6 +147,7 @@ def generate() -> None:
             {"cache": (qwen_decode, "float32"), "update": (qwen_update, "float32")},
             {"cache_out": (np.concatenate((qwen_decode, qwen_update), axis=-2), "float32")},
             ["kv-cache", "tiny-qwen3.5", "decode", suffix, "model-derived"],
+            "kv-cache/append/v1",
         ))
     suite = {"format": "inferref-suite", "format_version": "0.1", "name": "inferref-xpu-v0.1", "cases": cases}
     (ROOT / "suite.json").write_text(json.dumps(suite, indent=2) + "\n", encoding="utf-8")

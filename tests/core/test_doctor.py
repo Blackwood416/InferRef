@@ -53,3 +53,24 @@ def test_explicit_cpu_fails_when_torch_is_missing(monkeypatch) -> None:
     assert report["status"] == "fail"
     check = next(item for item in report["checks"] if item["id"] == "frontend.torch")
     assert check["status"] == "fail"
+
+
+def test_invalid_device_returns_structured_failure(capsys) -> None:
+    assert main(["doctor", "--device", "banana", "--json"]) != EXIT_OK
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
+    check = next(item for item in report["checks"] if item["id"] == "device.request")
+    assert "banana" in check["message"]
+
+
+def test_doctor_only_loads_plugins_when_explicitly_requested(monkeypatch) -> None:
+    calls = []
+
+    def descriptors(*, load=False):
+        calls.append(load)
+        return []
+
+    monkeypatch.setattr("inferref.semantic.registry.plugin_descriptors", descriptors)
+    run_doctor()
+    run_doctor(verify_plugins=True)
+    assert calls == [False, True]

@@ -8,7 +8,9 @@
 // Python side, which is how the cross-language contract is checked in CI.
 
 #include <cstdio>
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -123,6 +125,23 @@ void TestFloat16()
     Check(values[2] == 0.5f, "0x3800 -> 0.5");
 }
 
+void TestFloatEncoders()
+{
+    std::printf("float16/bfloat16 IEEE edge encoding\n");
+    Check(inferref::EncodeFloat16(0.0f) == 0x0000u, "+0");
+    Check(inferref::EncodeFloat16(-0.0f) == 0x8000u, "-0");
+    Check(inferref::EncodeFloat16(std::ldexp(1.0f, -24)) == 0x0001u, "minimum subnormal");
+    Check(inferref::EncodeFloat16(std::ldexp(1023.0f, -24)) == 0x03ffu, "maximum subnormal");
+    Check(inferref::EncodeFloat16(std::ldexp(1.0f, -14)) == 0x0400u, "minimum normal");
+    Check(inferref::EncodeFloat16(65504.0f) == 0x7bffu, "maximum finite");
+    Check(inferref::EncodeFloat16(std::numeric_limits<float>::infinity()) == 0x7c00u, "+infinity");
+    Check(inferref::EncodeFloat16(-std::numeric_limits<float>::infinity()) == 0xfc00u, "-infinity");
+    Check((inferref::EncodeFloat16(std::numeric_limits<float>::quiet_NaN()) & 0x7fffu) > 0x7c00u, "NaN remains NaN");
+    Check(inferref::EncodeFloat16(1.0f + std::ldexp(1.0f, -11)) == 0x3c00u, "halfway rounds to even down");
+    Check(inferref::EncodeFloat16(1.0f + std::ldexp(3.0f, -11)) == 0x3c02u, "halfway rounds to even up");
+    Check((inferref::EncodeBFloat16(std::numeric_limits<float>::quiet_NaN()) & 0x7fffu) > 0x7f80u, "bfloat16 NaN remains NaN");
+}
+
 void TestCompare()
 {
     std::printf("comparison metrics\n");
@@ -183,6 +202,7 @@ int main(int argc, char **argv)
     TestRoundTrip("inferref_selftest_tmp.irtensor");
     TestBFloat16();
     TestFloat16();
+    TestFloatEncoders();
     TestCompare();
     if (argc > 1)
     {

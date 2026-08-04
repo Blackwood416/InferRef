@@ -134,11 +134,17 @@
       "nbytes": 192
     }
   ],
+  "contracts": [
+    "rmsnorm/last-dim/v1"
+  ],
   "requirements": {
     "dtypes": [
       "float32"
     ],
     "max_rank": 2,
-    "features": []
+    "features": [],
+    "contracts": [
+      "rmsnorm/last-dim/v1"
+    ]
   }
 }

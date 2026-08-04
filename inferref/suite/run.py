@@ -8,8 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from inferref.agent.adapter import execute_adapter
-from inferref.agent.protocol import EngineAdapter
-from inferref.suite.schema import Suite, load_suite
+from inferref.agent.protocol import AgentProtocolError, EngineAdapter
+from inferref.ir.paths import PathBoundaryError, resolve_contained_path
+from inferref.suite.paths import artifact_key
+from inferref.suite.schema import Suite, SuiteError, load_suite
 
 
 AdapterInput = str | Path | EngineAdapter
@@ -44,6 +46,7 @@ def run_suite(
     runs_dir: str | Path,
     *,
     allow_unsupported: bool = False,
+    fail_fast: bool = False,
 ) -> dict[str, Any]:
     """Run each testcase against one or more adapters and write a matrix report."""
 
@@ -59,7 +62,38 @@ def run_suite(
     for case in loaded.cases:
         results: list[dict[str, Any]] = []
         for adapter_id, engine in zip(adapter_ids, engines, strict=True):
-            result = execute_adapter(case.testcase, engine, root / adapter_id / case.id)
+            try:
+                adapter_root = resolve_contained_path(
+                    root,
+                    artifact_key(adapter_id, fallback="adapter"),
+                    kind="suite adapter output",
+                )
+                case_root = resolve_contained_path(
+                    adapter_root,
+                    artifact_key(case.id, fallback="case"),
+                    kind=f"suite case {case.id!r} output",
+                )
+            except PathBoundaryError as exc:  # defensive: keys are single components
+                raise SuiteError(str(exc)) from exc
+            try:
+                result = execute_adapter(case.testcase, engine, case_root)
+            except (AgentProtocolError, OSError, ValueError) as exc:
+                if fail_fast:
+                    raise
+                result = {
+                    "run_id": None,
+                    "adapter": engine.to_dict(),
+                    "testcase": str(case.testcase),
+                    "requirements": None,
+                    "capability_status": "error",
+                    "status": "infrastructure_error",
+                    "execution": None,
+                    "comparison": None,
+                    "error": {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                }
             accepted = result["status"] == "pass" or (
                 allow_unsupported and result["status"] == "unsupported"
             )
@@ -74,10 +108,11 @@ def run_suite(
             cells.append(cell)
 
         case_accepted = all(item["accepted"] for item in results)
+        case_status = _aggregate_status(results, accepted=case_accepted)
         case_record: dict[str, Any] = {
             "id": case.id,
             "tags": list(case.tags),
-            "status": "pass" if case_accepted else "fail",
+            "status": case_status,
             "accepted": case_accepted,
             "results": results,
         }
@@ -87,7 +122,8 @@ def run_suite(
             case_record["run"] = results[0]["run"]
         cases.append(case_record)
 
-    passed = all(cell["accepted"] for cell in cells)
+    accepted = all(cell["accepted"] for cell in cells)
+    status = _aggregate_status(cells, accepted=accepted)
     adapters = [
         {"id": adapter_id, "name": engine.name, "adapter": engine.to_dict()}
         for adapter_id, engine in zip(adapter_ids, engines, strict=True)
@@ -95,7 +131,9 @@ def run_suite(
     report: dict[str, Any] = {
         "format": "inferref-suite-run",
         "format_version": "0.2",
-        "status": "pass" if passed else "fail",
+        "status": status,
+        "accepted": accepted,
+        "exit_code_policy_satisfied": accepted,
         "suite": loaded.to_dict(),
         "adapters": adapters,
         "allow_unsupported": allow_unsupported,
@@ -115,3 +153,18 @@ def run_suite(
         encoding="utf-8",
     )
     return report
+
+
+def _aggregate_status(cells: Sequence[dict[str, Any]], *, accepted: bool) -> str:
+    if not accepted:
+        return "fail"
+    statuses = [str(cell["status"]) for cell in cells]
+    passed = sum(status == "pass" for status in statuses)
+    unsupported = sum(status == "unsupported" for status in statuses)
+    if passed == len(statuses):
+        return "pass"
+    if unsupported == len(statuses):
+        return "unsupported"
+    if passed + unsupported == len(statuses):
+        return "partial"
+    return "fail"

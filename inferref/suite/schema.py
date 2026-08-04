@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from inferref.ir.paths import PathBoundaryError, resolve_contained_path
+from inferref.suite.paths import portable_id_key, validate_case_id
 from inferref.testcase.validate import validate_testcase
 
 SUITE_FORMAT = "inferref-suite"
@@ -69,12 +70,19 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
         raise SuiteError("suite cases must be a non-empty array")
     cases: list[SuiteCase] = []
     ids: set[str] = set()
+    portable_ids: set[str] = set()
     for index, record in enumerate(records):
         if not isinstance(record, dict):
             raise SuiteError(f"cases[{index}] must be an object")
-        case_id = record.get("id")
-        if not isinstance(case_id, str) or not case_id or case_id in ids:
-            raise SuiteError(f"cases[{index}].id must be non-empty and unique")
+        try:
+            case_id = validate_case_id(record.get("id"), where=f"cases[{index}].id")
+        except ValueError as exc:
+            raise SuiteError(str(exc)) from exc
+        portable_key = portable_id_key(case_id)
+        if case_id in ids or portable_key in portable_ids:
+            raise SuiteError(
+                f"cases[{index}].id collides on a portable filesystem: {case_id!r}"
+            )
         testcase = record.get("testcase")
         if not isinstance(testcase, str):
             raise SuiteError(f"cases[{index}].testcase must be a relative string")
@@ -92,6 +100,7 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
             if not validation.valid:
                 raise SuiteError(f"case {case_id!r} is invalid: {validation.issues[0].message}")
         ids.add(case_id)
+        portable_ids.add(portable_key)
         cases.append(SuiteCase(case_id, testcase_path, tuple(tags)))
     return Suite(name, source, tuple(cases))
 
