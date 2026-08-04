@@ -19,6 +19,7 @@ from pathlib import Path
 
 import torch
 
+from inferref.frontend.pytorch.accelerator import materialize_to_host
 from inferref.frontend.pytorch.identity import Identity
 from inferref.ir.tensor_value import CaptureInfo, TensorHash, TensorValueRecord
 from inferref.tensor import codec
@@ -70,10 +71,7 @@ def logical_bytes(tensor: torch.Tensor) -> bytes:
     already accounts for any storage offset, so ``numel * itemsize`` bytes from
     there are exactly this tensor's logical values.
     """
-    flat = tensor.detach()
-    if flat.device.type != "cpu":
-        flat = flat.cpu()
-    flat = flat.contiguous()
+    flat = materialize_to_host(tensor)
 
     nbytes = flat.numel() * flat.element_size()
     if nbytes == 0:

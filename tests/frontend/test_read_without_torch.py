@@ -91,7 +91,9 @@ def test_import_inferref_without_torch(traced_dir: Path) -> None:
         """,
         traced_dir,
     )
-    assert "version 0.3.0" in out
+    from inferref.ir.version import INFERREF_VERSION
+
+    assert f"version {INFERREF_VERSION}" in out
 
 
 def test_load_trace_without_torch(traced_dir: Path) -> None:

@@ -13,6 +13,7 @@ from inferref.agent import capabilities, compare_outputs, context, run_engine
 from inferref.agent.adapter import _scan_artifacts
 from inferref.agent.protocol import ENGINE_ADAPTER_FORMAT, ENGINE_ADAPTER_VERSION
 from inferref.cli.main import EXIT_OK, main
+from inferref.ir.version import INFERREF_VERSION
 from inferref.tensor import codec
 
 ENGINE_SOURCE = r"""from __future__ import annotations
@@ -118,7 +119,7 @@ def test_capabilities_are_versioned_and_actionable() -> None:
         "format": "inferref-agent-response",
         "version": "0.1",
     }
-    assert payload["data"]["inferref_version"] == "0.3.0"
+    assert payload["data"]["inferref_version"] == INFERREF_VERSION
     assert "inferref_run_engine" in payload["data"]["mcp_tools"]
     assert payload["next_actions"][0]["operation"] == "context"
 

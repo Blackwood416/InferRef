@@ -30,4 +30,6 @@ jobs:
               sys.exit("self-hosted GPU runner has no usable CUDA device")
 
       - name: Run CUDA contract
-        run: python -m pytest tests/frontend/test_cuda_contract.py -q -rs
+        env:
+          INFERREF_ACCELERATOR: cuda
+        run: python -m pytest tests/frontend/test_accelerator_contract.py -q -rs

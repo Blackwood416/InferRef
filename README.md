@@ -7,6 +7,17 @@ InferRef turns a PyTorch model execution into a **stable, machine-readable refer
 that a custom inference engine (CUDA / SYCL / ROCm / CPU) can be validated against — without the
 engine side needing PyTorch, or Python at all.
 
+Check the local frontend and accelerator before tracing:
+
+```bash
+inferref doctor                 # inventory the installation
+inferref doctor --device xpu    # require an Intel XPU and test host capture
+inferref doctor --device cuda   # require CUDA/ROCm-as-CUDA
+```
+
+Trace execution device metadata is inferred from the tensors observed at
+runtime. `--device` remains available as an explicit manifest override.
+
 ```text
 Model → Reference Trace → Trace IR → Testcase → Engine → Compare → First Divergence
 ```

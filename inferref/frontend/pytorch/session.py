@@ -20,6 +20,7 @@ from typing import Any, Iterable
 
 import torch
 
+from inferref.frontend.pytorch.accelerator import infer_execution_device
 from inferref.frontend.pytorch.capture import TensorCapture, normalise_policy
 from inferref.frontend.pytorch.dispatch import InferRefDispatchMode, TraceRecorder
 from inferref.frontend.pytorch.identity import Identity
@@ -69,7 +70,8 @@ class TraceSession:
     model_name: str = "unknown"
     model_revision: str | None = None
     seed: int | None = None
-    device: str = "cpu"
+    #: Optional manifest override.  When absent, infer from observed tensors.
+    device: str | None = None
 
     identity: Identity = field(default_factory=Identity)
     package: TracePackage | None = field(default=None, init=False)
@@ -264,6 +266,10 @@ class TraceSession:
         if transformers:
             packages["transformers"] = transformers
 
+        execution_device = self.device or infer_execution_device(
+            {str(value.device) for value in self.identity.values()}
+        )
+
         return Manifest(
             format=FORMAT,
             format_version=FORMAT_VERSION,
@@ -271,7 +277,7 @@ class TraceSession:
             frontend=NamedVersion("pytorch", FRONTEND_VERSION),
             reference_framework=NamedVersion("pytorch", torch.__version__),
             model=ModelInfo(name=self.model_name, revision=self.model_revision),
-            execution=Execution(mode="inference", device=self.device),
+            execution=Execution(mode="inference", device=execution_device),
             capture=Capture(
                 tensor_policy=self._policy,
                 source_mapping=self.source_map,
@@ -287,7 +293,7 @@ class TraceSession:
                 python=python_version(),
                 os=platform.system(),
                 architecture=platform.machine(),
-                device_name=self.device,
+                device_name=execution_device,
                 packages=packages,
             ),
             determinism=Determinism(
@@ -324,7 +330,7 @@ def trace(
     max_capture_elements: int = 0,
     model_name: str = "unknown",
     seed: int | None = None,
-    device: str = "cpu",
+    device: str | None = None,
 ) -> TraceSession:
     """Create a :class:`TraceSession` (SPEC §54)."""
     return TraceSession(

@@ -1,0 +1,47 @@
+name: Intel XPU compatibility
+
+# A self-hosted runner executes repository code with the runner account's
+# privileges.  Keep this manual: never expose the workstation to fork PRs.
+on:
+  workflow_dispatch:
+
+jobs:
+  xpu:
+    name: XPU contract · Windows A770
+    runs-on: [self-hosted, windows, x64, xpu]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve immutable XPU Python
+        shell: pwsh
+        run: |
+          $python = '${{ vars.INFERREF_XPU_PYTHON }}'
+          if (-not $python -or -not (Test-Path -LiteralPath $python -PathType Leaf)) {
+            throw 'Repository variable INFERREF_XPU_PYTHON must name the preconfigured Python executable'
+          }
+          "INFERREF_XPU_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PYTHONPATH=$env:GITHUB_WORKSPACE" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Diagnose XPU runtime
+        shell: pwsh
+        run: |
+          & $env:INFERREF_XPU_PYTHON -m inferref.cli.main doctor --device xpu --json |
+            Tee-Object -FilePath inferref-doctor-xpu.json
+
+      - name: Run accelerator contract
+        shell: pwsh
+        env:
+          INFERREF_ACCELERATOR: xpu
+        run: |
+          & $env:INFERREF_XPU_PYTHON -m pytest tests/frontend/test_accelerator_contract.py `
+            -q -rs --junitxml=xpu-junit.xml
+
+      - name: Upload XPU evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xpu-contract-${{ github.sha }}
+          path: |
+            inferref-doctor-xpu.json
+            xpu-junit.xml

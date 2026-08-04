@@ -51,6 +51,17 @@ def _load(path: str | Path) -> TracePackage:
     return TracePackage.load(path)
 
 
+# -- doctor ----------------------------------------------------------------
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from inferref.doctor import render_doctor, run_doctor
+
+    report = run_doctor(args.device)
+    _emit(report, render_doctor(report), args.json)
+    return EXIT_FAIL if report["status"] == "fail" else EXIT_OK
+
+
 # -- trace -----------------------------------------------------------------
 
 
@@ -80,7 +91,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
         max_capture_elements=args.max_capture_elements,
         model_name=args.model_name,
         seed=args.seed,
-        device=args.device,
+        device=None if args.device == "auto" else args.device,
     )
     run_script(args.script, session, argv=args.script_args or ())
 
@@ -619,6 +630,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"inferref {INFERREF_VERSION}")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
+    # doctor
+    p = sub.add_parser("doctor", help="diagnose InferRef and accelerator readiness")
+    p.add_argument(
+        "--device",
+        default="auto",
+        help="require a device such as cpu, cuda, cuda:1 or xpu (default: inventory)",
+    )
+    _add_json(p)
+    p.set_defaults(func=cmd_doctor)
+
     # trace
     p = sub.add_parser(
         "trace",
@@ -658,7 +679,11 @@ def build_parser() -> argparse.ArgumentParser:
         ],
         help="tensor capture policy (SPEC §14)",
     )
-    p.add_argument("--device", default="cpu", help="device label recorded in the manifest")
+    p.add_argument(
+        "--device",
+        default="auto",
+        help="manifest device override; auto infers from observed tensors",
+    )
     p.add_argument("--max-ops", type=int, help="stop recording after this many operators")
     p.add_argument(
         "--max-capture-elements",
