@@ -327,9 +327,10 @@ semantics as workspace hashing (symlink/reparse points are rejected). The
 published record contains `present`, `kind`, `size`, `sha256`, `after_sha256`,
 `after_kind`, `after_size`, `after_file_id`, and `unchanged`; absolute paths and
 contents are never published. The verdict requires the same file identity and
-bytes before and after, so replacement or delete-and-recreate with identical
-content is still detected. A Claude run without settings records an explicit
-`present: false`. Both per-agent runner evidence and benchmark-level
+nanosecond modification/change timestamps in addition to identical bytes, so
+replacement or delete-and-recreate with identical content is still detected even
+when the filesystem reuses an inode. A Claude run without settings records an
+explicit `present: false`. Both per-agent runner evidence and benchmark-level
 `external_files` are validated, and an unchanged verdict is a formal-attestation
 requirement.
 

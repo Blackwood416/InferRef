@@ -6,10 +6,11 @@
   captured no-follow before and after each Claude run, and again at benchmark
   level between the first and last Agent. The published record only contains
   `present`, `kind`, `size`, `sha256`, `after_sha256`, `after_kind`,
-  `after_size`, `after_file_id`, and `unchanged`; paths and contents are never
-  published. Symlinks/reparse points are rejected, and delete-and-recreate or
-  inode replacement with identical bytes is still flagged as changed. A Claude
-  run without settings records an explicit `present: false`.
+  `after_size`, `after_file_id`, nanosecond timestamps, and `unchanged`; paths
+  and contents are never published. Symlinks/reparse points are rejected, and
+  delete-and-recreate or inode replacement with identical bytes is still flagged
+  as changed even when an inode is reused. A Claude run without settings records
+  an explicit `present: false`.
 - Model identity now separates evidence validity from request satisfaction. A
   `cli_self_reported` model that does not match the requested model classifies
   the candidate as `identity_policy_failure`, fails the benchmark even when the
@@ -48,9 +49,9 @@
 - `model_identity_policy` is fixed at `reported_must_match_if_available` for
   now; benchmark-level policy configuration can be added later without a format
   break.
-- External-file `unchanged` requires the same file identity (`st_dev:st_ino`) in
-  addition to identical bytes, so recreation is distinguishable from a stable
-  file.
+- External-file `unchanged` requires the same file identity (`st_dev:st_ino`),
+  nanosecond modification/change timestamps, and identical bytes, so recreation
+  is distinguishable from a stable file even when the filesystem reuses inodes.
 - Worker `python_executable` evidence is published, but the worker Python binary
   identity is not yet part of the formal refusal condition; it is recorded for
   auditability and symmetric with Agent executable hashing.

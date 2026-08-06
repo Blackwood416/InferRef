@@ -1307,6 +1307,8 @@ def _capture_external_file(path: str | Path | None) -> dict[str, Any]:
             "size": None,
             "sha256": None,
             "file_id": None,
+            "mtime_ns": None,
+            "ctime_ns": None,
         }
     try:
         payload = _read_regular_file(Path(path))
@@ -1317,6 +1319,8 @@ def _capture_external_file(path: str | Path | None) -> dict[str, Any]:
             "size": None,
             "sha256": None,
             "file_id": None,
+            "mtime_ns": None,
+            "ctime_ns": None,
             "error": str(exc)[:256],
         }
     status = os.lstat(Path(path))
@@ -1326,6 +1330,8 @@ def _capture_external_file(path: str | Path | None) -> dict[str, Any]:
         "size": len(payload),
         "sha256": hashlib.sha256(payload).hexdigest(),
         "file_id": f"{status.st_dev}:{status.st_ino}",
+        "mtime_ns": status.st_mtime_ns,
+        "ctime_ns": status.st_ctime_ns,
     }
 
 
@@ -1339,12 +1345,16 @@ def _external_file_pair(
     record["after_kind"] = after.get("kind")
     record["after_size"] = after.get("size")
     record["after_file_id"] = after.get("file_id")
+    record["after_mtime_ns"] = after.get("mtime_ns")
+    record["after_ctime_ns"] = after.get("ctime_ns")
     if before.get("present") and after.get("present"):
         record["unchanged"] = (
             before.get("kind") == "regular_file"
             and after.get("kind") == "regular_file"
             and before.get("sha256") == after.get("sha256")
             and before.get("file_id") == after.get("file_id")
+            and before.get("mtime_ns") == after.get("mtime_ns")
+            and before.get("ctime_ns") == after.get("ctime_ns")
         )
     else:
         record["unchanged"] = before.get("present") == after.get("present")

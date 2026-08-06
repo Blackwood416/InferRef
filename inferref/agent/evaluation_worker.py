@@ -19,17 +19,22 @@ from inferref.agent.evaluation_host import _evaluate_benchmark_core
 def _executable_file_evidence(path: str) -> dict[str, Any]:
     """Hash the worker Python executable without publishing its absolute path."""
 
+    resolved = Path(path)
     try:
-        payload = _read_regular_file(Path(path))
+        resolved = resolved.resolve(strict=True)
+    except OSError:
+        pass
+    try:
+        payload = _read_regular_file(resolved)
     except OSError as exc:
         return {
-            "name": Path(path).name,
+            "name": resolved.name,
             "size": None,
             "sha256": None,
             "error": str(exc)[:256],
         }
     return {
-        "name": Path(path).name,
+        "name": resolved.name,
         "size": len(payload),
         "sha256": hashlib.sha256(payload).hexdigest(),
     }

@@ -2098,8 +2098,9 @@ def test_posix_direct_shebang_preserves_interpreter_args(
 
     resolved = evaluation_host._resolve_posix_agent_command("codex")
 
-    assert resolved.components == ("/usr/bin/python3", str(entry))
-    assert resolved.prefix == ("/usr/bin/python3", "-s", str(entry))
+    interpreter = str(Path("/usr/bin/python3").resolve(strict=True))
+    assert resolved.components == (interpreter, str(entry))
+    assert resolved.prefix == (interpreter, "-s", str(entry))
 
 
 def test_posix_shebang_missing_interpreter_raises(
