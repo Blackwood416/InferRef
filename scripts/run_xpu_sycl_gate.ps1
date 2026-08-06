@@ -1,7 +1,9 @@
 param(
     [string]$Python = "",
     [string]$BuildDirectory = "cpp/build-sycl-icx",
-    [string]$EvidenceDirectory = ".scratch/xpu-sycl-gate"
+    [string]$EvidenceDirectory = ".scratch/xpu-sycl-gate",
+    [switch]$CleanEvidenceDirectory,
+    [string]$ExpectedDeviceNameRegex = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,6 +14,16 @@ if (-not $Python) {
 $Python = (Resolve-Path $Python).Path
 $BuildDirectory = [IO.Path]::GetFullPath((Join-Path $Repository $BuildDirectory))
 $EvidenceDirectory = [IO.Path]::GetFullPath((Join-Path $Repository $EvidenceDirectory))
+if (-not $EvidenceDirectory.StartsWith($Repository, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Evidence directory must be inside the repository: $EvidenceDirectory"
+}
+if (Test-Path -LiteralPath $EvidenceDirectory) {
+    if (-not $CleanEvidenceDirectory) {
+        throw "Evidence directory already exists; pass -CleanEvidenceDirectory to reset it or use a fresh run-specific directory"
+    }
+    Remove-Item -LiteralPath $EvidenceDirectory -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
 
 $VsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
 if (-not (Test-Path -LiteralPath $VsWhere -PathType Leaf)) {
@@ -33,8 +45,6 @@ foreach ($Line in (& cmd.exe /d /s /c $EnvironmentCommand)) {
     }
 }
 $env:ONEAPI_DEVICE_SELECTOR = "level_zero:gpu"
-
-New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
 $SuiteRuns = Join-Path $EvidenceDirectory "suite-runs"
 $Engine = Join-Path $BuildDirectory "inferref_sycl_engine.exe"
 $AdapterTemplate = Join-Path $Repository "examples/sycl_engine/inferref_sycl.adapter.json"
@@ -62,6 +72,9 @@ foreach ($CaseResult in $SuiteReport.cases) {
     $Device = Get-Content -LiteralPath (Join-Path $Run.output "inferref-sycl-device.json") -Raw | ConvertFrom-Json
     if ($Device.device_type -ne "gpu" -or $Device.backend -ne "ext_oneapi_level_zero" -or $Device.vendor -notmatch "Intel") {
         throw "case $($CaseResult.id) did not execute on an Intel Level Zero GPU"
+    }
+    if ($ExpectedDeviceNameRegex -and $Device.name -notmatch $ExpectedDeviceNameRegex) {
+        throw "case $($CaseResult.id) device name '$($Device.name)' does not match required pattern '$ExpectedDeviceNameRegex'"
     }
     $DeviceEvidence += [PSCustomObject]@{ case = $CaseResult.id; device = $Device }
     $Manifest = Get-Content -LiteralPath (Join-Path $Run.testcase "testcase.json") -Raw | ConvertFrom-Json

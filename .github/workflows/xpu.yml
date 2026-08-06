@@ -49,10 +49,12 @@ jobs:
       - name: Build and run native SYCL engine gate
         shell: pwsh
         run: |
+          $Evidence = "xpu-sycl-evidence/$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           ./scripts/run_xpu_sycl_gate.ps1 `
             -Python $env:INFERREF_XPU_PYTHON `
             -BuildDirectory cpp/build-sycl-icx `
-            -EvidenceDirectory xpu-sycl-evidence
+            -EvidenceDirectory $Evidence `
+            -ExpectedDeviceNameRegex "Arc.*A770"
 
       - name: Upload XPU evidence
         if: always()

@@ -13,7 +13,29 @@
       "rope/rotate-half/v1",
       "kv-cache/append/v1",
       "kv-cache/indexed-update/v1"
-    ]
+    ],
+    "contract_capabilities": {
+      "rmsnorm/last-dim/v1": {
+        "dtypes": ["float32", "float16", "bfloat16"],
+        "max_rank": 3,
+        "features": []
+      },
+      "rope/rotate-half/v1": {
+        "dtypes": ["float32", "float16"],
+        "max_rank": 4,
+        "features": ["multiple_outputs"]
+      },
+      "kv-cache/append/v1": {
+        "dtypes": ["float32"],
+        "max_rank": 5,
+        "features": []
+      },
+      "kv-cache/indexed-update/v1": {
+        "dtypes": ["float32"],
+        "max_rank": 4,
+        "features": []
+      }
+    }
   },
   "command": [
     "{adapter_dir}/../../cpp/build-sycl-icx/inferref_sycl_engine.exe",

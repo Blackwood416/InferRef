@@ -19,9 +19,10 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from inferref.ir.operator import OperatorRecord
 from inferref.ir.package import TracePackage
@@ -38,6 +39,10 @@ from inferref.ir.values import (
     Value,
 )
 from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_FORMAT_VERSION
+from inferref.testcase.contracts import (
+    contract_input_issues,
+    get_contract,
+)
 from inferref.testcase.requirements import derive_requirements, is_contract_id
 
 
@@ -504,20 +509,49 @@ def _write_testcase(
             "qualified_name": value.qualified_name,
             # A standalone testcase cannot reference a producer outside its
             # projected node set. Boundary provenance remains on inputs/outputs.
-            "producer": (
-                value.producer if value.producer in selected_op_ids else None
-            ),
+            "producer": (value.producer if value.producer in selected_op_ids else None),
         }
         for value in graph.values
         if value.id in referenced_value_ids
     ]
 
     selected_contracts = list(dict.fromkeys(contracts or ()))
-    invalid_contracts = [item for item in selected_contracts if not is_contract_id(item)]
+    invalid_contracts = [
+        item for item in selected_contracts if not is_contract_id(item)
+    ]
     if invalid_contracts:
         raise ExtractionError(
             "invalid versioned executable contract(s): " + ", ".join(invalid_contracts)
         )
+    profiles = []
+    for contract in selected_contracts:
+        profile = get_contract(contract)
+        if profile is None:
+            raise ExtractionError(
+                f"contract {contract!r} is not defined in this build's executable "
+                "contract registry; extraction cannot bind or validate its roles"
+            )
+        profiles.append(profile)
+        missing_inputs = [role for role in profile.inputs if role not in input_names]
+        missing_outputs = [role for role in profile.outputs if role not in output_names]
+        if missing_inputs or missing_outputs:
+            raise ExtractionError(
+                f"contract {profile.id!r} requires input role(s) "
+                f"{', '.join(missing_inputs)} and output role(s) "
+                f"{', '.join(missing_outputs)}; pass --input-names/--output-names "
+                "to bind the extracted boundary values"
+            )
+    for profile in profiles:
+        role_inputs = {
+            entry["name"]: entry
+            for entry in manifest_inputs
+            if entry.get("name") in profile.inputs
+        }
+        issues = contract_input_issues(profile.id, role_inputs)
+        if issues:
+            raise ExtractionError(
+                f"contract {profile.id!r} shape validation failed: " + "; ".join(issues)
+            )
     manifest = {
         "format": TESTCASE_FORMAT,
         "format_version": TESTCASE_FORMAT_VERSION,
@@ -629,7 +663,9 @@ def _render_readme(manifest: dict[str, Any]) -> str:
             lines.append(f"    module: {node['module_path']}")
         if node.get("source"):
             src = node["source"]
-            lines.append(f"    source: {src['file']}:{src['line']} in {src['function']}")
+            lines.append(
+                f"    source: {src['file']}:{src['line']} in {src['function']}"
+            )
     lines.append("```")
     lines.append("")
 

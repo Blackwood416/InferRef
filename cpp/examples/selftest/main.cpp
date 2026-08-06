@@ -16,6 +16,8 @@
 
 #include "inferref/compare.hpp"
 #include "inferref/irtensor.hpp"
+#include "inferref/json.hpp"
+#include "inferref/kv_contract.hpp"
 
 namespace
 {
@@ -170,6 +172,104 @@ void TestCompare()
     Check(!strict.passed, "stride-only difference fails under --strict-layout");
 }
 
+void TestJsonParser()
+{
+    std::printf("JSON parser and contract extraction\n");
+
+    // A string that merely mentions "contracts" must not fool the reader.
+    const std::string manifest =
+        "{\n"
+        "  \"name\": \"text containing \\\"contracts\\\": [\\\"fake/v1\\\"]\",\n"
+        "  \"requirements\": {\n"
+        "    \"contracts\": [\"rope/rotate-half/v1\", \"kv-cache/append/v1\"]\n"
+        "  }\n"
+        "}";
+    const inferref::json::Value document = inferref::json::Parse(manifest);
+    const std::vector<std::string> declared =
+        inferref::json::DeclaredContracts(document);
+    Check(declared.size() == 2, "two real contracts found");
+    Check(declared[0] == "rope/rotate-half/v1", "first contract ordered");
+    Check(declared[1] == "kv-cache/append/v1", "second contract ordered");
+
+    // Top-level contracts wins over requirements when both exist.
+    const std::string top_level =
+        "{\"requirements\": {\"contracts\": [\"kv-cache/append/v1\"]},"
+        " \"contracts\": [\"rmsnorm/last-dim/v1\"]}";
+    const std::vector<std::string> top =
+        inferref::json::DeclaredContracts(inferref::json::Parse(top_level));
+    Check(top.size() == 1 && top[0] == "rmsnorm/last-dim/v1",
+          "top-level contracts takes precedence");
+
+    // Whitespace, field order and duplicate keys (last wins).
+    const std::string duplicated =
+        " { \"contracts\" : [ \"a/v1\" ] , \"contracts\" : [\"b/v1\"] , \"z\" : 1 } ";
+    const inferref::json::Value duplicated_doc = inferref::json::Parse(duplicated);
+    const std::vector<std::string> dup =
+        inferref::json::DeclaredContracts(duplicated_doc);
+    Check(dup.size() == 1 && dup[0] == "b/v1", "duplicate keys: last wins");
+    Check(duplicated_doc.At("z").IsNumber() &&
+              duplicated_doc.At("z").number == 1.0,
+          "number after duplicate key parsed");
+
+    // Escaped quotes and unicode escapes.
+    const inferref::json::Value escaped =
+        inferref::json::Parse("{\"name\": \"a \\\"quoted\\\" \\u4e2d\\u6587\"}");
+    Check(escaped.At("name").string == "a \"quoted\" \xe4\xb8\xad\xe6\x96\x87",
+          "escaped quotes and \\uXXXX decode");
+
+    // Malformed documents must raise a structured error, not scan onward.
+    bool rejected = false;
+    try
+    {
+        inferref::json::Parse("{\"contracts\": }");
+    }
+    catch (const inferref::json::ParseError &)
+    {
+        rejected = true;
+    }
+    Check(rejected, "malformed JSON raises ParseError");
+
+    bool non_array_rejected = false;
+    try
+    {
+        inferref::json::DeclaredContracts(inferref::json::Parse("{\"contracts\": 1}"));
+    }
+    catch (const inferref::json::ParseError &)
+    {
+        non_array_rejected = true;
+    }
+    Check(non_array_rejected, "non-array contracts rejected");
+}
+
+void TestKvIndexBounds()
+{
+    std::printf("kv-cache indexed-update bounds\n");
+    Check(inferref::ValidateIndexedUpdate(2.0, 5, 3).empty(),
+          "target + update == old sequence is valid");
+    Check(inferref::ValidateIndexedUpdate(0.0, 1, 1).empty(),
+          "exact fill is valid");
+    Check(!inferref::ValidateIndexedUpdate(std::nan(""), 5, 1).empty(),
+          "NaN rejected");
+    Check(!inferref::ValidateIndexedUpdate(INFINITY, 5, 1).empty(),
+          "infinity rejected");
+    Check(!inferref::ValidateIndexedUpdate(-1.0, 5, 1).empty(),
+          "negative rejected");
+    Check(!inferref::ValidateIndexedUpdate(1.5, 5, 1).empty(),
+          "non-integer rejected");
+    Check(!inferref::ValidateIndexedUpdate(1e300, 5, 1).empty(),
+          "huge finite float rejected before size_t conversion");
+    Check(!inferref::ValidateIndexedUpdate(5.0, 5, 1).empty(),
+          "target == old sequence rejected when update is positive");
+    Check(!inferref::ValidateIndexedUpdate(4.0, 5, 2).empty(),
+          "target + update overflow rejected");
+    Check(!inferref::ValidateIndexedUpdate(0.0, 5, 6).empty(),
+          "update longer than the cache rejected");
+    Check(!inferref::ValidateIndexedUpdate(
+              0.0, 5, std::numeric_limits<std::size_t>::max())
+              .empty(),
+          "maximum update size rejected without unsigned overflow");
+}
+
 void TestReadDirectory(const std::string &directory)
 {
     std::printf("reading Python-written tensors from %s\n", directory.c_str());
@@ -204,6 +304,8 @@ int main(int argc, char **argv)
     TestFloat16();
     TestFloatEncoders();
     TestCompare();
+    TestJsonParser();
+    TestKvIndexBounds();
     if (argc > 1)
     {
         TestReadDirectory(argv[1]);

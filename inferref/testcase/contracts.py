@@ -1,0 +1,212 @@
+"""Versioned executable contract registry with role mapping and validators.
+
+A contract is more than an ID label: it fixes the semantic input/output role
+names an engine can rely on, plus shape invariants that must hold before an
+engine process is started. Extractors bind boundary tensors to these roles and
+refuse to publish a testcase whose declared contract does not actually hold.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from inferref.testcase.requirements import derive_requirements
+
+InputValidator = Callable[[Mapping[str, dict[str, Any]]], Sequence[str]]
+
+
+def _numel(shape: Sequence[Any]) -> int:
+    total = 1
+    for dimension in shape:
+        if not isinstance(dimension, int) or isinstance(dimension, bool):
+            return 0
+        total *= dimension
+    return total
+
+
+def _shape(value: Any) -> list[int] | None:
+    if not isinstance(value, dict):
+        return None
+    shape = value.get("shape")
+    if not isinstance(shape, list) or not all(
+        isinstance(dim, int) and not isinstance(dim, bool) for dim in shape
+    ):
+        return None
+    return shape  # type: ignore[return-value]
+
+
+def _rmsnorm_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    x = _shape(inputs.get("x"))
+    weight = _shape(inputs.get("weight"))
+    epsilon = _shape(inputs.get("epsilon"))
+    issues: list[str] = []
+    if x is None:
+        return ["x must be a tensor"]
+    if not x or x[-1] <= 0 or _numel(x) <= 0:
+        issues.append("x must be non-empty with a positive last dimension")
+    elif weight is not None and _numel(weight) != x[-1]:
+        issues.append("weight numel must equal x.shape[-1]")
+    if epsilon is None or _numel(epsilon) < 1:
+        issues.append("epsilon must contain at least one value")
+    return issues
+
+
+def _rope_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    query = _shape(inputs.get("query"))
+    key = _shape(inputs.get("key"))
+    cos = _shape(inputs.get("cos"))
+    sin = _shape(inputs.get("sin"))
+    issues: list[str] = []
+    if query is None:
+        return ["query must be a tensor"]
+    if len(query) < 2 or _numel(query) <= 0 or query[-1] <= 0 or query[-1] % 2:
+        issues.append(
+            "query must be non-empty with rank >= 2 and a positive even last dimension"
+        )
+    else:
+        if key is None:
+            issues.append("key must be a tensor")
+        elif len(key) < 2 or _numel(key) <= 0 or key[-1] != query[-1]:
+            issues.append("key last dimension must equal query")
+        if cos is None or sin is None:
+            issues.append("cos and sin must be tensors")
+        elif len(cos) != 2 or cos != sin or cos[-1] != query[-1] or cos[0] <= 0:
+            issues.append("cos/sin must have matching [sequence, rotary_dim] shapes")
+        elif key is not None and (query[-2] != cos[0] or key[-2] != cos[0]):
+            issues.append("query/key sequence dimensions must equal cos.shape[0]")
+    return issues
+
+
+def _kv_append_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    cache = _shape(inputs.get("cache"))
+    update = _shape(inputs.get("update"))
+    issues: list[str] = []
+    if cache is None or update is None:
+        return ["cache and update must be tensors"]
+    if (
+        len(cache) < 2
+        or len(update) != len(cache)
+        or _numel(cache) <= 0
+        or _numel(update) <= 0
+    ):
+        issues.append("cache/update must be non-empty with equal rank >= 2")
+        return issues
+    sequence_axis = len(cache) - 2
+    if any(
+        cache[axis] != update[axis]
+        for axis in range(len(cache))
+        if axis != sequence_axis
+    ):
+        issues.append("non-sequence dimensions must match")
+    if cache[-1] <= 0 or cache[-2] <= 0 or update[-2] <= 0:
+        issues.append("sequence and width dimensions must be positive")
+    return issues
+
+
+def _kv_indexed_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    issues = list(_kv_append_inputs(inputs))
+    index = _shape(inputs.get("index"))
+    if index is None:
+        issues.append("index must be a tensor")
+    elif _numel(index) != 1:
+        issues.append("index must contain exactly one value")
+    return issues
+
+
+@dataclass(frozen=True)
+class ExecutableContract:
+    """One versioned semantic operation profile an engine can implement."""
+
+    id: str
+    inputs: tuple[str, ...]
+    outputs: tuple[str, ...]
+    validate_inputs: InputValidator
+    description: str = ""
+
+
+EXECUTABLE_CONTRACTS: tuple[ExecutableContract, ...] = (
+    ExecutableContract(
+        id="rmsnorm/last-dim/v1",
+        inputs=("x", "weight", "epsilon"),
+        outputs=("y",),
+        validate_inputs=_rmsnorm_inputs,
+        description="RMSNorm over the last dimension with weight and scalar epsilon",
+    ),
+    ExecutableContract(
+        id="rope/rotate-half/v1",
+        inputs=("query", "key", "cos", "sin"),
+        outputs=("q_embed", "k_embed"),
+        validate_inputs=_rope_inputs,
+        description="rotate-half RoPE with per-token cos/sin over the last dimension",
+    ),
+    ExecutableContract(
+        id="kv-cache/append/v1",
+        inputs=("cache", "update"),
+        outputs=("cache_out",),
+        validate_inputs=_kv_append_inputs,
+        description="append a new sequence block to the cache sequence axis",
+    ),
+    ExecutableContract(
+        id="kv-cache/indexed-update/v1",
+        inputs=("cache", "update", "index"),
+        outputs=("cache_out",),
+        validate_inputs=_kv_indexed_inputs,
+        description="overwrite one contiguous sequence block of the cache",
+    ),
+)
+
+REGISTRY: dict[str, ExecutableContract] = {
+    contract.id: contract for contract in EXECUTABLE_CONTRACTS
+}
+
+
+def get_contract(contract_id: str) -> ExecutableContract | None:
+    """Return the registered profile for a contract ID, or None if unknown."""
+
+    return REGISTRY.get(contract_id)
+
+
+def contract_input_issues(
+    contract_id: str, inputs: Mapping[str, dict[str, Any]]
+) -> Sequence[str]:
+    """Shape-level issues for a known contract, or () for an unknown one."""
+
+    contract = REGISTRY.get(contract_id)
+    if contract is None:
+        return ()
+    return contract.validate_inputs(inputs)
+
+
+def contract_requirements(manifest: dict[str, Any], contract_id: str) -> dict[str, Any]:
+    """Derive dtype/rank requirements from the tensors bound to contract roles.
+
+    Unknown contracts or role names that do not appear in the manifest fall back
+    to the testcase-wide derived requirements so preflight remains conservative.
+    """
+
+    contract = REGISTRY.get(contract_id)
+    role_names = (
+        set(contract.inputs) | set(contract.outputs) if contract is not None else None
+    )
+    tensors: list[dict[str, Any]] = []
+    for key in ("inputs", "outputs"):
+        for item in manifest.get(key, []):
+            if (
+                isinstance(item, dict)
+                and isinstance(item.get("name"), str)
+                and (role_names is None or item["name"] in role_names)
+            ):
+                tensors.append(item)
+    if role_names is None or not tensors:
+        return derive_requirements(manifest)
+    assert contract is not None
+    by_name = {item["name"]: item for item in tensors}
+    return derive_requirements(
+        {
+            "inputs": [by_name[name] for name in contract.inputs if name in by_name],
+            "outputs": [by_name[name] for name in contract.outputs if name in by_name],
+            "nodes": [],
+        }
+    )

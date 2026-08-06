@@ -597,8 +597,20 @@ def cmd_agent_evaluate(args: argparse.Namespace) -> int:
 def cmd_suite_validate(args: argparse.Namespace) -> int:
     from inferref.suite import validate_suite
 
-    report = validate_suite(args.suite)
-    _emit(report, f"Suite {report['name']}: {report['cases']} valid case(s)", args.json)
+    report = validate_suite(
+        args.suite, allow_nonreproducible=args.allow_nonreproducible
+    )
+    summary = (
+        f"Suite {report.get('name')}: schema_valid={report.get('schema_valid')} "
+        f"runnable={report.get('runnable')} ({report.get('cases')} case(s))"
+    )
+    if report.get("non_runnable_cases"):
+        summary += "; non-runnable: " + ", ".join(report["non_runnable_cases"])
+    _emit(report, summary, args.json)
+    if not report.get("schema_valid"):
+        return EXIT_FAIL
+    if not report.get("runnable") and not args.allow_nonreproducible:
+        return EXIT_FAIL
     return EXIT_OK
 
 
@@ -1001,6 +1013,11 @@ def build_parser() -> argparse.ArgumentParser:
     ssub = p.add_subparsers(dest="suite_command", metavar="<subcommand>")
     q = ssub.add_parser("validate", help="validate a suite and all referenced testcases")
     q.add_argument("suite", help="suite JSON manifest")
+    q.add_argument(
+        "--allow-nonreproducible",
+        action="store_true",
+        help="accept schema-valid suites with non-reproducible cases for inventory",
+    )
     _add_json(q)
     q.set_defaults(func=cmd_suite_validate)
 

@@ -93,24 +93,62 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
         except PathBoundaryError as exc:
             raise SuiteError(str(exc)) from exc
         tags = record.get("tags", [])
-        if not isinstance(tags, list) or not all(isinstance(tag, str) and tag for tag in tags):
+        if not isinstance(tags, list) or not all(
+            isinstance(tag, str) and tag for tag in tags
+        ):
             raise SuiteError(f"cases[{index}].tags must be a string array")
         if validate_cases:
             validation = validate_testcase(testcase_path)
             if not validation.valid:
-                raise SuiteError(f"case {case_id!r} is invalid: {validation.issues[0].message}")
+                raise SuiteError(
+                    f"case {case_id!r} is invalid: {validation.issues[0].message}"
+                )
         ids.add(case_id)
         portable_ids.add(portable_key)
         cases.append(SuiteCase(case_id, testcase_path, tuple(tags)))
     return Suite(name, source, tuple(cases))
 
 
-def validate_suite(path: str | Path) -> dict[str, Any]:
-    suite = load_suite(path)
+def validate_suite(
+    path: str | Path, *, allow_nonreproducible: bool = False
+) -> dict[str, Any]:
+    """Validate a suite, separating structural validity from runnability.
+
+    ``schema_valid`` means every referenced testcase passes structural
+    validation; ``runnable`` additionally requires every testcase to be
+    reproducible. ``allow_nonreproducible`` keeps schema-valid suites accepted
+    for corpus inventory while still reporting ``runnable: false``.
+    """
+
+    try:
+        suite = load_suite(path)
+    except (SuiteError, OSError, json.JSONDecodeError) as exc:
+        return {
+            "format": SUITE_FORMAT,
+            "format_version": SUITE_FORMAT_VERSION,
+            "status": "fail",
+            "schema_valid": False,
+            "runnable": False,
+            "error": str(exc),
+            "name": None,
+            "cases": 0,
+            "case_ids": [],
+            "non_runnable_cases": [],
+        }
+    non_runnable: list[str] = []
+    for case in suite.cases:
+        validation = validate_testcase(case.testcase)
+        if not validation.reproducible:
+            non_runnable.append(case.id)
+    runnable = not non_runnable
     return {
         "format": SUITE_FORMAT,
         "format_version": SUITE_FORMAT_VERSION,
-        "status": "pass",
+        "status": "pass" if runnable else "fail",
+        "schema_valid": True,
+        "runnable": runnable,
+        "non_runnable_cases": non_runnable,
+        "allow_nonreproducible": allow_nonreproducible,
         "name": suite.name,
         "cases": len(suite.cases),
         "case_ids": [case.id for case in suite.cases],

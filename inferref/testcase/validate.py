@@ -9,8 +9,12 @@ from typing import Any
 
 from inferref.ir.paths import PathBoundaryError, resolve_contained_path
 from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_READ_VERSIONS
-from inferref.testcase.requirements import derive_requirements, is_contract_id
 from inferref.tensor import codec
+from inferref.testcase.contracts import (
+    contract_input_issues,
+    get_contract,
+)
+from inferref.testcase.requirements import derive_requirements, is_contract_id
 
 
 @dataclass(frozen=True)
@@ -508,7 +512,12 @@ def _validate_requirements(
     if manifest.get("format_version") == "0.1" and requirements is None:
         return
     if not isinstance(requirements, dict):
-        _error(result, "requirements_invalid", "requirements must be an object", "requirements")
+        _error(
+            result,
+            "requirements_invalid",
+            "requirements must be an object",
+            "requirements",
+        )
         return
     declared_contracts = manifest.get("contracts")
     if declared_contracts is not None and (
@@ -527,14 +536,31 @@ def _validate_requirements(
     features = requirements.get("features")
     max_rank = requirements.get("max_rank")
     contracts = requirements.get("contracts")
-    if not isinstance(dtypes, list) or not all(isinstance(x, str) and x for x in dtypes):
-        _error(result, "requirements_invalid", "dtypes must be a string array", "requirements.dtypes")
+    if not isinstance(dtypes, list) or not all(
+        isinstance(x, str) and x for x in dtypes
+    ):
+        _error(
+            result,
+            "requirements_invalid",
+            "dtypes must be a string array",
+            "requirements.dtypes",
+        )
     if not isinstance(features, list) or not all(
         isinstance(x, str) and x for x in features
     ):
-        _error(result, "requirements_invalid", "features must be a string array", "requirements.features")
+        _error(
+            result,
+            "requirements_invalid",
+            "features must be a string array",
+            "requirements.features",
+        )
     if not isinstance(max_rank, int) or isinstance(max_rank, bool) or max_rank < 0:
-        _error(result, "requirements_invalid", "max_rank must be non-negative", "requirements.max_rank")
+        _error(
+            result,
+            "requirements_invalid",
+            "max_rank must be non-negative",
+            "requirements.max_rank",
+        )
     if contracts is not None and (
         not isinstance(contracts, list)
         or not contracts
@@ -547,8 +573,14 @@ def _validate_requirements(
             "contracts must be non-empty unique versioned contract IDs when present",
             "requirements.contracts",
         )
-    if isinstance(dtypes, list) and isinstance(features, list) and isinstance(max_rank, int):
-        expected = derive_requirements({k: v for k, v in manifest.items() if k != "requirements"})
+    if (
+        isinstance(dtypes, list)
+        and isinstance(features, list)
+        and isinstance(max_rank, int)
+    ):
+        expected = derive_requirements(
+            {k: v for k, v in manifest.items() if k != "requirements"}
+        )
         if requirements != expected:
             _error(
                 result,
@@ -567,13 +599,23 @@ def _validate_executable_contracts(
     if not isinstance(contracts, list):
         return
     by_name = {
-        item.get("name"): item
-        for item in inputs
-        if isinstance(item.get("name"), str)
+        item.get("name"): item for item in inputs if isinstance(item.get("name"), str)
     }
 
-    def shapes(names: tuple[str, ...], contract: str) -> list[list[int]] | None:
-        missing = [name for name in names if name not in by_name]
+    for contract in contracts:
+        profile = get_contract(contract)
+        if profile is None:
+            _issue(
+                result,
+                "warning",
+                "contract_not_in_registry",
+                f"{contract} is not defined in this build's executable contract "
+                "registry; role/shape validation is skipped",
+                "contracts",
+                blocks_reproduction=False,
+            )
+            continue
+        missing = [name for name in profile.inputs if name not in by_name]
         if missing:
             _error(
                 result,
@@ -581,72 +623,15 @@ def _validate_executable_contracts(
                 f"{contract} requires input(s): {', '.join(missing)}",
                 "inputs",
             )
-            return None
-        found = [by_name[name].get("shape") for name in names]
-        if not all(
-            isinstance(shape, list)
-            and all(isinstance(dim, int) and not isinstance(dim, bool) for dim in shape)
-            for shape in found
-        ):
-            return None
-        return found  # type: ignore[return-value]
-
-    def invalid(contract: str, message: str, where: str) -> None:
-        _error(result, "contract_shape_invalid", f"{contract}: {message}", where)
-
-    for contract in contracts:
-        if contract == "rmsnorm/last-dim/v1":
-            found = shapes(("x", "weight", "epsilon"), contract)
-            if found is None:
-                continue
-            x, weight, epsilon = found
-            if not x or x[-1] <= 0 or _shape_numel(x) <= 0:
-                invalid(contract, "x must be non-empty with a positive last dimension", "inputs.x.shape")
-            elif _shape_numel(weight) != x[-1]:
-                invalid(contract, "weight numel must equal x.shape[-1]", "inputs.weight.shape")
-            if _shape_numel(epsilon) < 1:
-                invalid(contract, "epsilon must contain at least one value", "inputs.epsilon.shape")
-        elif contract == "rope/rotate-half/v1":
-            found = shapes(("query", "key", "cos", "sin"), contract)
-            if found is None:
-                continue
-            query, key, cos, sin = found
-            if len(query) < 2 or _shape_numel(query) <= 0 or query[-1] <= 0 or query[-1] % 2:
-                invalid(contract, "query must be non-empty with rank >= 2 and a positive even last dimension", "inputs.query.shape")
-                continue
-            if len(key) < 2 or _shape_numel(key) <= 0 or key[-1] != query[-1]:
-                invalid(contract, "key last dimension must equal query", "inputs.key.shape")
-            if len(cos) != 2 or cos != sin or cos[-1] != query[-1] or cos[0] <= 0:
-                invalid(contract, "cos/sin must have matching [sequence, rotary_dim] shapes", "inputs.cos.shape")
-            elif query[-2] != cos[0] or key[-2] != cos[0]:
-                invalid(contract, "query/key sequence dimensions must equal cos.shape[0]", "inputs.query.shape")
-        elif contract in {"kv-cache/append/v1", "kv-cache/indexed-update/v1"}:
-            names = ("cache", "update", "index") if contract.endswith("indexed-update/v1") else ("cache", "update")
-            found = shapes(names, contract)
-            if found is None:
-                continue
-            cache, update = found[:2]
-            if len(cache) < 2 or len(update) != len(cache) or _shape_numel(cache) <= 0 or _shape_numel(update) <= 0:
-                invalid(contract, "cache/update must be non-empty with equal rank >= 2", "inputs.cache.shape")
-                continue
-            sequence_axis = len(cache) - 2
-            if any(
-                cache[axis] != update[axis]
-                for axis in range(len(cache))
-                if axis != sequence_axis
-            ):
-                invalid(contract, "non-sequence dimensions must match", "inputs.update.shape")
-            if cache[-1] <= 0 or cache[-2] <= 0 or update[-2] <= 0:
-                invalid(contract, "sequence and width dimensions must be positive", "inputs.cache.shape")
-            if len(found) == 3 and _shape_numel(found[2]) != 1:
-                invalid(contract, "index must contain exactly one value", "inputs.index.shape")
-
-
-def _shape_numel(shape: list[int]) -> int:
-    total = 1
-    for dimension in shape:
-        total *= dimension
-    return total
+            continue
+        role_inputs = {name: by_name[name] for name in profile.inputs}
+        for message in contract_input_issues(contract, role_inputs):
+            _error(
+                result,
+                "contract_shape_invalid",
+                f"{contract}: {message}",
+                "inputs",
+            )
 
 
 def _error(
@@ -664,6 +649,8 @@ def _issue(
     code: str,
     message: str,
     where: str = "",
+    *,
+    blocks_reproduction: bool = True,
 ) -> None:
     result.issues.append(
         TestcaseValidationIssue(
@@ -671,5 +658,6 @@ def _issue(
             code=code,
             message=message,
             where=where,
+            blocks_reproduction=blocks_reproduction,
         )
     )

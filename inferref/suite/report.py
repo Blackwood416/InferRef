@@ -7,11 +7,17 @@ from typing import Any
 
 
 def _load_run(run: str | Path | dict[str, Any]) -> dict[str, Any]:
-    data = run if isinstance(run, dict) else json.loads(Path(run).read_text(encoding="utf-8"))
+    data = (
+        run
+        if isinstance(run, dict)
+        else json.loads(Path(run).read_text(encoding="utf-8"))
+    )
     if not isinstance(data, dict) or data.get("format") != "inferref-suite-run":
         raise ValueError("not an InferRef suite run")
     if data.get("format_version") not in {"0.1", "0.2"}:
-        raise ValueError(f"unsupported suite run version {data.get('format_version')!r}")
+        raise ValueError(
+            f"unsupported suite run version {data.get('format_version')!r}"
+        )
     return data
 
 
@@ -21,10 +27,26 @@ def _cells(data: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, A
         adapters = [{"id": "adapter", "name": str(adapter.get("name", "adapter"))}]
         rows = []
         for case in data.get("cases", []):
-            rows.append({"case": case, "results": [{"adapter_id": "adapter", "status": case.get("status"), "run": case.get("run", {})}]})
+            rows.append(
+                {
+                    "case": case,
+                    "results": [
+                        {
+                            "adapter_id": "adapter",
+                            "status": case.get("status"),
+                            "run": case.get("run", {}),
+                        }
+                    ],
+                }
+            )
         return adapters, rows
-    adapters = [{"id": item["id"], "name": item["name"]} for item in data.get("adapters", [])]
-    return adapters, [{"case": case, "results": case.get("results", [])} for case in data.get("cases", [])]
+    adapters = [
+        {"id": item["id"], "name": item["name"]} for item in data.get("adapters", [])
+    ]
+    return adapters, [
+        {"case": case, "results": case.get("results", [])}
+        for case in data.get("cases", [])
+    ]
 
 
 def _cell_summary(result: dict[str, Any]) -> dict[str, Any]:
@@ -32,7 +54,10 @@ def _cell_summary(result: dict[str, Any]) -> dict[str, Any]:
     comparison = run.get("comparison") or {}
     comparisons = comparison.get("comparisons") or []
     max_error = max(
-        (float(item.get("metrics", {}).get("max_abs_error", 0.0)) for item in comparisons),
+        (
+            float(item.get("metrics", {}).get("max_abs_error", 0.0))
+            for item in comparisons
+        ),
         default=None,
     )
     first = comparison.get("first_failure") or {}
@@ -57,12 +82,16 @@ def render_suite_report(
     adapters, rows = _cells(data)
     matrix: list[dict[str, Any]] = []
     for row in rows:
-        by_adapter = {item.get("adapter_id"): _cell_summary(item) for item in row["results"]}
-        matrix.append({
-            "id": row["case"].get("id"),
-            "tags": row["case"].get("tags", []),
-            "engines": by_adapter,
-        })
+        by_adapter = {
+            item.get("adapter_id"): _cell_summary(item) for item in row["results"]
+        }
+        matrix.append(
+            {
+                "id": row["case"].get("id"),
+                "tags": row["case"].get("tags", []),
+                "engines": by_adapter,
+            }
+        )
     report = {
         "format": "inferref-suite-report",
         "format_version": "0.1",
@@ -75,13 +104,25 @@ def render_suite_report(
     }
 
     output_path = Path(output).resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.suffix.lower() != ".html":
+        raise ValueError(
+            f"suite report output must use a .html extension: {output_path}"
+        )
     json_path = output_path.with_suffix(".json")
-    json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if output_path == json_path:
+        raise ValueError("suite report HTML and JSON sidecar resolve to the same path")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
     headings = "".join(
         f"<th>{html.escape(item['name'])}"
-        + (f"<small>{html.escape(item['id'])}</small>" if item["id"] != item["name"] else "")
+        + (
+            f"<small>{html.escape(item['id'])}</small>"
+            if item["id"] != item["name"]
+            else ""
+        )
         + "</th>"
         for item in adapters
     )
@@ -97,18 +138,29 @@ def render_suite_report(
             if cell.get("duration_ms") is not None:
                 details.append(f"{cell['duration_ms']:.1f} ms")
             if cell.get("first_divergence"):
-                details.append("first divergence " + html.escape(json.dumps(cell["first_divergence"], separators=(",", ":"))))
+                details.append(
+                    "first divergence "
+                    + html.escape(
+                        json.dumps(cell["first_divergence"], separators=(",", ":"))
+                    )
+                )
             if cell.get("unsupported_reasons"):
-                details.extend(html.escape(str(reason)) for reason in cell["unsupported_reasons"])
-            cells.append(f'<td class="{html.escape(status)}"><strong>{html.escape(status.upper())}</strong><small>{"<br>".join(details)}</small></td>')
-        body.append(f"<tr><th>{html.escape(str(row['id']))}<small>{html.escape(', '.join(row['tags']))}</small></th>{''.join(cells)}</tr>")
+                details.extend(
+                    html.escape(str(reason)) for reason in cell["unsupported_reasons"]
+                )
+            cells.append(
+                f'<td class="{html.escape(status)}"><strong>{html.escape(status.upper())}</strong><small>{"<br>".join(details)}</small></td>'
+            )
+        body.append(
+            f"<tr><th>{html.escape(str(row['id']))}<small>{html.escape(', '.join(row['tags']))}</small></th>{''.join(cells)}</tr>"
+        )
 
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>InferRef suite report — {html.escape(str(report['suite']))}</title>
+<title>InferRef suite report — {html.escape(str(report["suite"]))}</title>
 <style>body{{font:14px system-ui,sans-serif;margin:2rem;color:#17202a;background:#f7f8fa}}h1{{margin-bottom:.25rem}}p{{color:#566573}}table{{border-collapse:collapse;width:100%;background:white;box-shadow:0 1px 4px #ccd}}th,td{{padding:.75rem;border:1px solid #d5d8dc;text-align:left;vertical-align:top}}thead th{{background:#273746;color:white}}td.pass{{background:#eafaf1}}td.fail,td.mismatch,td.error,td.infrastructure_error{{background:#fdedec}}td.unsupported{{background:#fef9e7}}small{{display:block;color:#566573;margin-top:.3rem;font-weight:400}}</style></head>
-<body><h1>{html.escape(str(report['suite']))}</h1><p>Status: <strong>{html.escape(str(report['status']).upper())}</strong> · {report['counts'].get('pass', 0)}/{report['counts'].get('total', 0)} cells passed</p>
-<table><thead><tr><th>Case</th>{headings}</tr></thead><tbody>{''.join(body)}</tbody></table></body></html>"""
+<body><h1>{html.escape(str(report["suite"]))}</h1><p>Status: <strong>{html.escape(str(report["status"]).upper())}</strong> · {report["counts"].get("pass", 0)}/{report["counts"].get("total", 0)} cells passed</p>
+<table><thead><tr><th>Case</th>{headings}</tr></thead><tbody>{"".join(body)}</tbody></table></body></html>"""
     output_path.write_text(document, encoding="utf-8")
     report["html"] = str(output_path)
     report["json"] = str(json_path)

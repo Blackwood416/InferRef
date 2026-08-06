@@ -38,7 +38,9 @@ def _case(root: Path, *, contract: str | None = None) -> Path:
         "name": "add-one",
         "reproducible": True,
         "inputs": [{"name": "x", "value_id": 1, "payload": "inputs/x.irtensor", **im}],
-        "outputs": [{"name": "out", "value_id": 2, "payload": "reference/out.irtensor", **om}],
+        "outputs": [
+            {"name": "out", "value_id": 2, "payload": "reference/out.irtensor", **om}
+        ],
         "nodes": [],
         "values": [{"id": 1, **im}, {"id": 2, **om}],
         "requirements": {
@@ -63,24 +65,41 @@ def _fixture(
 ):
     case = _case(tmp_path / "cases" / "add", contract=case_contract)
     suite = tmp_path / "suite.json"
-    suite.write_text(json.dumps({
-        "format": "inferref-suite", "format_version": "0.1", "name": "tiny",
-        "cases": [{"id": "add", "testcase": "cases/add", "tags": ["smoke"]}],
-    }), encoding="utf-8")
+    suite.write_text(
+        json.dumps(
+            {
+                "format": "inferref-suite",
+                "format_version": "0.1",
+                "name": "tiny",
+                "cases": [{"id": "add", "testcase": "cases/add", "tags": ["smoke"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
     script = tmp_path / "engine.py"
     script.write_text(ENGINE, encoding="utf-8")
     adapter = tmp_path / "adapter.json"
     capabilities = {
-        "device_types": ["cpu"], "dtypes": dtypes or ["float32"], "max_rank": 8, "features": []
+        "device_types": ["cpu"],
+        "dtypes": dtypes or ["float32"],
+        "max_rank": 8,
+        "features": [],
     }
     if adapter_contracts is not None:
         capabilities["contracts"] = adapter_contracts
-    adapter.write_text(json.dumps({
-        "format": ENGINE_ADAPTER_FORMAT, "format_version": ENGINE_ADAPTER_VERSION,
-        "name": "python", "target_device": "cpu",
-        "capabilities": capabilities,
-        "command": ["{python}", str(script), "{testcase}", "{output}"],
-    }), encoding="utf-8")
+    adapter.write_text(
+        json.dumps(
+            {
+                "format": ENGINE_ADAPTER_FORMAT,
+                "format_version": ENGINE_ADAPTER_VERSION,
+                "name": "python",
+                "target_device": "cpu",
+                "capabilities": capabilities,
+                "command": ["{python}", str(script), "{testcase}", "{output}"],
+            }
+        ),
+        encoding="utf-8",
+    )
     return suite, adapter
 
 
@@ -137,7 +156,9 @@ def test_operation_contract_preflight_and_legacy_unchecked(tmp_path: Path) -> No
     assert run["unsupported"] == [{"kind": "contract", "required": contract}]
 
 
-def test_allow_unsupported_matrix_is_partial_when_some_cells_run(tmp_path: Path) -> None:
+def test_allow_unsupported_matrix_is_partial_when_some_cells_run(
+    tmp_path: Path,
+) -> None:
     suite, supported = _fixture(
         tmp_path,
         case_contract="softmax/last-dim/v1",
@@ -182,7 +203,21 @@ def test_suite_cli(tmp_path: Path, capsys) -> None:
     suite, adapter = _fixture(tmp_path)
     assert main(["suite", "validate", str(suite), "--json"]) == EXIT_OK
     capsys.readouterr()
-    assert main(["suite", "run", str(suite), "--adapter", str(adapter), "--runs-dir", str(tmp_path / "cli-runs"), "--json"]) == EXIT_OK
+    assert (
+        main(
+            [
+                "suite",
+                "run",
+                str(suite),
+                "--adapter",
+                str(adapter),
+                "--runs-dir",
+                str(tmp_path / "cli-runs"),
+                "--json",
+            ]
+        )
+        == EXIT_OK
+    )
     assert json.loads(capsys.readouterr().out)["status"] == "pass"
 
 
@@ -206,7 +241,19 @@ def test_suite_matrix_and_static_report(tmp_path: Path, capsys) -> None:
     assert adapter_ids[1] in output.read_text(encoding="utf-8")
 
     run_path = tmp_path / "matrix-runs" / "inferref-suite-run.json"
-    assert main(["suite", "report", str(run_path), "--output", str(tmp_path / "cli-report.html"), "--json"]) == EXIT_OK
+    assert (
+        main(
+            [
+                "suite",
+                "report",
+                str(run_path),
+                "--output",
+                str(tmp_path / "cli-report.html"),
+                "--json",
+            ]
+        )
+        == EXIT_OK
+    )
     assert json.loads(capsys.readouterr().out)["format"] == "inferref-suite-report"
 
 
@@ -255,3 +302,78 @@ def test_suite_output_uses_hash_backed_contained_artifact_key(tmp_path: Path) ->
     output = Path(report["cases"][0]["run"]["output"]).resolve()
     assert output.is_relative_to(runs.resolve())
     assert "add-" in output.parent.name
+
+
+def test_suite_validate_reports_schema_and_runnable(tmp_path: Path) -> None:
+    suite, _ = _fixture(tmp_path)
+    report = validate_suite(suite)
+    assert report["schema_valid"] is True
+    assert report["runnable"] is True
+    assert report["status"] == "pass"
+    assert report["non_runnable_cases"] == []
+    assert report["cases"] == 1
+
+
+def test_suite_validate_flags_non_reproducible_cases(tmp_path: Path) -> None:
+    suite, _ = _fixture(tmp_path)
+    case = tmp_path / "cases" / "add" / "testcase.json"
+    data = json.loads(case.read_text(encoding="utf-8"))
+    data["reproducible"] = False
+    case.write_text(json.dumps(data), encoding="utf-8")
+
+    strict = validate_suite(suite)
+    assert strict["schema_valid"] is True
+    assert strict["runnable"] is False
+    assert strict["status"] == "fail"
+    assert strict["non_runnable_cases"] == ["add"]
+
+    inventory = validate_suite(suite, allow_nonreproducible=True)
+    assert inventory["runnable"] is False
+    assert inventory["allow_nonreproducible"] is True
+    assert inventory["non_runnable_cases"] == ["add"]
+
+
+def test_suite_validate_structural_failure_is_schema_invalid(tmp_path: Path) -> None:
+    suite, _ = _fixture(tmp_path)
+    data = json.loads(suite.read_text(encoding="utf-8"))
+    data["cases"][0]["testcase"] = "../outside"
+    suite.write_text(json.dumps(data), encoding="utf-8")
+
+    report = validate_suite(suite)
+    assert report["schema_valid"] is False
+    assert report["runnable"] is False
+    assert report["status"] == "fail"
+    assert report["error"]
+
+
+def test_suite_validate_cli_exit_code_follows_runnable_policy(
+    tmp_path: Path, capsys
+) -> None:
+    suite, _ = _fixture(tmp_path)
+    case = tmp_path / "cases" / "add" / "testcase.json"
+    data = json.loads(case.read_text(encoding="utf-8"))
+    data["reproducible"] = False
+    case.write_text(json.dumps(data), encoding="utf-8")
+
+    assert main(["suite", "validate", str(suite), "--json"]) == EXIT_FAIL
+    capsys.readouterr()
+    assert (
+        main(["suite", "validate", str(suite), "--allow-nonreproducible", "--json"])
+        == EXIT_OK
+    )
+
+
+def test_report_requires_html_extension(tmp_path: Path) -> None:
+    suite, adapter = _fixture(tmp_path)
+    report = run_suite(suite, adapter, tmp_path / "runs")
+    run_path = tmp_path / "suite-run.json"
+    run_path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"\.html"):
+        render_suite_report(run_path, tmp_path / "report.json")
+
+    rendered = render_suite_report(run_path, tmp_path / "report.html")
+    assert (tmp_path / "report.html").is_file()
+    assert (tmp_path / "report.json").is_file()
+    assert rendered["html"] == str((tmp_path / "report.html").resolve())
+    assert rendered["json"] == str((tmp_path / "report.json").resolve())

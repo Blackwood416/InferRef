@@ -55,9 +55,7 @@ def _make_testcase(root: Path) -> tuple[Path, dict]:
                             "version_after": 1,
                         }
                     ],
-                    "aliases": [
-                        {"input_value_id": 1, "output_value_id": 2}
-                    ],
+                    "aliases": [{"input_value_id": 1, "output_value_id": 2}],
                 },
             }
         ],
@@ -117,18 +115,30 @@ def test_hash_only_boundary_is_valid_but_not_reproducible(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("mutation", "expected_code"),
     [
-        (lambda manifest: manifest["outputs"].append(dict(manifest["outputs"][0])),
-         "boundary_name_duplicate"),
-        (lambda manifest: manifest["outputs"][0].update(dtype="float16"),
-         "payload_metadata_mismatch"),
-        (lambda manifest: manifest["nodes"][0]["result"].update(value_id=99),
-         "node_value_unknown"),
-        (lambda manifest: manifest["nodes"][0]["effects"]["aliases"][0].update(
-            output_value_id=99
-        ), "effect_value_unknown"),
-        (lambda manifest: manifest["nodes"][0]["effects"]["mutated_storages"][0].update(
-            storage_id=99
-        ), "effect_storage_unknown"),
+        (
+            lambda manifest: manifest["outputs"].append(dict(manifest["outputs"][0])),
+            "boundary_name_duplicate",
+        ),
+        (
+            lambda manifest: manifest["outputs"][0].update(dtype="float16"),
+            "payload_metadata_mismatch",
+        ),
+        (
+            lambda manifest: manifest["nodes"][0]["result"].update(value_id=99),
+            "node_value_unknown",
+        ),
+        (
+            lambda manifest: manifest["nodes"][0]["effects"]["aliases"][0].update(
+                output_value_id=99
+            ),
+            "effect_value_unknown",
+        ),
+        (
+            lambda manifest: manifest["nodes"][0]["effects"]["mutated_storages"][
+                0
+            ].update(storage_id=99),
+            "effect_storage_unknown",
+        ),
     ],
 )
 def test_schema_and_reference_corruption_is_rejected(
@@ -262,9 +272,7 @@ def test_arbitrary_json_manifest_never_leaks_validation_exception(
             return rng.choice(scalars)
         if choice == 1:
             return [arbitrary(depth - 1) for _ in range(rng.randrange(5))]
-        return {
-            rng.choice(keys): arbitrary(depth - 1) for _ in range(rng.randrange(6))
-        }
+        return {rng.choice(keys): arbitrary(depth - 1) for _ in range(rng.randrange(6))}
 
     for _ in range(500):
         manifest_path.write_text(json.dumps(arbitrary(4)), encoding="utf-8")
@@ -326,3 +334,20 @@ def test_contract_rejects_empty_kernel_input_before_execution(tmp_path: Path) ->
     result = validate_testcase(root)
 
     assert "contract_shape_invalid" in {issue.code for issue in result.errors}
+
+
+def test_unknown_contract_warns_but_stays_reproducible(tmp_path: Path) -> None:
+    # Reuse the add-one fixture shape from the suite tests: a standalone case
+    # with a well-formed contract ID that this build does not define.
+    from tests.core.test_suite import _case
+
+    case = _case(tmp_path / "case", contract="softmax/last-dim/v1")
+    result = validate_testcase(case)
+
+    assert result.valid is True
+    assert result.reproducible is True
+    assert "contract_not_in_registry" in {issue.code for issue in result.issues}
+    assert any(
+        issue.severity == "warning" and not issue.blocks_reproduction
+        for issue in result.issues
+    )

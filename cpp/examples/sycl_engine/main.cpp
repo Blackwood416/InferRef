@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "inferref/irtensor.hpp"
+#include "inferref/json.hpp"
+#include "inferref/kv_contract.hpp"
 
 namespace fs = std::filesystem;
 
@@ -78,12 +80,11 @@ void ValidateAndWriteDeviceEvidence(const fs::path &output, const sycl::queue &q
 std::string TestcaseContract(const fs::path &root)
 {
     const std::string text = ReadText(root / "testcase.json");
-    const auto key = text.find("\"contracts\"");
-    const auto open = key == std::string::npos ? std::string::npos : text.find('[', key);
-    const auto close = open == std::string::npos ? std::string::npos : text.find(']', open);
-    if (open == std::string::npos || close == std::string::npos)
+    const inferref::json::Value document = inferref::json::Parse(text);
+    const std::vector<std::string> declared =
+        inferref::json::DeclaredContracts(document);
+    if (declared.empty())
         throw std::runtime_error("testcase has no executable contracts array");
-    const std::string declared = text.substr(open, close - open + 1);
     const std::vector<std::string> supported = {
         "rmsnorm/last-dim/v1",
         "rope/rotate-half/v1",
@@ -91,12 +92,17 @@ std::string TestcaseContract(const fs::path &root)
         "kv-cache/indexed-update/v1",
     };
     std::string selected;
-    for (const auto &contract : supported)
-        if (declared.find("\"" + contract + "\"") != std::string::npos)
+    for (const auto &identifier : declared)
+    {
+        const bool known =
+            std::find(supported.begin(), supported.end(), identifier) != supported.end();
+        if (known)
         {
-            if (!selected.empty()) throw std::runtime_error("testcase declares multiple executable contracts");
-            selected = contract;
+            if (!selected.empty())
+                throw std::runtime_error("testcase declares multiple executable contracts");
+            selected = identifier;
         }
+    }
     if (selected.empty()) throw std::runtime_error("testcase has no supported executable contract");
     return selected;
 }
@@ -248,11 +254,14 @@ void RunCache(sycl::queue &queue, const fs::path &root, const fs::path &output, 
     if (indexed)
     {
         auto index = inferref::ReadIRTensor((root / "inputs/index.irtensor").string()).AsFloat32();
-        if (index.size() != 1 || !std::isfinite(index[0]) || index[0] < 0.0f || std::floor(index[0]) != index[0])
-            InvalidContract(contract, "index", "one finite non-negative integer", index.empty() ? "empty" : std::to_string(index[0]));
+        if (index.size() != 1)
+            InvalidContract(contract, "index", "one finite non-negative integer",
+                            index.empty() ? "empty" : std::to_string(index.size()) + " values");
+        const std::string problem = inferref::ValidateIndexedUpdate(
+            index[0], old_sequence, update_sequence);
+        if (!problem.empty())
+            InvalidContract(contract, "index", problem, std::to_string(index[0]));
         const std::size_t target = static_cast<std::size_t>(index[0]);
-        if (target + update_sequence > old_sequence)
-            InvalidContract(contract, "index", "target + update sequence <= cache sequence", std::to_string(target));
         queue.parallel_for(sycl::range<1>(result.size()), [=](sycl::id<1> id) {
             const std::size_t i = id[0];
             const std::size_t group = i / (old_sequence * width);

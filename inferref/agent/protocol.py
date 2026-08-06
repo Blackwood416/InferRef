@@ -42,6 +42,71 @@ def _string_array(value: Any, where: str) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
+class ContractCapability:
+    """Per-contract refinement of the adapter-wide capability declaration."""
+
+    dtypes: tuple[str, ...] | None = None
+    max_rank: int | None = None
+    features: tuple[str, ...] | None = None
+
+    @classmethod
+    def from_dict(cls, data: Any, *, contract: str) -> ContractCapability:
+        if not isinstance(data, dict):
+            raise AgentProtocolError(
+                f"capabilities.contract_capabilities[{contract}] must be an object"
+            )
+        dtypes = data.get("dtypes")
+        if dtypes is None:
+            dtypes_value = None
+        elif isinstance(dtypes, list) and not dtypes:
+            raise AgentProtocolError(
+                f"capabilities.contract_capabilities[{contract}].dtypes "
+                "must be a non-empty string array when present"
+            )
+        else:
+            dtypes_value = _string_array(
+                dtypes,
+                f"capabilities.contract_capabilities[{contract}].dtypes",
+            )
+        raw_features = data.get("features")
+        if raw_features is None:
+            features: tuple[str, ...] | None = None
+        elif raw_features == []:
+            features = ()
+        else:
+            features = _string_array(
+                raw_features,
+                f"capabilities.contract_capabilities[{contract}].features",
+            )
+        if features is not None:
+            unknown = set(features) - ADAPTER_FEATURES
+            if unknown:
+                raise AgentProtocolError(
+                    "unknown contract capability feature(s) for "
+                    f"{contract}: " + ", ".join(sorted(unknown))
+                )
+        max_rank = data.get("max_rank")
+        if max_rank is not None and (
+            not isinstance(max_rank, int) or isinstance(max_rank, bool) or max_rank < 0
+        ):
+            raise AgentProtocolError(
+                f"capabilities.contract_capabilities[{contract}].max_rank "
+                "must be a non-negative integer when present"
+            )
+        return cls(dtypes=dtypes_value, max_rank=max_rank, features=features)
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        if self.dtypes is not None:
+            result["dtypes"] = list(self.dtypes)
+        if self.max_rank is not None:
+            result["max_rank"] = self.max_rank
+        if self.features is not None:
+            result["features"] = list(self.features)
+        return result
+
+
+@dataclass(frozen=True)
 class AdapterCapabilities:
     """Declarative limits checked before an engine process is started."""
 
@@ -50,9 +115,10 @@ class AdapterCapabilities:
     max_rank: int
     features: tuple[str, ...] = ()
     contracts: tuple[str, ...] | None = None
+    contract_capabilities: dict[str, ContractCapability] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: Any) -> "AdapterCapabilities":
+    def from_dict(cls, data: Any) -> AdapterCapabilities:
         if not isinstance(data, dict):
             raise AgentProtocolError("adapter capabilities must be an object")
         devices = _string_array(data.get("device_types"), "capabilities.device_types")
@@ -69,13 +135,18 @@ class AdapterCapabilities:
             )
         max_rank = data.get("max_rank")
         if not isinstance(max_rank, int) or isinstance(max_rank, bool) or max_rank < 0:
-            raise AgentProtocolError("capabilities.max_rank must be a non-negative integer")
+            raise AgentProtocolError(
+                "capabilities.max_rank must be a non-negative integer"
+            )
         raw_contracts = data.get("contracts")
-        contracts = (
-            None
-            if raw_contracts is None
-            else _string_array(raw_contracts, "capabilities.contracts")
-        )
+        if raw_contracts is None:
+            contracts = None
+        elif isinstance(raw_contracts, list) and not raw_contracts:
+            # An explicit empty array means "strictly supports zero contracts",
+            # distinct from a missing field which means "unchecked".
+            contracts = ()
+        else:
+            contracts = _string_array(raw_contracts, "capabilities.contracts")
         if contracts is not None:
             invalid = [item for item in contracts if not is_contract_id(item)]
             if invalid:
@@ -83,7 +154,36 @@ class AdapterCapabilities:
                     "capabilities.contracts contains invalid versioned contract(s): "
                     + ", ".join(invalid)
                 )
-        return cls(devices, dtypes, max_rank, features, contracts)
+        raw_contract_caps = data.get("contract_capabilities")
+        if raw_contract_caps is None:
+            contract_capabilities: dict[str, ContractCapability] = {}
+        else:
+            if not isinstance(raw_contract_caps, dict):
+                raise AgentProtocolError(
+                    "capabilities.contract_capabilities must be an object"
+                )
+            if contracts is None:
+                raise AgentProtocolError(
+                    "capabilities.contract_capabilities requires capabilities.contracts"
+                )
+            contract_capabilities = {}
+            for contract, value in raw_contract_caps.items():
+                if not is_contract_id(contract):
+                    raise AgentProtocolError(
+                        "capabilities.contract_capabilities key must be a versioned "
+                        f"contract ID: {contract!r}"
+                    )
+                if contract not in contracts:
+                    raise AgentProtocolError(
+                        "capabilities.contract_capabilities names a contract that is "
+                        f"not declared in capabilities.contracts: {contract!r}"
+                    )
+                contract_capabilities[contract] = ContractCapability.from_dict(
+                    value, contract=contract
+                )
+        return cls(
+            devices, dtypes, max_rank, features, contracts, contract_capabilities
+        )
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -94,9 +194,16 @@ class AdapterCapabilities:
         }
         if self.contracts is not None:
             result["contracts"] = list(self.contracts)
+        if self.contract_capabilities:
+            result["contract_capabilities"] = {
+                contract: capability.to_dict()
+                for contract, capability in self.contract_capabilities.items()
+            }
         return result
 
-    def incompatibilities(self, requirements: Mapping[str, Any]) -> list[dict[str, Any]]:
+    def incompatibilities(
+        self, requirements: Mapping[str, Any]
+    ) -> list[dict[str, Any]]:
         issues: list[dict[str, Any]] = []
         for dtype in requirements.get("dtypes", []):
             if dtype not in self.dtypes:
@@ -114,6 +221,45 @@ class AdapterCapabilities:
             for contract in required_contracts:
                 if contract not in self.contracts:
                     issues.append({"kind": "contract", "required": contract})
+        return issues
+
+    def contract_incompatibilities(
+        self, contract: str, requirements: Mapping[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Per-contract refinement checks against role-derived requirements."""
+
+        capability = self.contract_capabilities.get(contract)
+        if capability is None:
+            return []
+        issues: list[dict[str, Any]] = []
+        for dtype in requirements.get("dtypes", []):
+            if capability.dtypes is not None and dtype not in capability.dtypes:
+                issues.append(
+                    {"kind": "contract_dtype", "contract": contract, "required": dtype}
+                )
+        rank = requirements.get("max_rank", 0)
+        if (
+            isinstance(rank, int)
+            and capability.max_rank is not None
+            and rank > capability.max_rank
+        ):
+            issues.append(
+                {
+                    "kind": "contract_max_rank",
+                    "contract": contract,
+                    "required": rank,
+                    "supported": capability.max_rank,
+                }
+            )
+        for feature in requirements.get("features", []):
+            if capability.features is not None and feature not in capability.features:
+                issues.append(
+                    {
+                        "kind": "contract_feature",
+                        "contract": contract,
+                        "required": feature,
+                    }
+                )
         return issues
 
     def assessment(self, requirements: Mapping[str, Any]) -> str:
@@ -239,9 +385,7 @@ class EngineAdapter:
                 "adapter max_artifact_files must be an integer"
             ) from exc
         if max_artifact_files < 16:
-            raise AgentProtocolError(
-                "adapter max_artifact_files must be at least 16"
-            )
+            raise AgentProtocolError("adapter max_artifact_files must be at least 16")
         cwd = data.get("cwd")
         if cwd is not None and not isinstance(cwd, str):
             raise AgentProtocolError("adapter cwd must be a string or null")
@@ -257,7 +401,9 @@ class EngineAdapter:
         raw_capabilities = data.get("capabilities")
         if format_version == ENGINE_ADAPTER_VERSION:
             if not isinstance(target_device, str) or not target_device:
-                raise AgentProtocolError("adapter target_device must be a non-empty string")
+                raise AgentProtocolError(
+                    "adapter target_device must be a non-empty string"
+                )
             capabilities = AdapterCapabilities.from_dict(raw_capabilities)
             if target_device.split(":", 1)[0] not in capabilities.device_types:
                 raise AgentProtocolError(

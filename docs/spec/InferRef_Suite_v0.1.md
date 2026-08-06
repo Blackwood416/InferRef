@@ -50,3 +50,25 @@ per-case `run` fields.
 case-by-engine matrix and a sibling JSON `inferref-suite-report` v0.1. Cells
 include status, maximum absolute error, first divergence, duration, and
 unsupported reasons when available.
+
+## Validation
+
+`inferref suite validate` separates structural validity from runnability:
+
+```json
+{
+  "schema_valid": true,
+  "runnable": false,
+  "non_runnable_cases": ["case-x"]
+}
+```
+
+`schema_valid` requires every referenced testcase to pass standalone structural
+validation. `runnable` additionally requires every testcase to be reproducible.
+By default the CLI fails a schema-valid suite that is not runnable;
+`--allow-nonreproducible` keeps the CLI successful for corpus inventory while
+still reporting `runnable: false` and the offending case IDs.
+
+The report HTML output must end in `.html`; the sibling JSON sidecar is derived
+by replacing the extension, so `report.json` as an output name is rejected
+instead of silently overwriting the sidecar.
