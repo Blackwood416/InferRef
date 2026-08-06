@@ -891,6 +891,25 @@ def _is_reparse_status(status: os.stat_result) -> bool:
     return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
 
 
+def _canonical_json_sha256(payload: Any) -> str:
+    """Deterministic SHA-256 of a JSON-serializable object (sort_keys, compact)."""
+
+    encoded = json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _is_sha256(value: Any) -> bool:
+    """Strict lowercase hexadecimal SHA-256 string check."""
+
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
 def _read_regular_file(path: Path) -> bytes:
     """Read one regular file while rejecting a final symlink/reparse point."""
 

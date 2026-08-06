@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +34,8 @@ from inferref.agent.evaluation import (
     AuditLog,
     EvaluationBenchmark,
     EvaluationCase,
+    _canonical_json_sha256,
+    _is_sha256,
     _read_regular_file,
     engine_patch,
     execute_case,
@@ -64,6 +66,14 @@ class AgentProcessResult:
 Driver = Callable[[str, str, EvaluationBenchmark, Path, Path, Path], AgentProcessResult]
 
 
+@dataclass(frozen=True)
+class ResolvedAgentCommand:
+    """Frozen Agent launch prefix split into hashable files and full argv."""
+
+    components: tuple[str, ...]
+    prefix: tuple[str, ...]
+
+
 def _run_formal_worker(
     benchmark_path: str | Path,
     *,
@@ -91,9 +101,9 @@ def _run_formal_worker(
     timeout = benchmark.max_wall_seconds * max(1, len(set(agents))) + 180
     with tempfile.TemporaryDirectory(prefix="inferref-formal-worker-") as temporary:
         request_path = Path(temporary) / "request.json"
-        request_path.write_text(
-            json.dumps(request, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
+        request_bytes = json.dumps(request, ensure_ascii=False).encode("utf-8") + b"\n"
+        request_sha256 = hashlib.sha256(request_bytes).hexdigest()
+        request_path.write_bytes(request_bytes)
         try:
             completed = subprocess.run(
                 [
@@ -127,6 +137,15 @@ def _run_formal_worker(
         ) from exc
     if not isinstance(report, dict):
         raise TypeError("formal evaluation worker report root is not an object")
+    reported_request_sha = (
+        (report.get("worker_evidence") or {})
+        .get("launch_policy", {})
+        .get("request_sha256")
+    )
+    if reported_request_sha != request_sha256:
+        raise RuntimeError(
+            "formal worker evidence does not match the parent request bytes"
+        )
     return report
 
 
@@ -198,6 +217,10 @@ def _evaluate_benchmark_core(
     repository_before = _repository_evidence(benchmark.directory)
     evaluator_source_before = _evaluator_source_manifest()
     runtime_before = _runtime_evidence(benchmark.directory)
+    capture_claude_settings = driver is None and "claude" in selected
+    settings_before = (
+        _capture_external_file(claude_settings) if capture_claude_settings else None
+    )
     if public_attestation_path is not None and (
         repository_before["commit"] is None or repository_before["dirty"]
     ):
@@ -284,6 +307,17 @@ def _evaluate_benchmark_core(
     repository_after = _repository_evidence(benchmark.directory)
     evaluator_source_after = _evaluator_source_manifest()
     runtime_after = _runtime_evidence(benchmark.directory)
+    settings_after = (
+        _capture_external_file(claude_settings) if capture_claude_settings else None
+    )
+    settings_evidence = (
+        _external_file_pair(settings_before, settings_after)
+        if capture_claude_settings
+        else None
+    )
+    settings_evidence_valid = (
+        settings_evidence is None or _external_file_evidence_valid(settings_evidence)
+    )
     repository_unchanged = repository_after == repository_before
     evaluator_unchanged = evaluator_source_after == evaluator_source_before
     runtime_unchanged = runtime_after == runtime_before
@@ -304,16 +338,27 @@ def _evaluate_benchmark_core(
             for item in results
         )
     )
+    model_request_satisfied = _aggregate_optional_bools(
+        _model_request_satisfied(item["process"].get("model_evidence"), item["agent"])
+        for item in results
+    )
     host_unchanged = (
         repository_unchanged
         and evaluator_unchanged
         and benchmark_unchanged
         and runtime_unchanged
+        and settings_evidence_valid
         and runner_integrity is not False
         and model_evidence_valid is not False
+        and model_request_satisfied is not False
     )
     passed_count = sum(item["status"] == "pass" for item in results)
     passed = passed_count >= benchmark.success.required_agent_passes and host_unchanged
+    external_files = (
+        {"claude_settings": settings_evidence}
+        if settings_evidence is not None
+        else None
+    )
     report = {
         "format": "inferref-agent-evaluation-report",
         "format_version": "0.2",
@@ -326,6 +371,7 @@ def _evaluate_benchmark_core(
             "policy": benchmark.success.to_dict(),
             "required_passes": benchmark.success.required_agent_passes,
             "passed": passed_count,
+            "agent_model_request_satisfied": model_request_satisfied,
             "host_integrity_passed": host_unchanged,
         },
         "host_integrity": {
@@ -333,10 +379,14 @@ def _evaluate_benchmark_core(
             "evaluator_source_unchanged": evaluator_unchanged,
             "benchmark_source_unchanged": benchmark_unchanged,
             "runtime_unchanged": runtime_unchanged,
+            "claude_settings_unchanged": settings_evidence_valid,
             "agent_command_chains_unchanged": runner_integrity,
             "agent_model_evidence_valid": model_evidence_valid,
+            "agent_model_request_satisfied": model_request_satisfied,
+            "external_files": external_files,
         },
         "agents": results,
+        "worker_evidence": formal_worker_evidence,
     }
     report_path = report_root / "report.json"
     report_path.write_text(
@@ -356,10 +406,13 @@ def _evaluate_benchmark_core(
         and runtime_unchanged
         and runner_integrity is True
         and model_evidence_valid is True
+        and model_request_satisfied is not False
+        and settings_evidence_valid
     ):
         raise RuntimeError(
             "formal public attestation refused because repository, evaluator, "
-            "benchmark, runtime, or Agent command evidence changed during the run"
+            "benchmark, runtime, Agent command/model-identity, or external-file "
+            "evidence changed during the run"
         )
     attestation = build_public_attestation(
         benchmark,
@@ -376,6 +429,7 @@ def _evaluate_benchmark_core(
         runtime_before=runtime_before,
         runtime_after=runtime_after,
         runtime_unchanged=runtime_unchanged,
+        external_files=external_files,
         formal_worker_evidence=formal_worker_evidence,
     )
     attestation_path = report_root / "attestation.json"
@@ -401,6 +455,7 @@ def build_public_attestation(
     runtime_before: dict[str, Any] | None = None,
     runtime_after: dict[str, Any] | None = None,
     runtime_unchanged: bool | None = None,
+    external_files: dict[str, Any] | None = None,
     formal_worker_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     agents = []
@@ -412,6 +467,9 @@ def build_public_attestation(
             {
                 "agent": agent,
                 "model": result["process"]["model_evidence"],
+                "model_request_satisfied": _model_request_satisfied(
+                    result["process"].get("model_evidence"), agent
+                ),
                 "runner": result["process"]["runner"],
                 "cli_version": result["process"]["cli_version"],
                 "status": result["status"],
@@ -462,10 +520,17 @@ def build_public_attestation(
         and all(
             _model_evidence_valid(agent["model"], agent["agent"]) for agent in agents
         )
+        and all(agent["model_request_satisfied"] is not False for agent in agents)
+        and (
+            external_files is None
+            or all(
+                _external_file_evidence_valid(item) for item in external_files.values()
+            )
+        )
     )
     return {
         "format": "inferref-agent-evaluation-attestation",
-        "format_version": "0.4",
+        "format_version": "0.5",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "attestation_level": "formal" if formal else "development",
         "runner_mode": runner_mode,
@@ -493,6 +558,7 @@ def build_public_attestation(
             "after": runtime_after,
             "unchanged": runtime_unchanged,
         },
+        "external_files": external_files,
         "report_json_sha256": _sha256_or_none(report_path),
         "status": report["status"],
         "acceptance": report["acceptance"],
@@ -586,6 +652,12 @@ def assess_candidate(
     ):
         classification = "integrity_failure"
         message = "candidate violated editable-path, tool-use, or run-budget policy"
+    elif (
+        process.model_evidence
+        and _model_request_satisfied(process.model_evidence, agent) is False
+    ):
+        classification = "identity_policy_failure"
+        message = "Agent reported a model that does not match the requested model"
     elif not historical_visible_pass:
         classification = "agent_failure"
         message = "candidate did not pass the visible case within the run budget"
@@ -715,10 +787,11 @@ def run_agent_cli(
     claude_model_override: str | None = None,
 ) -> AgentProcessResult:
     session_root.mkdir(parents=True, exist_ok=True)
-    resolved_executable = _agent_executable(agent)
-    components_before = _command_component_evidence(resolved_executable)
+    resolved = _normalize_agent_command(_agent_executable(agent))
+    resolved_executable = list(resolved.prefix)
+    components_before = _command_component_evidence(resolved.components)
     cli_version = _agent_version(resolved_executable)
-    components_after_version = _command_component_evidence(resolved_executable)
+    components_after_version = _command_component_evidence(resolved.components)
     command = _agent_command(
         agent,
         model,
@@ -730,6 +803,9 @@ def run_agent_cli(
         claude_settings=claude_settings,
         claude_model_override=claude_model_override,
     )
+    settings_before = (
+        _capture_external_file(claude_settings) if agent == "claude" else None
+    )
     result = _run_process(
         command,
         cwd=workspace,
@@ -737,11 +813,20 @@ def run_agent_cli(
         stdout_path=session_root.parent / "agent.stdout.jsonl",
         stderr_path=session_root.parent / "agent.stderr.log",
     )
-    components_after = _command_component_evidence(resolved_executable)
+    components_after = _command_component_evidence(resolved.components)
     components_unchanged = (
         components_before == components_after_version == components_after
         and all(item.get("sha256") for item in components_after)
     )
+    settings_after = (
+        _capture_external_file(claude_settings) if agent == "claude" else None
+    )
+    external_files = (
+        {"claude_settings": _external_file_pair(settings_before, settings_after)}
+        if agent == "claude"
+        else None
+    )
+    argv_policy = _agent_argv_policy(agent, command)
     return replace(
         result,
         cli_version=cli_version,
@@ -754,12 +839,15 @@ def run_agent_cli(
                 "after": components_after,
             },
             "components_unchanged": components_unchanged,
-            "argv_policy_sha256": hashlib.sha256(
+            "argv_instance_sha256": hashlib.sha256(
                 json.dumps(command, ensure_ascii=False, separators=(",", ":")).encode(
                     "utf-8"
                 )
             ).hexdigest(),
+            "argv_policy": argv_policy,
+            "argv_policy_sha256": _canonical_json_sha256(argv_policy),
             "version_output": cli_version,
+            "external_files": external_files,
         },
         model_evidence=_agent_model_evidence(agent, model, result.stdout_path),
     )
@@ -802,7 +890,8 @@ def _agent_command(
     claude_settings: str | Path | None = None,
     claude_model_override: str | None = None,
 ) -> list[str]:
-    executable = tuple(executable or _agent_executable(agent))
+    resolved = _normalize_agent_command(executable or _agent_executable(agent))
+    executable = tuple(resolved.prefix)
     server_args = [
         "-m",
         "inferref.agent.evaluation_mcp",
@@ -902,37 +991,82 @@ def _agent_command(
     raise ValueError(f"unsupported Agent driver {agent!r}")
 
 
-def _agent_executable(agent: str) -> list[str]:
-    """Resolve Windows npm shims without invoking a command shell."""
+def _normalize_agent_command(
+    value: ResolvedAgentCommand | Sequence[str],
+) -> ResolvedAgentCommand:
+    """Accept either a resolved command or a plain argv prefix (test shims)."""
+
+    if isinstance(value, ResolvedAgentCommand):
+        return value
+    prefix = tuple(value)
+    return ResolvedAgentCommand(components=prefix, prefix=prefix)
+
+
+def _agent_executable(agent: str) -> ResolvedAgentCommand:
+    """Resolve Windows npm shims or POSIX shebangs without a command shell."""
 
     if os.name != "nt":
-        executable = shutil.which(agent)
-        if executable is None:
-            raise FileNotFoundError(f"Agent CLI is not installed: {agent}")
-        entry = Path(executable).resolve(strict=True)
-        try:
-            first_line = (
-                _read_regular_file(entry)
-                .splitlines()[0]
-                .decode("utf-8", errors="strict")
-            )
-        except (OSError, UnicodeError, IndexError):
-            return [str(entry)]
-        if not first_line.startswith("#!"):
-            return [str(entry)]
-        shebang = shlex.split(first_line[2:].strip())
-        if not shebang:
-            return [str(entry)]
-        if Path(shebang[0]).name == "env" and len(shebang) >= 2:
-            interpreter_name = shebang[-1]
-            interpreter = shutil.which(interpreter_name)
-        else:
-            interpreter = shebang[0]
-        if interpreter is None:
+        return _resolve_posix_agent_command(agent)
+    return _resolve_windows_agent_command(agent)
+
+
+def _resolve_posix_agent_command(agent: str) -> ResolvedAgentCommand:
+    executable = shutil.which(agent)
+    if executable is None:
+        raise FileNotFoundError(f"Agent CLI is not installed: {agent}")
+    entry = Path(executable).resolve(strict=True)
+    try:
+        first_line = (
+            _read_regular_file(entry).splitlines()[0].decode("utf-8", errors="strict")
+        )
+    except (OSError, UnicodeError, IndexError):
+        return ResolvedAgentCommand((str(entry),), (str(entry),))
+    if not first_line.startswith("#!"):
+        return ResolvedAgentCommand((str(entry),), (str(entry),))
+    tokens = shlex.split(first_line[2:].strip())
+    if not tokens:
+        return ResolvedAgentCommand((str(entry),), (str(entry),))
+    interpreter = tokens[0]
+    arguments: list[str] = []
+    if Path(interpreter).name == "env":
+        rest = tokens[1:]
+        has_s = "-S" in rest
+        index = 0
+        value_options = {"-u", "--unset", "-C", "--chdir"}
+        while index < len(rest):
+            token = rest[index]
+            if not token.startswith("-"):
+                break
+            if token in value_options and index + 1 < len(rest):
+                index += 2
+            else:
+                index += 1
+        if index >= len(rest):
             raise FileNotFoundError(
                 f"cannot resolve interpreter for Agent CLI: {agent}"
             )
-        return [str(Path(interpreter).resolve(strict=True)), str(entry)]
+        interpreter = rest[index]
+        arguments = rest[index + 1 :]
+        if has_s and shlex.split(interpreter) != [interpreter]:
+            parts = shlex.split(interpreter)
+            interpreter = parts[0]
+            arguments = [*parts[1:], *arguments]
+    else:
+        arguments = tokens[1:]
+    if "/" not in interpreter:
+        resolved = shutil.which(interpreter)
+        if resolved is None:
+            raise FileNotFoundError(
+                f"cannot resolve interpreter for Agent CLI: {agent}"
+            )
+        interpreter = resolved
+    interpreter_path = str(Path(interpreter).resolve(strict=True))
+    components = (interpreter_path, str(entry))
+    prefix = (interpreter_path, *arguments, str(entry))
+    return ResolvedAgentCommand(components, prefix)
+
+
+def _resolve_windows_agent_command(agent: str) -> ResolvedAgentCommand:
     shim = shutil.which(agent)
     if shim is None:
         raise FileNotFoundError(f"Agent CLI is not installed: {agent}")
@@ -947,26 +1081,28 @@ def _agent_executable(agent: str) -> list[str]:
             / "claude.exe"
         )
         if native.is_file():
-            return [str(native.resolve(strict=True))]
+            path = str(native.resolve(strict=True))
+            return ResolvedAgentCommand((path,), (path,))
     if agent == "codex":
         script = npm_root / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
         node = shutil.which("node.exe") or shutil.which("node")
         if script.is_file() and node is not None:
-            return [
-                str(Path(node).resolve(strict=True)),
-                str(script.resolve(strict=True)),
-            ]
+            node_path = str(Path(node).resolve(strict=True))
+            script_path = str(script.resolve(strict=True))
+            return ResolvedAgentCommand(
+                (node_path, script_path), (node_path, script_path)
+            )
     raise FileNotFoundError(f"cannot resolve native executable behind {shim}")
 
 
-def _command_component_evidence(executable: Sequence[str]) -> list[dict[str, Any]]:
+def _command_component_evidence(components: Sequence[str]) -> list[dict[str, Any]]:
     roles = (
         ["cli_executable"]
-        if len(executable) == 1
-        else ["runtime", "cli_entry", *("component" for _ in executable[2:])]
+        if len(components) == 1
+        else ["runtime", "cli_entry", *("component" for _ in components[2:])]
     )
     evidence = []
-    for role, raw_path in zip(roles, executable, strict=True):
+    for role, raw_path in zip(roles, components, strict=True):
         path = Path(raw_path)
         try:
             payload = _read_regular_file(path)
@@ -1004,38 +1140,259 @@ def _runner_evidence_valid(evidence: Any) -> bool:
         return False
     if evidence.get("kind") not in {"codex", "claude"}:
         return False
-    argv_digest = evidence.get("argv_policy_sha256")
-    if not isinstance(argv_digest, str) or len(argv_digest) != 64:
-        return False
-    if (
-        not isinstance(evidence.get("version_output"), str)
-        or not evidence["version_output"]
-    ):
-        return False
     before = snapshots.get("before")
     after_version = snapshots.get("after_version")
     after = snapshots.get("after")
     if not isinstance(before, list) or before != after_version or before != after:
         return False
-    return bool(before) and all(
-        isinstance(item, dict)
-        and item.get("role") in {"runtime", "cli_entry", "cli_executable", "component"}
-        and isinstance(item.get("name"), str)
-        and bool(item["name"])
-        and isinstance(item.get("sha256"), str)
-        and len(item["sha256"]) == 64
-        for item in before
+    if not before:
+        return False
+    expected_roles = (
+        ["cli_executable"]
+        if len(before) == 1
+        else ["runtime", "cli_entry", *("component" for _ in before[2:])]
     )
+    if [item.get("role") for item in before] != expected_roles:
+        return False
+    for item in before:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("name"), str)
+            or not item["name"]
+            or not isinstance(item.get("size"), int)
+            or item["size"] < 0
+            or not _is_sha256(item.get("sha256"))
+            or item.get("error") is not None
+        ):
+            return False
+    if (
+        not isinstance(evidence.get("version_output"), str)
+        or not evidence["version_output"]
+    ):
+        return False
+    if not _is_sha256(evidence.get("argv_instance_sha256")):
+        return False
+    policy = evidence.get("argv_policy")
+    if not isinstance(policy, dict):
+        return False
+    policy_digest = evidence.get("argv_policy_sha256")
+    if not _is_sha256(policy_digest) or policy_digest != _canonical_json_sha256(policy):
+        return False
+    external_files = evidence.get("external_files")
+    if external_files is not None:
+        if not isinstance(external_files, dict) or not external_files:
+            return False
+        if not all(
+            _external_file_evidence_valid(item) for item in external_files.values()
+        ):
+            return False
+    return True
 
 
 def _formal_worker_evidence_valid(evidence: Any) -> bool:
-    return (
-        isinstance(evidence, dict)
-        and evidence.get("python_isolated") is True
-        and evidence.get("entry_module") == "inferref.agent.evaluation_worker"
-        and isinstance(evidence.get("launch_policy_sha256"), str)
-        and len(evidence["launch_policy_sha256"]) == 64
+    if (
+        not isinstance(evidence, dict)
+        or evidence.get("python_isolated") is not True
+        or evidence.get("entry_module") != "inferref.agent.evaluation_worker"
+    ):
+        return False
+    policy = evidence.get("launch_policy")
+    if not isinstance(policy, dict):
+        return False
+    if policy.get("flags") != ["-I", "-m"]:
+        return False
+    if policy.get("entry_module") != "inferref.agent.evaluation_worker":
+        return False
+    if policy.get("request_transport") != "regular-file-json":
+        return False
+    if policy.get("request_schema_version") != "0.1":
+        return False
+    if not _is_sha256(policy.get("request_sha256")):
+        return False
+    digest = evidence.get("launch_policy_sha256")
+    if not _is_sha256(digest) or digest != _canonical_json_sha256(policy):
+        return False
+    executable = evidence.get("python_executable")
+    return executable is None or (
+        isinstance(executable, dict)
+        and isinstance(executable.get("name"), str)
+        and bool(executable["name"])
+        and isinstance(executable.get("size"), int)
+        and executable["size"] >= 0
+        and _is_sha256(executable.get("sha256"))
+        and executable.get("error") is None
     )
+
+
+def _argv_flag_pairs(command: Sequence[str]) -> list[tuple[str, str | None]]:
+    pairs: list[tuple[str, str | None]] = []
+    index = 0
+    while index < len(command):
+        token = command[index]
+        if not token.startswith("-"):
+            index += 1
+            continue
+        if "=" in token:
+            key, value = token.split("=", 1)
+            pairs.append((key, value))
+            index += 1
+            continue
+        if index + 1 < len(command) and not command[index + 1].startswith("-"):
+            pairs.append((token, command[index + 1]))
+            index += 2
+            continue
+        pairs.append((token, None))
+        index += 1
+    return pairs
+
+
+def _agent_argv_policy(agent: str, command: Sequence[str]) -> dict[str, Any]:
+    """Path- and prompt-free normalized argv policy for public attestation."""
+
+    pairs = _argv_flag_pairs(command)
+    values = dict(pairs)
+    if agent == "codex":
+        config: dict[str, str] = {}
+        for key, value in pairs:
+            if key != "-c" or not isinstance(value, str) or "=" not in value:
+                continue
+            config_key, config_value = value.split("=", 1)
+            if config_key in {
+                "approval_policy",
+                "windows.sandbox",
+                "web_search",
+                "mcp_servers.inferref.default_tools_approval_mode",
+            }:
+                try:
+                    config[config_key] = json.loads(config_value)
+                except json.JSONDecodeError:
+                    config[config_key] = config_value
+        return {
+            "kind": "codex",
+            "ephemeral": "--ephemeral" in values,
+            "json_output": "--json" in values,
+            "ignore_user_config": "--ignore-user-config" in values,
+            "skip_git_repo_check": "--skip-git-repo-check" in values,
+            "sandbox": values.get("--sandbox"),
+            "model": values.get("--model"),
+            "config": config,
+        }
+    if agent == "claude":
+        return {
+            "kind": "claude",
+            "print": "--print" in values,
+            "output_format": values.get("--output-format"),
+            "verbose": "--verbose" in values,
+            "effort": values.get("--effort"),
+            "no_session_persistence": "--no-session-persistence" in values,
+            "strict_mcp_config": "--strict-mcp-config" in values,
+            "disable_slash_commands": "--disable-slash-commands" in values,
+            "no_chrome": "--no-chrome" in values,
+            "permission_mode": values.get("--permission-mode"),
+            "model": values.get("--model"),
+            "settings_present": "--settings" in values,
+            "tools": values.get("--tools"),
+            "allowed_tools": values.get("--allowedTools"),
+        }
+    return {"kind": agent}
+
+
+def _capture_external_file(path: str | Path | None) -> dict[str, Any]:
+    """No-follow capture of one external regular file, without publishing paths."""
+
+    if path is None:
+        return {
+            "present": False,
+            "kind": None,
+            "size": None,
+            "sha256": None,
+            "file_id": None,
+        }
+    try:
+        payload = _read_regular_file(Path(path))
+    except OSError as exc:
+        return {
+            "present": True,
+            "kind": None,
+            "size": None,
+            "sha256": None,
+            "file_id": None,
+            "error": str(exc)[:256],
+        }
+    status = os.lstat(Path(path))
+    return {
+        "present": True,
+        "kind": "regular_file",
+        "size": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "file_id": f"{status.st_dev}:{status.st_ino}",
+    }
+
+
+def _external_file_pair(
+    before: dict[str, Any], after: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge a before/after capture into a single unchanged verdict."""
+
+    record = dict(before)
+    record["after_sha256"] = after.get("sha256")
+    record["after_kind"] = after.get("kind")
+    record["after_size"] = after.get("size")
+    record["after_file_id"] = after.get("file_id")
+    if before.get("present") and after.get("present"):
+        record["unchanged"] = (
+            before.get("kind") == "regular_file"
+            and after.get("kind") == "regular_file"
+            and before.get("sha256") == after.get("sha256")
+            and before.get("file_id") == after.get("file_id")
+        )
+    else:
+        record["unchanged"] = before.get("present") == after.get("present")
+    return record
+
+
+def _external_file_evidence_valid(record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if record.get("present") is False:
+        return (
+            record.get("kind") is None
+            and record.get("size") is None
+            and record.get("sha256") is None
+            and record.get("after_sha256") is None
+            and record.get("unchanged") is True
+        )
+    if record.get("present") is not True or record.get("kind") != "regular_file":
+        return False
+    if not isinstance(record.get("size"), int) or record["size"] < 0:
+        return False
+    if not _is_sha256(record.get("sha256")) or not _is_sha256(
+        record.get("after_sha256")
+    ):
+        return False
+    return record.get("unchanged") is True
+
+
+def _model_request_satisfied(evidence: Any, agent: str) -> bool | None:
+    """Whether the reported model satisfies the requested model (None = unknown)."""
+
+    if not isinstance(evidence, dict) or evidence.get("agent") != agent:
+        return None
+    level = evidence.get("identity_level")
+    if level == "requested_only":
+        return None
+    if level != "cli_self_reported":
+        return None
+    return evidence.get("matches_request") is True
+
+
+def _aggregate_optional_bools(values: Iterable[bool | None]) -> bool | None:
+    present = [value for value in values if value is not None]
+    if any(value is False for value in present):
+        return False
+    if present and all(value is True for value in present):
+        return True
+    return None
 
 
 def _model_evidence_valid(evidence: Any, agent: str) -> bool:

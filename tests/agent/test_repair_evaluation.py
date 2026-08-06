@@ -115,6 +115,7 @@ def _valid_runner_evidence(agent: str) -> dict[str, object]:
             "error": None,
         }
     ]
+    policy = {"kind": agent, "policy_marker": "fixture"}
     return {
         "kind": agent,
         "command_components": {
@@ -123,17 +124,71 @@ def _valid_runner_evidence(agent: str) -> dict[str, object]:
             "after": components,
         },
         "components_unchanged": True,
-        "argv_policy_sha256": "b" * 64,
+        "argv_instance_sha256": "b" * 64,
+        "argv_policy": policy,
+        "argv_policy_sha256": evaluation_host._canonical_json_sha256(policy),
         "version_output": f"{agent} test-version",
+        "external_files": None,
     }
 
 
 def _valid_worker_evidence() -> dict[str, object]:
+    policy = {
+        "flags": ["-I", "-m"],
+        "entry_module": "inferref.agent.evaluation_worker",
+        "request_transport": "regular-file-json",
+        "request_schema_version": "0.1",
+        "request_sha256": "c" * 64,
+    }
     return {
         "python_isolated": True,
         "entry_module": "inferref.agent.evaluation_worker",
-        "launch_policy_sha256": "c" * 64,
+        "launch_policy": policy,
+        "launch_policy_sha256": evaluation_host._canonical_json_sha256(policy),
+        "python_executable": {
+            "name": "python.exe",
+            "size": 103192,
+            "sha256": "d" * 64,
+        },
     }
+
+
+def _runner_with_component(**changes: object) -> dict[str, object]:
+    evidence = _valid_runner_evidence("codex")
+    component = {**evidence["command_components"]["before"][0], **changes}
+    snapshot = {
+        "before": [component],
+        "after_version": [component],
+        "after": [component],
+    }
+    return {**evidence, "command_components": snapshot}
+
+
+def _mismatched_model_driver(
+    agent: str,
+    model: str,
+    benchmark: EvaluationBenchmark,
+    workspace: Path,
+    session_root: Path,
+    audit_path: Path,
+    **kwargs: object,
+) -> AgentProcessResult:
+    del kwargs
+    process = _fake_builtin_driver(
+        agent, model, benchmark, workspace, session_root, audit_path
+    )
+    return replace(
+        process,
+        model_evidence={
+            "requested": model,
+            "reported": "different-model",
+            "evidence_source": "cli_system_init_event",
+            "matches_request": False,
+            "identity_level": "cli_self_reported",
+            "provider_verified": False,
+            "agent": agent,
+        },
+    )
 
 
 def _fake_builtin_driver(
@@ -712,7 +767,7 @@ def test_development_attestation_omits_private_transcript_and_paths(
     assert all(agent["engine_patch"] for agent in attestation["agents"])
     assert all(agent["final_engine_sha256"] for agent in attestation["agents"])
     assert all(agent["raw_transcript_sha256"] for agent in attestation["agents"])
-    assert attestation["format_version"] == "0.4"
+    assert attestation["format_version"] == "0.5"
     assert attestation["attestation_level"] == "development"
     assert attestation["runner_mode"] == "custom_driver"
     assert attestation["repository"]["unchanged"] is True
@@ -737,6 +792,9 @@ def test_development_attestation_omits_private_transcript_and_paths(
     assert attestation["runtime"]["before"]["byteorder"] in {"little", "big"}
     assert attestation["runtime"]["before"]["import"]["mode"] == "repository_source"
     assert attestation["report_json_sha256"]
+    assert attestation["external_files"] is None
+    assert attestation["acceptance"]["agent_model_request_satisfied"] is None
+    assert attestation["agents"][0]["model_request_satisfied"] is None
     rendered = json.dumps(attestation)
     assert str(tmp_path) not in rendered
     assert '"prompt"' not in rendered
@@ -799,8 +857,18 @@ def test_formal_worker_launches_isolated_python(
         captured["kwargs"] = kwargs
         report_root = tmp_path / "report"
         report_root.mkdir()
+        request_path = Path(command[command.index("--request") + 1])
+        request_sha256 = hashlib.sha256(request_path.read_bytes()).hexdigest()
         (report_root / "report.json").write_text(
-            json.dumps({"status": "pass"}), encoding="utf-8"
+            json.dumps(
+                {
+                    "status": "pass",
+                    "worker_evidence": evaluation_worker._worker_evidence(
+                        request_sha256
+                    ),
+                }
+            ),
+            encoding="utf-8",
         )
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -818,7 +886,9 @@ def test_formal_worker_launches_isolated_python(
     command = captured["command"]
     assert isinstance(command, list)
     assert command[1:4] == ["-I", "-m", "inferref.agent.evaluation_worker"]
-    assert report == {"status": "pass"}
+    assert report["status"] == "pass"
+    assert report["worker_evidence"]["launch_policy"]["request_sha256"]
+    assert report["worker_evidence"]["python_executable"]["sha256"]
 
 
 def test_formal_worker_entry_refuses_nonisolated_python(tmp_path: Path) -> None:
@@ -897,7 +967,7 @@ def test_formal_attestation_level_requires_worker_and_bound_runner(
 
     assert development["attestation_level"] == "development"
     assert formal["attestation_level"] == "formal"
-    assert formal["format_version"] == "0.4"
+    assert formal["format_version"] == "0.5"
     assert formal["worker"] == _valid_worker_evidence()
     assert formal["agents"][0]["model"]["identity_level"] == "requested_only"
     assert formal["agents"][0]["runner"]["components_unchanged"] is True
@@ -1263,6 +1333,15 @@ def test_agent_runner_resolves_once_and_binds_executable_chain(
     assert result.command[:2] == (str(runtime), str(entry))
     assert result.cli_version == "codex-cli test"
     assert result.runner_evidence["components_unchanged"] is True
+    assert evaluation_host._runner_evidence_valid(result.runner_evidence)
+    assert result.runner_evidence["argv_policy"]["kind"] == "codex"
+    assert result.runner_evidence["argv_policy"]["model"] == "gpt-5.6-sol"
+    assert result.runner_evidence["argv_policy"]["config"]["approval_policy"] == "never"
+    assert result.runner_evidence["argv_policy"]["config"]["web_search"] == "disabled"
+    assert (
+        evaluation_host._canonical_json_sha256(result.runner_evidence["argv_policy"])
+        == result.runner_evidence["argv_policy_sha256"]
+    )
     components = result.runner_evidence["command_components"]["before"]
     assert [item["role"] for item in components] == ["runtime", "cli_entry"]
     assert [item["name"] for item in components] == ["node.exe", "codex.js"]
@@ -1447,3 +1526,686 @@ def test_malformed_agent_json_event_is_rejected(tmp_path: Path) -> None:
     assert evaluation_host._validate_event_stream(events) == (
         "Agent JSON event stream is malformed at line 2"
     )
+
+
+# --- attestation v0.5 hardening: settings binding, model identity, worker argv ---
+
+
+def _settings_process(
+    stdout_path: Path, stderr_path: Path, command: tuple[str, ...]
+) -> AgentProcessResult:
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stdout_path.write_text(
+        json.dumps({"type": "system", "subtype": "init", "model": "deepseek-v4-flash"})
+        + "\n",
+        encoding="utf-8",
+    )
+    stderr_path.write_text("", encoding="utf-8")
+    return AgentProcessResult(
+        command=command,
+        exit_code=0,
+        timed_out=False,
+        duration_ms=1.0,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        stdout="",
+        stderr="",
+        usage={},
+    )
+
+
+def test_claude_settings_binding_unchanged_is_valid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    benchmark = _benchmark()
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"provider": "default"}', encoding="utf-8")
+    executable = tmp_path / "claude.exe"
+    executable.write_bytes(b"claude-binary")
+    monkeypatch.setattr(
+        evaluation_host, "_agent_executable", lambda agent: [str(executable)]
+    )
+    monkeypatch.setattr(
+        evaluation_host, "_agent_version", lambda command: "claude test"
+    )
+
+    def run_process(
+        command: list[str],
+        *,
+        cwd: Path,
+        timeout_seconds: float,
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> AgentProcessResult:
+        del cwd, timeout_seconds
+        return _settings_process(stdout_path, stderr_path, tuple(command))
+
+    monkeypatch.setattr(evaluation_host, "_run_process", run_process)
+
+    result = evaluation_host.run_agent_cli(
+        "claude",
+        "deepseek-v4-flash",
+        benchmark,
+        tmp_path / "workspace",
+        tmp_path / "session",
+        tmp_path / "audit.jsonl",
+        claude_settings=settings,
+        claude_model_override="deepseek-v4-flash",
+    )
+
+    evidence = result.runner_evidence["external_files"]["claude_settings"]
+    assert evidence["present"] is True
+    assert evidence["kind"] == "regular_file"
+    assert evidence["sha256"] == evidence["after_sha256"]
+    assert evidence["unchanged"] is True
+    assert evaluation_host._external_file_evidence_valid(evidence)
+    assert evaluation_host._runner_evidence_valid(result.runner_evidence)
+    rendered = json.dumps(result.runner_evidence)
+    assert str(settings) not in rendered
+    assert str(tmp_path) not in rendered
+
+
+def test_claude_settings_change_fails_runner_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    benchmark = _benchmark()
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"provider": "default"}', encoding="utf-8")
+    executable = tmp_path / "claude.exe"
+    executable.write_bytes(b"claude-binary")
+    monkeypatch.setattr(
+        evaluation_host, "_agent_executable", lambda agent: [str(executable)]
+    )
+    monkeypatch.setattr(
+        evaluation_host, "_agent_version", lambda command: "claude test"
+    )
+
+    def mutating_process(
+        command: list[str],
+        *,
+        cwd: Path,
+        timeout_seconds: float,
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> AgentProcessResult:
+        del cwd, timeout_seconds
+        settings.write_text('{"provider": "changed"}', encoding="utf-8")
+        return _settings_process(stdout_path, stderr_path, tuple(command))
+
+    monkeypatch.setattr(evaluation_host, "_run_process", mutating_process)
+
+    result = evaluation_host.run_agent_cli(
+        "claude",
+        "deepseek-v4-flash",
+        benchmark,
+        tmp_path / "workspace",
+        tmp_path / "session",
+        tmp_path / "audit.jsonl",
+        claude_settings=settings,
+        claude_model_override="deepseek-v4-flash",
+    )
+
+    evidence = result.runner_evidence["external_files"]["claude_settings"]
+    assert evidence["sha256"] != evidence["after_sha256"]
+    assert evidence["unchanged"] is False
+    assert not evaluation_host._external_file_evidence_valid(evidence)
+    assert not evaluation_host._runner_evidence_valid(result.runner_evidence)
+
+
+def test_claude_without_settings_reports_present_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    benchmark = _benchmark()
+    executable = tmp_path / "claude.exe"
+    executable.write_bytes(b"claude-binary")
+    monkeypatch.setattr(
+        evaluation_host, "_agent_executable", lambda agent: [str(executable)]
+    )
+    monkeypatch.setattr(
+        evaluation_host, "_agent_version", lambda command: "claude test"
+    )
+
+    def run_process(
+        command: list[str],
+        *,
+        cwd: Path,
+        timeout_seconds: float,
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> AgentProcessResult:
+        del cwd, timeout_seconds
+        return _settings_process(stdout_path, stderr_path, tuple(command))
+
+    monkeypatch.setattr(evaluation_host, "_run_process", run_process)
+
+    result = evaluation_host.run_agent_cli(
+        "claude",
+        "deepseek-v4-flash",
+        benchmark,
+        tmp_path / "workspace",
+        tmp_path / "session",
+        tmp_path / "audit.jsonl",
+        claude_model_override="deepseek-v4-flash",
+    )
+
+    evidence = result.runner_evidence["external_files"]["claude_settings"]
+    assert evidence["present"] is False
+    assert evidence["unchanged"] is True
+    assert evaluation_host._external_file_evidence_valid(evidence)
+    assert evaluation_host._runner_evidence_valid(result.runner_evidence)
+
+
+def test_claude_settings_symlink_is_rejected(tmp_path: Path) -> None:
+    target = tmp_path / "target.json"
+    target.write_text('{"provider": "default"}', encoding="utf-8")
+    link = tmp_path / "settings.json"
+    _symlink_or_skip(target, link)
+
+    before = evaluation_host._capture_external_file(link)
+    after = evaluation_host._capture_external_file(link)
+    pair = evaluation_host._external_file_pair(before, after)
+
+    assert before["present"] is True
+    assert before["kind"] is None
+    assert before["error"]
+    assert pair["unchanged"] is False
+    assert not evaluation_host._external_file_evidence_valid(pair)
+
+
+def test_claude_settings_delete_and_recreate_is_detected(tmp_path: Path) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"provider": "default"}', encoding="utf-8")
+    before = evaluation_host._capture_external_file(settings)
+
+    settings.unlink()
+    settings.write_text('{"provider": "default"}', encoding="utf-8")
+    after = evaluation_host._capture_external_file(settings)
+    pair = evaluation_host._external_file_pair(before, after)
+
+    assert pair["sha256"] == pair["after_sha256"]
+    assert pair["unchanged"] is False
+    assert not evaluation_host._external_file_evidence_valid(pair)
+
+
+def test_claude_settings_inode_change_with_same_content_is_detected(
+    tmp_path: Path,
+) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"provider": "default"}', encoding="utf-8")
+    before = evaluation_host._capture_external_file(settings)
+
+    replacement = tmp_path / "replacement.json"
+    replacement.write_text('{"provider": "default"}', encoding="utf-8")
+    os.replace(replacement, settings)
+    after = evaluation_host._capture_external_file(settings)
+    pair = evaluation_host._external_file_pair(before, after)
+
+    assert pair["sha256"] == pair["after_sha256"]
+    assert pair["unchanged"] is False
+    assert not evaluation_host._external_file_evidence_valid(pair)
+
+
+def test_benchmark_level_settings_change_fails_host_integrity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"provider": "default"}', encoding="utf-8")
+
+    def mutating_builtin_driver(
+        agent: str,
+        model: str,
+        benchmark: EvaluationBenchmark,
+        workspace: Path,
+        session_root: Path,
+        audit_path: Path,
+        **kwargs: object,
+    ) -> AgentProcessResult:
+        del kwargs
+        settings.write_text('{"provider": "changed"}', encoding="utf-8")
+        return _fake_builtin_driver(
+            agent, model, benchmark, workspace, session_root, audit_path
+        )
+
+    monkeypatch.setattr(evaluation_host, "run_agent_cli", mutating_builtin_driver)
+    report_root = tmp_path / "report"
+    report = evaluation_host._evaluate_benchmark_core(
+        BENCHMARK_PATH,
+        agents=("claude",),
+        report_dir=report_root,
+        claude_settings=settings,
+        claude_model="deepseek-v4-flash",
+    )
+
+    assert report["status"] == "fail"
+    assert report["host_integrity"]["claude_settings_unchanged"] is False
+    external = report["host_integrity"]["external_files"]["claude_settings"]
+    assert external["sha256"] != external["after_sha256"]
+    assert external["unchanged"] is False
+
+
+def test_formal_attestation_refuses_changed_claude_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"provider": "default"}', encoding="utf-8")
+    clean = {
+        "commit": "a" * 40,
+        "dirty": False,
+        "status_sha256": hashlib.sha256(b"").hexdigest(),
+        "git_diff_sha256": hashlib.sha256(b"").hexdigest(),
+        "git_available": True,
+    }
+    monkeypatch.setattr(evaluation_host, "_repository_evidence", lambda path: clean)
+
+    def mutating_builtin_driver(
+        agent: str,
+        model: str,
+        benchmark: EvaluationBenchmark,
+        workspace: Path,
+        session_root: Path,
+        audit_path: Path,
+        **kwargs: object,
+    ) -> AgentProcessResult:
+        del kwargs
+        settings.write_text('{"provider": "changed"}', encoding="utf-8")
+        return _fake_builtin_driver(
+            agent, model, benchmark, workspace, session_root, audit_path
+        )
+
+    monkeypatch.setattr(evaluation_host, "run_agent_cli", mutating_builtin_driver)
+
+    with pytest.raises(RuntimeError, match="changed during the run"):
+        evaluation_host._evaluate_benchmark_core(
+            BENCHMARK_PATH,
+            agents=("claude",),
+            report_dir=tmp_path / "report",
+            claude_settings=settings,
+            claude_model="deepseek-v4-flash",
+            public_attestation=tmp_path / "public.json",
+            formal_worker_evidence=_valid_worker_evidence(),
+        )
+
+    assert not (tmp_path / "public.json").exists()
+
+
+def test_model_request_satisfied_semantics() -> None:
+    base = {"agent": "claude"}
+    assert (
+        evaluation_host._model_request_satisfied(
+            {**base, "identity_level": "requested_only", "matches_request": None},
+            "claude",
+        )
+        is None
+    )
+    assert (
+        evaluation_host._model_request_satisfied(
+            {
+                **base,
+                "identity_level": "cli_self_reported",
+                "matches_request": True,
+            },
+            "claude",
+        )
+        is True
+    )
+    assert (
+        evaluation_host._model_request_satisfied(
+            {
+                **base,
+                "identity_level": "cli_self_reported",
+                "matches_request": False,
+            },
+            "claude",
+        )
+        is False
+    )
+    assert evaluation_host._model_request_satisfied({}, "claude") is None
+    assert (
+        evaluation_host._model_request_satisfied(
+            {**base, "identity_level": "provider_verified"}, "claude"
+        )
+        is None
+    )
+
+
+def test_reported_model_mismatch_fails_benchmark_and_classifies_identity_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(evaluation_host, "run_agent_cli", _mismatched_model_driver)
+    report_root = tmp_path / "report"
+    report = evaluation_host._evaluate_benchmark_core(
+        BENCHMARK_PATH,
+        agents=("claude",),
+        report_dir=report_root,
+        claude_model="deepseek-v4-flash",
+    )
+
+    assert report["status"] == "fail"
+    assert report["acceptance"]["agent_model_request_satisfied"] is False
+    assert report["host_integrity"]["agent_model_request_satisfied"] is False
+    assert report["agents"][0]["classification"] == "identity_policy_failure"
+    attestation = json.loads(
+        (report_root / "attestation.json").read_text(encoding="utf-8")
+    )
+    assert attestation["agents"][0]["model_request_satisfied"] is False
+    assert attestation["attestation_level"] == "development"
+
+
+def test_formal_attestation_refuses_model_identity_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(evaluation_host, "run_agent_cli", _mismatched_model_driver)
+    clean = {
+        "commit": "a" * 40,
+        "dirty": False,
+        "status_sha256": hashlib.sha256(b"").hexdigest(),
+        "git_diff_sha256": hashlib.sha256(b"").hexdigest(),
+        "git_available": True,
+    }
+    monkeypatch.setattr(evaluation_host, "_repository_evidence", lambda path: clean)
+
+    with pytest.raises(RuntimeError, match="changed during the run"):
+        evaluation_host._evaluate_benchmark_core(
+            BENCHMARK_PATH,
+            agents=("claude",),
+            report_dir=tmp_path / "report",
+            claude_model="deepseek-v4-flash",
+            public_attestation=tmp_path / "public.json",
+            formal_worker_evidence=_valid_worker_evidence(),
+        )
+
+    assert not (tmp_path / "public.json").exists()
+
+
+def test_worker_launch_policy_is_canonical_and_validated() -> None:
+    evidence = {
+        **evaluation_worker._worker_evidence("c" * 64),
+        "python_isolated": True,
+    }
+
+    assert evaluation_host._formal_worker_evidence_valid(evidence) is True
+    assert evidence["launch_policy"]["request_sha256"] == "c" * 64
+    assert evidence["launch_policy"]["flags"] == ["-I", "-m"]
+    assert evidence["python_executable"]["sha256"]
+    assert "orig_argv" not in json.dumps(evidence)
+    assert (
+        evaluation_host._canonical_json_sha256(evidence["launch_policy"])
+        == evidence["launch_policy_sha256"]
+    )
+
+    tampered = {
+        **evidence,
+        "launch_policy": {
+            **evidence["launch_policy"],
+            "request_transport": "network",
+        },
+    }
+    assert not evaluation_host._formal_worker_evidence_valid(tampered)
+
+    wrong_digest = {**evidence, "launch_policy_sha256": "e" * 64}
+    assert not evaluation_host._formal_worker_evidence_valid(wrong_digest)
+
+    bad_executable = {
+        **evidence,
+        "python_executable": {
+            "name": "python.exe",
+            "size": -1,
+            "sha256": "f" * 64,
+        },
+    }
+    assert not evaluation_host._formal_worker_evidence_valid(bad_executable)
+
+
+def test_formal_worker_rejects_report_without_matching_request_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        report_root = tmp_path / "report"
+        report_root.mkdir()
+        (report_root / "report.json").write_text(
+            json.dumps({"status": "pass"}), encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(evaluation_host.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="does not match the parent request"):
+        evaluation_host._run_formal_worker(
+            BENCHMARK_PATH,
+            agents=("codex",),
+            report_dir=tmp_path / "report",
+            claude_settings=None,
+            claude_model=None,
+            public_attestation=tmp_path / "public.json",
+        )
+
+
+def _posix_which_map(entries: dict[str, str]):
+    def which(name: str) -> str | None:
+        return entries.get(name)
+
+    return which
+
+
+def test_posix_env_shebang_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = tmp_path / "codex"
+    entry.write_text("#!/usr/bin/env my-node\n", encoding="utf-8")
+    node = tmp_path / "node"
+    node.write_bytes(b"node-binary")
+    monkeypatch.setattr(
+        evaluation_host.shutil,
+        "which",
+        _posix_which_map({"codex": str(entry), "my-node": str(node)}),
+    )
+
+    resolved = evaluation_host._resolve_posix_agent_command("codex")
+
+    assert resolved.components == (str(node), str(entry))
+    assert resolved.prefix == (str(node), str(entry))
+
+
+def test_posix_env_s_shebang_preserves_interpreter_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = tmp_path / "codex"
+    entry.write_text("#!/usr/bin/env -S my-node --no-warnings\n", encoding="utf-8")
+    node = tmp_path / "node"
+    node.write_bytes(b"node-binary")
+    monkeypatch.setattr(
+        evaluation_host.shutil,
+        "which",
+        _posix_which_map({"codex": str(entry), "my-node": str(node)}),
+    )
+
+    resolved = evaluation_host._resolve_posix_agent_command("codex")
+
+    assert resolved.components == (str(node), str(entry))
+    assert resolved.prefix == (str(node), "--no-warnings", str(entry))
+
+
+def test_posix_env_s_shebang_preserves_quoted_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = tmp_path / "codex"
+    entry.write_text('#!/usr/bin/env -S my-node --flag "a b"\n', encoding="utf-8")
+    node = tmp_path / "node"
+    node.write_bytes(b"node-binary")
+    monkeypatch.setattr(
+        evaluation_host.shutil,
+        "which",
+        _posix_which_map({"codex": str(entry), "my-node": str(node)}),
+    )
+
+    resolved = evaluation_host._resolve_posix_agent_command("codex")
+
+    assert resolved.prefix == (str(node), "--flag", "a b", str(entry))
+
+
+def test_posix_env_s_shebang_quoted_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = tmp_path / "codex"
+    entry.write_text('#!/usr/bin/env -S "my-node --no-warnings"\n', encoding="utf-8")
+    node = tmp_path / "node"
+    node.write_bytes(b"node-binary")
+    monkeypatch.setattr(
+        evaluation_host.shutil,
+        "which",
+        _posix_which_map({"codex": str(entry), "my-node": str(node)}),
+    )
+
+    resolved = evaluation_host._resolve_posix_agent_command("codex")
+
+    assert resolved.components == (str(node), str(entry))
+    assert resolved.prefix == (str(node), "--no-warnings", str(entry))
+
+
+def test_posix_env_value_option_does_not_become_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = tmp_path / "codex"
+    entry.write_text("#!/usr/bin/env -u FOO my-node\n", encoding="utf-8")
+    node = tmp_path / "node"
+    node.write_bytes(b"node-binary")
+    monkeypatch.setattr(
+        evaluation_host.shutil,
+        "which",
+        _posix_which_map({"codex": str(entry), "my-node": str(node)}),
+    )
+
+    resolved = evaluation_host._resolve_posix_agent_command("codex")
+
+    assert resolved.components == (str(node), str(entry))
+    assert resolved.prefix == (str(node), str(entry))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="absolute POSIX interpreter")
+def test_posix_direct_shebang_preserves_interpreter_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = tmp_path / "codex"
+    entry.write_text("#!/usr/bin/python3 -s\n", encoding="utf-8")
+    monkeypatch.setattr(
+        evaluation_host.shutil,
+        "which",
+        _posix_which_map({"codex": str(entry)}),
+    )
+
+    resolved = evaluation_host._resolve_posix_agent_command("codex")
+
+    assert resolved.components == ("/usr/bin/python3", str(entry))
+    assert resolved.prefix == ("/usr/bin/python3", "-s", str(entry))
+
+
+def test_posix_shebang_missing_interpreter_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = tmp_path / "codex"
+    entry.write_text("#!/usr/bin/env missing-interpreter\n", encoding="utf-8")
+    monkeypatch.setattr(
+        evaluation_host.shutil,
+        "which",
+        _posix_which_map({"codex": str(entry)}),
+    )
+
+    with pytest.raises(FileNotFoundError, match="interpreter"):
+        evaluation_host._resolve_posix_agent_command("codex")
+
+
+def test_posix_native_executable_without_shebang(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = tmp_path / "codex"
+    entry.write_bytes(b"\x7fELF\x02\x01\x01\x00binary")
+    monkeypatch.setattr(
+        evaluation_host.shutil,
+        "which",
+        _posix_which_map({"codex": str(entry)}),
+    )
+
+    resolved = evaluation_host._resolve_posix_agent_command("codex")
+
+    assert resolved.components == (str(entry),)
+    assert resolved.prefix == (str(entry),)
+
+
+def test_claude_argv_policy_records_tools_and_settings_presence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    benchmark = _benchmark()
+    monkeypatch.setattr(evaluation_host, "_agent_executable", lambda agent: [agent])
+    (tmp_path / "session").mkdir()
+    settings = tmp_path / "settings.json"
+    settings.write_text("{}", encoding="utf-8")
+
+    command = evaluation_host._agent_command(
+        "claude",
+        "opus",
+        benchmark,
+        tmp_path / "workspace",
+        tmp_path / "session",
+        tmp_path / "audit.jsonl",
+        claude_settings=settings,
+        claude_model_override="deepseek-v4-flash",
+    )
+    policy = evaluation_host._agent_argv_policy("claude", command)
+
+    assert policy["settings_present"] is True
+    assert policy["model"] == "deepseek-v4-flash"
+    assert policy["permission_mode"] == "acceptEdits"
+    assert "Read,Edit" in policy["tools"]
+    assert policy["strict_mcp_config"] is True
+    rendered = json.dumps(policy)
+    assert str(settings) not in rendered
+    assert str(tmp_path) not in rendered
+
+
+def test_runner_evidence_rejects_malformed_component_shape() -> None:
+    assert evaluation_host._runner_evidence_valid(_valid_runner_evidence("codex"))
+    assert not evaluation_host._runner_evidence_valid(
+        _runner_with_component(sha256="A" * 64)
+    )
+    assert not evaluation_host._runner_evidence_valid(_runner_with_component(size=-1))
+    assert not evaluation_host._runner_evidence_valid(
+        _runner_with_component(error="boom")
+    )
+    assert not evaluation_host._runner_evidence_valid(_runner_with_component(name=""))
+
+
+def test_runner_evidence_rejects_wrong_role_sequence() -> None:
+    evidence = _valid_runner_evidence("codex")
+    component = evidence["command_components"]["before"][0]
+    duplicate = [component, component]
+    snapshot = {"before": duplicate, "after_version": duplicate, "after": duplicate}
+
+    assert not evaluation_host._runner_evidence_valid(
+        {**evidence, "command_components": snapshot}
+    )
+
+
+def test_runner_evidence_rejects_tampered_argv_policy() -> None:
+    evidence = _valid_runner_evidence("codex")
+    tampered = {**evidence, "argv_policy": {"kind": "codex", "policy_marker": "evil"}}
+
+    assert not evaluation_host._runner_evidence_valid(tampered)
+
+
+def test_runner_evidence_rejects_invalid_external_file_evidence() -> None:
+    evidence = _valid_runner_evidence("claude")
+    evidence["external_files"] = {
+        "claude_settings": {
+            "present": True,
+            "kind": None,
+            "size": None,
+            "sha256": None,
+            "after_sha256": None,
+            "unchanged": False,
+        }
+    }
+
+    assert not evaluation_host._runner_evidence_valid(evidence)

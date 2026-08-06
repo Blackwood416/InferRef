@@ -216,14 +216,28 @@ execution, and hashes every executable component before version detection, after
 version detection, and after the Agent exits. On Windows this binds `node.exe` and
 `codex.js` separately for Codex, and the actual Claude executable for Claude.
 
-Attestation v0.4 binds repository, runtime, distribution, evaluator source and
+Attestation v0.5 binds repository, runtime, distribution, evaluator source and
 benchmark evidence before and after evaluation, plus the Agent command-chain
-hashes, an argv-policy hash, model evidence level, sealed MCP audit, final patch,
+hashes, a path-free normalized argv policy with a verifiable digest, model
+evidence level and request-satisfaction verdict, sealed MCP audit, final patch,
 visible/holdout results, transcript hashes, duration, and available usage/cost.
-It excludes reasoning, credentials, reference payloads, executable absolute paths,
-and local settings paths. Full model event streams remain untracked. Ordinary CI
-uses a deterministic fake Agent to test this evaluator and produces development
-evidence; it does not spend model tokens or claim autonomous repair.
+When Claude Code uses `--claude-settings`, the settings file is captured
+no-follow before and after the Agent run; the attestation publishes only size,
+SHA-256 and an unchanged verdict, never the path or contents. A CLI that
+self-reports a model different from the requested one fails the benchmark as an
+`identity_policy_failure` and is refused by formal attestation.
+
+The isolated worker's launch evidence is a canonical policy object (`-I -m`,
+request transport, request byte SHA-256, Python executable hash) with a
+recomputable `launch_policy_sha256`; the parent cross-checks the request hash
+against the worker report. Agent argv is split into an instance digest and the
+public path-free policy digest so third parties can verify the policy without
+private paths or prompts.
+
+It excludes reasoning, credentials, reference payloads, executable absolute
+paths, and local settings paths. Full model event streams remain untracked.
+Ordinary CI uses a deterministic fake Agent to test this evaluator and produces
+development evidence; it does not spend model tokens or claim autonomous repair.
 The machine-readable contract lives in
 [`benchmark.json`](examples/agent_eval/rope_sign/benchmark.json).
 

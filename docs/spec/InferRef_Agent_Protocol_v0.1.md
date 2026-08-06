@@ -286,27 +286,52 @@ The cumulative digest detects corruption, truncation, and torn writes. It is not
 a keyed authenticator and does not resist a same-user process able to rewrite the
 entire evidence stream.
 
-The evaluator may emit a redacted `inferref-agent-evaluation-attestation` v0.4.
+The evaluator may emit a redacted `inferref-agent-evaluation-attestation` v0.5.
 Formal publication is delegated to a fresh isolated Python worker (`python -I`);
 ordinary in-process API and custom/test-driver runs can only produce
 `attestation_level: development` evidence. The worker requires a clean Git
 worktree before and after the run and unchanged repository, evaluator, benchmark,
-runtime, and Agent executable evidence.
+runtime, Agent executable, model-identity, and external-file evidence.
 
 Each Agent executable chain is resolved once. The same frozen command prefix is
 used for version detection and execution, and every component is hashed before
 version detection, after version detection, and after execution. Public evidence
-contains component roles, basenames, sizes, SHA-256 values, an argv-policy digest,
-version output, and the aggregate unchanged verdict, but no absolute executable
-paths. For Windows Codex the runtime (`node.exe`) and CLI entry (`codex.js`) are
-separate components.
+contains component roles, basenames, sizes, SHA-256 values, an instance argv
+digest, a path-free normalized argv policy with a verifiable digest, version
+output, and the aggregate unchanged verdict, but no absolute executable paths.
+For Windows Codex the runtime (`node.exe`) and CLI entry (`codex.js`) are
+separate components. POSIX shebang resolution honors `env -S` and direct
+interpreter arguments (`#!/usr/bin/python3 -s`), keeping interpreter flags as
+launch arguments while hashing only executable file components.
 
 Model identity is explicit evidence rather than a single resolved-model string:
 `requested_only` means only the evaluator request is known;
 `cli_self_reported` means an Agent-specific JSON event reported the model. The
 record includes request, report, source and match verdict. Neither level is
 provider verification, and a missing Codex model event does not silently become a
-confirmed identity.
+confirmed identity. Evidence validity and request satisfaction are separate
+verdicts: a self-reported model that does not match the request makes the
+candidate an `identity_policy_failure`, fails the benchmark, and is refused by
+formal attestation even if the numerical results pass.
+
+The isolated worker records a canonical launch policy (`-I -m`, request
+transport, request schema version, SHA-256 of the exact request bytes, and the
+worker Python executable hash) with a recomputable `launch_policy_sha256`. The
+digest never includes temporary request paths or other instance randomness, and
+the parent process independently hashes the request bytes it wrote and rejects a
+worker report whose evidence does not match.
+
+When Claude Code runs with `--claude-settings`, the settings file is captured
+no-follow before and after the Agent process, using the same regular-file
+semantics as workspace hashing (symlink/reparse points are rejected). The
+published record contains `present`, `kind`, `size`, `sha256`, `after_sha256`,
+`after_kind`, `after_size`, `after_file_id`, and `unchanged`; absolute paths and
+contents are never published. The verdict requires the same file identity and
+bytes before and after, so replacement or delete-and-recreate with identical
+content is still detected. A Claude run without settings records an explicit
+`present: false`. Both per-agent runner evidence and benchmark-level
+`external_files` are validated, and an unchanged verdict is a formal-attestation
+requirement.
 
 The benchmark digest is fixed from the exact bytes parsed at load time rather
 than reread during publication. Runtime and installed-distribution evidence is

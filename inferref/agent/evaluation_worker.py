@@ -9,20 +9,48 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from inferref.agent.evaluation import _read_regular_file
+from inferref.agent.evaluation import (
+    _canonical_json_sha256,
+    _read_regular_file,
+)
 from inferref.agent.evaluation_host import _evaluate_benchmark_core
 
 
-def _worker_evidence() -> dict[str, Any]:
-    launch_digest = hashlib.sha256(
-        json.dumps(sys.orig_argv, ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
-    ).hexdigest()
+def _executable_file_evidence(path: str) -> dict[str, Any]:
+    """Hash the worker Python executable without publishing its absolute path."""
+
+    try:
+        payload = _read_regular_file(Path(path))
+    except OSError as exc:
+        return {
+            "name": Path(path).name,
+            "size": None,
+            "sha256": None,
+            "error": str(exc)[:256],
+        }
+    return {
+        "name": Path(path).name,
+        "size": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def _worker_evidence(request_sha256: str) -> dict[str, Any]:
+    """Canonical launch-policy evidence bound to the exact request bytes."""
+
+    policy = {
+        "flags": ["-I", "-m"],
+        "entry_module": "inferref.agent.evaluation_worker",
+        "request_transport": "regular-file-json",
+        "request_schema_version": "0.1",
+        "request_sha256": request_sha256,
+    }
     return {
         "python_isolated": bool(sys.flags.isolated),
-        "entry_module": "inferref.agent.evaluation_worker",
-        "launch_policy_sha256": launch_digest,
+        "entry_module": policy["entry_module"],
+        "launch_policy": policy,
+        "launch_policy_sha256": _canonical_json_sha256(policy),
+        "python_executable": _executable_file_evidence(sys.executable),
     }
 
 
@@ -43,12 +71,13 @@ def _required_string(request: dict[str, Any], key: str) -> str:
 
 
 def run_request(path: Path) -> dict[str, Any]:
-    worker_evidence = _worker_evidence()
-    if worker_evidence["python_isolated"] is not True:
+    if not bool(sys.flags.isolated):
         raise RuntimeError("formal evaluation worker requires Python isolated mode")
-    request = json.loads(_read_regular_file(path))
+    request_bytes = _read_regular_file(path)
+    request = json.loads(request_bytes.decode("utf-8"))
     if not isinstance(request, dict):
         raise TypeError("formal worker request root must be an object")
+    worker_evidence = _worker_evidence(hashlib.sha256(request_bytes).hexdigest())
     allowed = {
         "benchmark",
         "agents",
