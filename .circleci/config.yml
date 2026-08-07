@@ -431,20 +431,22 @@ jobs:
           shell: powershell.exe
           command: |
             $ErrorActionPreference = "Stop"
-            cmd /c "cmake --version >nul 2>&1"
-            if ($LASTEXITCODE -ne 0) {
+            $CMAKE = "C:\Program Files\CMake\bin\cmake.exe"
+            if (-not (Test-Path $CMAKE)) {
                 choco install cmake --yes --no-progress --installargs 'ADD_CMAKE_TO_PATH=System' --apply-install-arguments-to-dependencies
             }
-            cmake --version
-            ctest --version
+            & $CMAKE --version
+            & "C:\Program Files\CMake\bin\ctest.exe" --version
       - run:
           name: Configure, build, and self-test
           shell: bash.exe
           command: |
             set -euo pipefail
-            cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
-            cmake --build cpp/build --config Release
-            ctest --test-dir cpp/build --output-on-failure -C Release
+            CMAKE="/c/Program Files/CMake/bin/cmake.exe"
+            CTEST="/c/Program Files/CMake/bin/ctest.exe"
+            "$CMAKE" -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+            "$CMAKE" --build cpp/build --config Release
+            "$CTEST" --test-dir cpp/build --output-on-failure -C Release
       - run:
           name: Cross-language wire agreement without PyTorch
           shell: bash.exe
