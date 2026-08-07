@@ -466,14 +466,6 @@ jobs:
 
 workflows:
   ci:
-    # PyTorch nightly warning: scheduled on Mondays and on main pushes only.
-    triggers:
-      - schedule:
-          cron: "17 6 * * 1"
-          filters:
-            branches:
-              only:
-                - main
     jobs:
       # Full Linux correctness matrix: every branch and every tag.
       - core-linux:
@@ -547,7 +539,10 @@ workflows:
             branches:
               only: /.+/
 
-      # PyTorch nightly warning: main pushes and the Monday schedule only.
+      # PyTorch nightly warning: main pushes only. The Monday schedule is
+      # defined in the separate `nightly` workflow below; a workflow with a
+      # `triggers: schedule` key runs only on schedule and never on VCS
+      # events, so it must not live in the `ci` workflow.
       - frontend-nightly-linux:
           filters:
             branches:
@@ -615,4 +610,19 @@ workflows:
               ignore: /.*/
             tags:
               only: /^v.*/
+
+  nightly:
+    # PyTorch nightly warning: Mondays at 06:17 UTC only. GitHub App pipelines
+    # do not support workflow-level schedule triggers, so if this schedule is
+    # not firing, create a Schedule trigger on the build-and-test pipeline in
+    # Project Settings -> Project Setup instead.
+    triggers:
+      - schedule:
+          cron: "17 6 * * 1"
+          filters:
+            branches:
+              only:
+                - main
+    jobs:
+      - frontend-nightly-linux
 
