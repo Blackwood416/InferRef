@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from inferref.testcase.contracts import (
     EXECUTABLE_CONTRACTS,
+    contract_boundary_issues,
     contract_input_issues,
     contract_requirements,
     get_contract,
@@ -135,3 +136,98 @@ def test_contract_requirements_fallback_for_unknown_contract() -> None:
         "max_rank": 2,
         "features": [],
     }
+
+
+def test_rmsnorm_boundary_validates_output_shape_and_dtype() -> None:
+    inputs = {
+        "x": _tensor([2, 3, 64], dtype="float16"),
+        "weight": _tensor([64], dtype="float16"),
+        "epsilon": _tensor([1], dtype="float32"),
+    }
+    assert (
+        contract_boundary_issues(
+            "rmsnorm/last-dim/v1",
+            inputs,
+            {"y": _tensor([2, 3, 64], dtype="float16")},
+        )
+        == []
+    )
+    issues = contract_boundary_issues(
+        "rmsnorm/last-dim/v1",
+        inputs,
+        {"y": _tensor([2, 64], dtype="float16")},
+    )
+    assert any("y.shape must equal x.shape" in issue for issue in issues)
+    issues = contract_boundary_issues(
+        "rmsnorm/last-dim/v1",
+        inputs,
+        {"y": _tensor([2, 3, 64], dtype="float32")},
+    )
+    assert any("y.dtype must equal x.dtype" in issue for issue in issues)
+
+
+def test_rope_boundary_validates_both_output_branches() -> None:
+    inputs = {
+        "query": _tensor([1, 4, 8], dtype="float16"),
+        "key": _tensor([1, 4, 8], dtype="float16"),
+        "cos": _tensor([4, 8], dtype="float32"),
+        "sin": _tensor([4, 8], dtype="float32"),
+    }
+    assert (
+        contract_boundary_issues(
+            "rope/rotate-half/v1",
+            inputs,
+            {
+                "q_embed": _tensor([1, 4, 8], dtype="float16"),
+                "k_embed": _tensor([1, 4, 8], dtype="float16"),
+            },
+        )
+        == []
+    )
+    issues = contract_boundary_issues(
+        "rope/rotate-half/v1",
+        inputs,
+        {
+            "q_embed": _tensor([1, 4, 8], dtype="float16"),
+            "k_embed": _tensor([1, 4, 4], dtype="float16"),
+        },
+    )
+    assert any("k_embed.shape must equal key.shape" in issue for issue in issues)
+
+
+def test_kv_boundary_validates_append_sequence_and_indexed_identity() -> None:
+    append_inputs = {"cache": _tensor([2, 4, 4, 8]), "update": _tensor([2, 4, 1, 8])}
+    assert (
+        contract_boundary_issues(
+            "kv-cache/append/v1",
+            append_inputs,
+            {"cache_out": _tensor([2, 4, 5, 8])},
+        )
+        == []
+    )
+    issues = contract_boundary_issues(
+        "kv-cache/append/v1",
+        append_inputs,
+        {"cache_out": _tensor([2, 4, 4, 8])},
+    )
+    assert any("cache_out sequence length" in issue for issue in issues)
+
+    indexed_inputs = {
+        "cache": _tensor([2, 4, 4, 8]),
+        "update": _tensor([2, 4, 1, 8]),
+        "index": _tensor([1]),
+    }
+    assert (
+        contract_boundary_issues(
+            "kv-cache/indexed-update/v1",
+            indexed_inputs,
+            {"cache_out": _tensor([2, 4, 4, 8])},
+        )
+        == []
+    )
+    issues = contract_boundary_issues(
+        "kv-cache/indexed-update/v1",
+        indexed_inputs,
+        {"cache_out": _tensor([2, 4, 5, 8])},
+    )
+    assert any("cache_out.shape must equal cache.shape" in issue for issue in issues)

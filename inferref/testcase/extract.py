@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,10 +42,11 @@ from inferref.ir.values import (
 )
 from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_FORMAT_VERSION
 from inferref.testcase.contracts import (
-    contract_input_issues,
+    contract_boundary_issues,
     get_contract,
 )
 from inferref.testcase.requirements import derive_requirements, is_contract_id
+from inferref.testcase.validate import validate_testcase
 
 
 class ExtractionError(RuntimeError):
@@ -312,6 +315,7 @@ def extract_operator(
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
     contracts: Sequence[str] | None = None,
+    force: bool = False,
 ) -> ExtractedTestcase:
     """Extract a single-operator testcase (SPEC §23; IR §53)."""
     graph = package.graph
@@ -330,6 +334,7 @@ def extract_operator(
         input_names=input_names,
         output_names=output_names,
         contracts=contracts,
+        force=force,
     )
 
 
@@ -342,6 +347,7 @@ def extract_region(
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
     contracts: Sequence[str] | None = None,
+    force: bool = False,
 ) -> ExtractedTestcase:
     """Extract a region testcase (SPEC §37; IR §53)."""
     graph = package.graph
@@ -359,6 +365,7 @@ def extract_region(
         input_names=input_names,
         output_names=output_names,
         contracts=contracts,
+        force=force,
     )
 
 
@@ -375,10 +382,73 @@ def _write_testcase(
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
     contracts: Sequence[str] | None = None,
+    force: bool = False,
+) -> ExtractedTestcase:
+    """Build a testcase in a staging directory and publish it atomically.
+
+    A failed extraction never touches an existing testcase directory: payloads
+    and the manifest are assembled under a hidden sibling directory, the final
+    package is run through the standalone validator, and only then is it
+    promoted into place. Existing outputs are refused unless ``force`` is set.
+    """
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.exists() and not force:
+        raise ExtractionError(
+            f"testcase output already exists: {output}; pass force=True to "
+            "atomically replace it"
+        )
+    staging = output.with_name(f".{output.name}.tmp-{uuid.uuid4().hex[:12]}")
+    staging.mkdir(parents=True, exist_ok=False)
+    try:
+        result = _build_staged_testcase(
+            package,
+            root=staging,
+            output=output,
+            name=name,
+            node_ids=node_ids,
+            input_ids=input_ids,
+            output_ids=output_ids,
+            origin=origin,
+            operators=operators,
+            input_names=input_names,
+            output_names=output_names,
+            contracts=contracts,
+        )
+        validation = validate_testcase(staging)
+        blocking = [
+            issue for issue in validation.errors if issue.code != "payload_missing"
+        ]
+        if blocking:
+            details = "; ".join(
+                f"{issue.code}: {issue.message}" for issue in blocking[:3]
+            )
+            raise ExtractionError(
+                "extracted testcase failed standalone validation: " + details
+            )
+        _promote_staging(staging, output, force=force)
+        return result
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def _build_staged_testcase(
+    package: TracePackage,
+    *,
+    root: Path,
+    output: Path,
+    name: str,
+    node_ids: Sequence[int],
+    input_ids: Sequence[int],
+    output_ids: Sequence[int],
+    origin: dict[str, Any],
+    operators: Sequence[OperatorRecord],
+    input_names: Sequence[str] | None = None,
+    output_names: Sequence[str] | None = None,
+    contracts: Sequence[str] | None = None,
 ) -> ExtractedTestcase:
     graph = package.graph
-    output.mkdir(parents=True, exist_ok=True)
-
     result = ExtractedTestcase(path=output, name=name)
     manifest_inputs: list[dict[str, Any]] = []
     manifest_outputs: list[dict[str, Any]] = []
@@ -398,7 +468,7 @@ def _write_testcase(
             continue
         value = graph.value(value_id)
         relative = f"inputs/{input_stems[position]}.irtensor"
-        ok = _copy_payload(package, value, output / relative)
+        ok = _copy_payload(package, value, root / relative)
         if not ok:
             result.missing_payloads.append(value_id)
             result.missing_payload_details.append(
@@ -427,7 +497,7 @@ def _write_testcase(
             continue
         value = graph.value(value_id)
         relative = f"reference/{output_stems[position]}.irtensor"
-        ok = _copy_payload(package, value, output / relative)
+        ok = _copy_payload(package, value, root / relative)
         if not ok:
             result.missing_payloads.append(value_id)
             result.missing_payload_details.append(
@@ -523,6 +593,11 @@ def _write_testcase(
         raise ExtractionError(
             "invalid versioned executable contract(s): " + ", ".join(invalid_contracts)
         )
+    if len(selected_contracts) > 1:
+        raise ExtractionError(
+            "v0.2 restricts a testcase to exactly one executable contract; got "
+            + ", ".join(selected_contracts)
+        )
     profiles = []
     for contract in selected_contracts:
         profile = get_contract(contract)
@@ -533,13 +608,21 @@ def _write_testcase(
             )
         profiles.append(profile)
         missing_inputs = [role for role in profile.inputs if role not in input_names]
-        missing_outputs = [role for role in profile.outputs if role not in output_names]
-        if missing_inputs or missing_outputs:
+        if missing_inputs:
             raise ExtractionError(
                 f"contract {profile.id!r} requires input role(s) "
-                f"{', '.join(missing_inputs)} and output role(s) "
-                f"{', '.join(missing_outputs)}; pass --input-names/--output-names "
+                f"{', '.join(missing_inputs)}; pass --input-names/--output-names "
                 "to bind the extracted boundary values"
+            )
+        missing_outputs = [role for role in profile.outputs if role not in output_names]
+        unexpected_outputs = sorted(set(output_names) - set(profile.outputs))
+        if missing_outputs or unexpected_outputs:
+            raise ExtractionError(
+                f"contract {profile.id!r} declares exactly "
+                f"{', '.join(profile.outputs)} observable output(s); missing: "
+                f"{', '.join(missing_outputs) or 'none'}, unexpected: "
+                f"{', '.join(unexpected_outputs) or 'none'}; pass "
+                "--input-names/--output-names to bind the extracted boundary values"
             )
     for profile in profiles:
         role_inputs = {
@@ -547,10 +630,16 @@ def _write_testcase(
             for entry in manifest_inputs
             if entry.get("name") in profile.inputs
         }
-        issues = contract_input_issues(profile.id, role_inputs)
+        role_outputs = {
+            entry["name"]: entry
+            for entry in manifest_outputs
+            if entry.get("name") in profile.outputs
+        }
+        issues = contract_boundary_issues(profile.id, role_inputs, role_outputs)
         if issues:
             raise ExtractionError(
-                f"contract {profile.id!r} shape validation failed: " + "; ".join(issues)
+                f"contract {profile.id!r} boundary validation failed: "
+                + "; ".join(issues)
             )
     manifest = {
         "format": TESTCASE_FORMAT,
@@ -575,11 +664,29 @@ def _write_testcase(
     if result.unobservable_mutations:
         manifest["unobservable_mutations"] = result.unobservable_mutations
 
-    (output / "testcase.json").write_text(
+    (root / "testcase.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    (output / "README.md").write_text(_render_readme(manifest), encoding="utf-8")
+    (root / "README.md").write_text(_render_readme(manifest), encoding="utf-8")
     return result
+
+
+def _promote_staging(staging: Path, target: Path, *, force: bool) -> None:
+    """Atomically move a fully validated staging directory into place."""
+
+    if not target.exists():
+        os.replace(staging, target)
+        return
+    if not force:
+        raise ExtractionError(f"testcase output appeared during extraction: {target}")
+    backup = target.with_name(f".{target.name}.bak-{uuid.uuid4().hex[:12]}")
+    os.replace(target, backup)
+    try:
+        os.replace(staging, target)
+    except OSError:
+        os.replace(backup, target)
+        raise
+    shutil.rmtree(backup, ignore_errors=True)
 
 
 def _tensor_metadata(value: TensorValueRecord) -> dict[str, Any]:

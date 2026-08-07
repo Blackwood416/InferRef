@@ -11,7 +11,7 @@ from inferref.ir.paths import PathBoundaryError, resolve_contained_path
 from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_READ_VERSIONS
 from inferref.tensor import codec
 from inferref.testcase.contracts import (
-    contract_input_issues,
+    contract_boundary_issues,
     get_contract,
 )
 from inferref.testcase.requirements import derive_requirements, is_contract_id
@@ -140,7 +140,7 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
 
     inputs = _boundary(result, manifest, "inputs", value_ids)
     outputs = _boundary(result, manifest, "outputs", value_ids)
-    _validate_executable_contracts(result, manifest, inputs)
+    _validate_executable_contracts(result, manifest, inputs, outputs)
     if not outputs:
         _issue(
             result,
@@ -522,14 +522,15 @@ def _validate_requirements(
     declared_contracts = manifest.get("contracts")
     if declared_contracts is not None and (
         not isinstance(declared_contracts, list)
-        or not declared_contracts
+        or len(declared_contracts) != 1
         or not all(is_contract_id(item) for item in declared_contracts)
         or len(set(declared_contracts)) != len(declared_contracts)
     ):
         _error(
             result,
             "contracts_invalid",
-            "contracts must be non-empty unique versioned contract IDs when present",
+            "contracts must contain exactly one unique versioned contract ID "
+            "when present in v0.2",
             "contracts",
         )
     dtypes = requirements.get("dtypes")
@@ -563,14 +564,15 @@ def _validate_requirements(
         )
     if contracts is not None and (
         not isinstance(contracts, list)
-        or not contracts
+        or len(contracts) != 1
         or not all(is_contract_id(x) for x in contracts)
         or len(set(contracts)) != len(contracts)
     ):
         _error(
             result,
             "requirements_invalid",
-            "contracts must be non-empty unique versioned contract IDs when present",
+            "requirements.contracts must contain exactly one unique versioned "
+            "contract ID when present in v0.2",
             "requirements.contracts",
         )
     if (
@@ -594,12 +596,16 @@ def _validate_executable_contracts(
     result: TestcaseValidationResult,
     manifest: dict[str, Any],
     inputs: list[dict[str, Any]],
+    outputs: list[dict[str, Any]],
 ) -> None:
     contracts = manifest.get("contracts")
     if not isinstance(contracts, list):
         return
     by_name = {
         item.get("name"): item for item in inputs if isinstance(item.get("name"), str)
+    }
+    output_by_name = {
+        item.get("name"): item for item in outputs if isinstance(item.get("name"), str)
     }
 
     for contract in contracts:
@@ -615,6 +621,26 @@ def _validate_executable_contracts(
                 blocks_reproduction=False,
             )
             continue
+        unexpected_outputs = sorted(set(output_by_name) - set(profile.outputs))
+        if unexpected_outputs:
+            _error(
+                result,
+                "contract_unexpected_output",
+                f"{contract} declares exactly {', '.join(profile.outputs)} "
+                f"observable output(s); unexpected: {', '.join(unexpected_outputs)}",
+                "outputs",
+            )
+        missing_outputs = [
+            name for name in profile.outputs if name not in output_by_name
+        ]
+        if missing_outputs:
+            _error(
+                result,
+                "contract_output_missing",
+                f"{contract} requires observable output(s): "
+                + ", ".join(missing_outputs),
+                "outputs",
+            )
         missing = [name for name in profile.inputs if name not in by_name]
         if missing:
             _error(
@@ -625,7 +651,12 @@ def _validate_executable_contracts(
             )
             continue
         role_inputs = {name: by_name[name] for name in profile.inputs}
-        for message in contract_input_issues(contract, role_inputs):
+        role_outputs = {
+            name: output_by_name[name]
+            for name in profile.outputs
+            if name in output_by_name
+        }
+        for message in contract_boundary_issues(contract, role_inputs, role_outputs):
             _error(
                 result,
                 "contract_shape_invalid",

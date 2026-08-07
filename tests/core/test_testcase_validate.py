@@ -336,6 +336,121 @@ def test_contract_rejects_empty_kernel_input_before_execution(tmp_path: Path) ->
     assert "contract_shape_invalid" in {issue.code for issue in result.errors}
 
 
+def _rope_testcase(root: Path, *, output_names: list[str]) -> tuple[Path, dict]:
+    _, manifest = _make_testcase(root)
+    manifest["format_version"] = "0.2"
+    next_id = 3
+    for name, array in (
+        ("query", np.ones((1, 4, 8), dtype=np.float32)),
+        ("key", np.ones((1, 4, 8), dtype=np.float32)),
+        ("cos", np.ones((4, 8), dtype=np.float32)),
+        ("sin", np.ones((4, 8), dtype=np.float32)),
+    ):
+        payload = codec.write_array(root / "inputs" / f"{name}.irtensor", array)
+        metadata = codec.read(payload).to_metadata()
+        manifest["inputs"].append(
+            {
+                "name": name,
+                "value_id": next_id,
+                "payload": f"inputs/{name}.irtensor",
+                **metadata,
+            }
+        )
+        manifest["values"].append({"id": next_id, **metadata})
+        next_id += 1
+    manifest["outputs"] = []
+    for name, shape in (
+        ("q_embed", (1, 4, 8)),
+        ("k_embed", (1, 4, 8)),
+    ):
+        if name not in output_names:
+            continue
+        payload = codec.write_array(
+            root / "reference" / f"{name}.irtensor",
+            np.ones(shape, dtype=np.float32),
+        )
+        metadata = codec.read(payload).to_metadata()
+        manifest["outputs"].append(
+            {
+                "name": name,
+                "value_id": next_id,
+                "payload": f"reference/{name}.irtensor",
+                **metadata,
+            }
+        )
+        manifest["values"].append({"id": next_id, **metadata})
+        next_id += 1
+    manifest["contracts"] = ["rope/rotate-half/v1"]
+    manifest["requirements"] = derive_requirements(manifest)
+    _write_manifest(root, manifest)
+    return root, manifest
+
+
+def test_contract_requires_every_observable_output(tmp_path: Path) -> None:
+    root, _ = _rope_testcase(tmp_path / "tc", output_names=["q_embed"])
+    result = validate_testcase(root)
+    assert result.valid is False
+    assert "contract_output_missing" in {issue.code for issue in result.errors}
+
+
+def test_contract_rejects_unexpected_observable_output(tmp_path: Path) -> None:
+    root, manifest = _rope_testcase(
+        tmp_path / "tc", output_names=["q_embed", "k_embed"]
+    )
+    payload = codec.write_array(
+        root / "reference" / "extra.irtensor",
+        np.ones((1, 4, 8), dtype=np.float32),
+    )
+    metadata = codec.read(payload).to_metadata()
+    manifest["outputs"].append(
+        {
+            "name": "extra",
+            "value_id": 99,
+            "payload": "reference/extra.irtensor",
+            **metadata,
+        }
+    )
+    manifest["requirements"] = derive_requirements(manifest)
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+    assert "contract_unexpected_output" in {issue.code for issue in result.errors}
+
+
+def test_contract_rejects_wrong_output_shape_relation(tmp_path: Path) -> None:
+    root, manifest = _rope_testcase(
+        tmp_path / "tc", output_names=["q_embed", "k_embed"]
+    )
+    payload = codec.write_array(
+        root / "reference" / "k_embed.irtensor",
+        np.ones((1, 4, 4), dtype=np.float32),
+    )
+    metadata = codec.read(payload).to_metadata()
+    for entry in manifest["outputs"]:
+        if entry["name"] == "k_embed":
+            entry.update(metadata)
+    manifest["requirements"] = derive_requirements(manifest)
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+    assert "contract_shape_invalid" in {issue.code for issue in result.errors}
+
+
+def test_contracts_array_must_contain_exactly_one(tmp_path: Path) -> None:
+    root, manifest = _rope_testcase(
+        tmp_path / "tc", output_names=["q_embed", "k_embed"]
+    )
+    manifest["contracts"] = [
+        "rope/rotate-half/v1",
+        "kv-cache/append/v1",
+    ]
+    manifest["requirements"] = derive_requirements(manifest)
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+    assert "contracts_invalid" in {issue.code for issue in result.errors}
+
+
 def test_unknown_contract_warns_but_stays_reproducible(tmp_path: Path) -> None:
     # Reuse the add-one fixture shape from the suite tests: a standalone case
     # with a well-formed contract ID that this build does not define.

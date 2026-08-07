@@ -206,7 +206,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
     from inferref.compare.tolerance import TolerancePolicy
     from inferref.ir.package import is_trace_package
 
-    policy = TolerancePolicy.load(args.tolerance) if args.tolerance else TolerancePolicy()
+    policy = (
+        TolerancePolicy.load(args.tolerance) if args.tolerance else TolerancePolicy()
+    )
     policy.override_atol = args.atol
     policy.override_rtol = args.rtol
 
@@ -270,6 +272,7 @@ def cmd_testcase_extract(args: argparse.Namespace) -> int:
                 input_names=input_names,
                 output_names=output_names,
                 contracts=args.contract,
+                force=args.force,
             )
         elif args.op is not None:
             result = extract_operator(
@@ -280,6 +283,7 @@ def cmd_testcase_extract(args: argparse.Namespace) -> int:
                 input_names=input_names,
                 output_names=output_names,
                 contracts=args.contract,
+                force=args.force,
             )
         else:
             print("error: pass either --op or --region", file=sys.stderr)
@@ -348,7 +352,9 @@ def cmd_region_list(args: argparse.Namespace) -> int:
         lines.append(f"  outputs: {list(region.outputs)}")
         if region.engine_op:
             lines.append(f"  engine:  {region.engine_op}")
-    _emit({"regions": [r.to_dict() for r in package.regions]}, "\n".join(lines), args.json)
+    _emit(
+        {"regions": [r.to_dict() for r in package.regions]}, "\n".join(lines), args.json
+    )
     return EXIT_OK
 
 
@@ -683,7 +689,9 @@ def build_parser() -> argparse.ArgumentParser:
             "comparison for inference engine development."
         ),
     )
-    parser.add_argument("--version", action="version", version=f"inferref {INFERREF_VERSION}")
+    parser.add_argument(
+        "--version", action="version", version=f"inferref {INFERREF_VERSION}"
+    )
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     # doctor
@@ -722,7 +730,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--output", default="trace/", help="output trace directory")
     p.add_argument("--scope", help="only trace operators under this module path")
     p.add_argument(
-        "--exclude", action="append", help="skip operators under this module path (repeatable)"
+        "--exclude",
+        action="append",
+        help="skip operators under this module path (repeatable)",
     )
     p.add_argument(
         "--capture-tensors",
@@ -745,14 +755,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="manifest device override; auto infers from observed tensors",
     )
-    p.add_argument("--max-ops", type=int, help="stop recording after this many operators")
+    p.add_argument(
+        "--max-ops", type=int, help="stop recording after this many operators"
+    )
     p.add_argument(
         "--max-capture-elements",
         type=int,
         default=0,
         help="skip payloads larger than this many elements (0 = no limit)",
     )
-    p.add_argument("--no-source-map", action="store_true", help="disable source mapping")
+    p.add_argument(
+        "--no-source-map", action="store_true", help="disable source mapping"
+    )
     p.add_argument(
         "--semantic-analysis",
         action="store_true",
@@ -769,7 +783,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--path-mode", default="relative", choices=["absolute", "relative", "redacted"]
     )
-    p.add_argument("--model-name", default="unknown", help="model name for the manifest")
+    p.add_argument(
+        "--model-name", default="unknown", help="model name for the manifest"
+    )
     p.add_argument("--seed", type=int, help="seed torch RNG and record it")
     _add_json(p)
     p.set_defaults(func=cmd_trace)
@@ -777,7 +793,9 @@ def build_parser() -> argparse.ArgumentParser:
     # inspect
     p = sub.add_parser("inspect", help="print a trace's operators, tensors and sources")
     p.add_argument("trace", help="trace package directory")
-    p.add_argument("-v", "--verbose", action="store_true", help="show layout and alias detail")
+    p.add_argument(
+        "-v", "--verbose", action="store_true", help="show layout and alias detail"
+    )
     p.add_argument("--limit", type=int, help="show at most this many operators")
     p.add_argument("--module", help="only show operators under this module path")
     p.add_argument("--operator", help="only show this canonical operator name")
@@ -824,7 +842,9 @@ def build_parser() -> argparse.ArgumentParser:
             "because a fused engine need not reproduce the reference layout (SPEC §20)"
         ),
     )
-    p.add_argument("-v", "--verbose", action="store_true", help="list every compared tensor")
+    p.add_argument(
+        "-v", "--verbose", action="store_true", help="list every compared tensor"
+    )
     _add_json(p)
     p.set_defaults(func=cmd_compare)
 
@@ -837,7 +857,9 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--op", type=int, help="operator id to extract")
     q.add_argument("--region", help="region name or id to extract")
     q.add_argument("-o", "--output", required=True, help="output testcase directory")
-    q.add_argument("--name", help="testcase name (defaults to the operator/region name)")
+    q.add_argument(
+        "--name", help="testcase name (defaults to the operator/region name)"
+    )
     q.add_argument(
         "--input-names",
         help="comma-separated names for the boundary inputs, e.g. query,key,cos,sin",
@@ -849,12 +871,19 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument(
         "--contract",
         action="append",
-        help="versioned executable contract; repeat for multiple contracts",
+        help="versioned executable contract (v0.2 allows exactly one)",
+    )
+    q.add_argument(
+        "--force",
+        action="store_true",
+        help="atomically replace an existing testcase output directory",
     )
     _add_json(q)
     q.set_defaults(func=cmd_testcase_extract)
 
-    q = tsub.add_parser("dedup", help="group operators into unique signatures (SPEC §24)")
+    q = tsub.add_parser(
+        "dedup", help="group operators into unique signatures (SPEC §24)"
+    )
     q.add_argument("trace", help="trace package directory")
     q.add_argument("--operator", help="restrict to one canonical operator name")
     q.add_argument("--limit", type=int, default=20, help="how many signatures to show")
@@ -899,7 +928,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     q.add_argument("trace", help="trace package directory")
     q.add_argument(
-        "--dry-run", action="store_true", help="list what would be created, write nothing"
+        "--dry-run",
+        action="store_true",
+        help="list what would be created, write nothing",
     )
     q.add_argument(
         "--min-confidence",
@@ -920,7 +951,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="discard existing semantic regions and annotations first",
     )
-    q.add_argument("-v", "--verbose", action="store_true", help="show why each was detected")
+    q.add_argument(
+        "-v", "--verbose", action="store_true", help="show why each was detected"
+    )
     _add_json(q)
     q.set_defaults(func=cmd_region_detect)
 
@@ -931,7 +964,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     asub = p.add_subparsers(dest="agent_command", metavar="<subcommand>")
 
-    q = asub.add_parser("capabilities", help="discover the Agent protocol and operations")
+    q = asub.add_parser(
+        "capabilities", help="discover the Agent protocol and operations"
+    )
     _add_json(q)
     q.set_defaults(func=cmd_agent_capabilities)
 
@@ -1011,7 +1046,9 @@ def build_parser() -> argparse.ArgumentParser:
     # suite
     p = sub.add_parser("suite", help="validate and run testcase suites")
     ssub = p.add_subparsers(dest="suite_command", metavar="<subcommand>")
-    q = ssub.add_parser("validate", help="validate a suite and all referenced testcases")
+    q = ssub.add_parser(
+        "validate", help="validate a suite and all referenced testcases"
+    )
     q.add_argument("suite", help="suite JSON manifest")
     q.add_argument(
         "--allow-nonreproducible",
@@ -1021,7 +1058,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json(q)
     q.set_defaults(func=cmd_suite_validate)
 
-    q = ssub.add_parser("run", help="run every testcase through one or more engine adapters")
+    q = ssub.add_parser(
+        "run", help="run every testcase through one or more engine adapters"
+    )
     q.add_argument("suite", help="suite JSON manifest")
     q.add_argument(
         "--adapter",

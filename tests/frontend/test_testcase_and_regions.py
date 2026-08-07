@@ -161,6 +161,107 @@ def test_extract_rejects_invalid_contract_id(
         extract_operator(traced, mm.id, tmp_path / "tc", contracts=["rope"])
 
 
+def test_extract_rejects_multiple_contracts(
+    traced: TracePackage, tmp_path: Path
+) -> None:
+    mm = next(
+        op
+        for op in traced.graph.ops_in_execution_order()
+        if op.canonical_name == "aten.mm.default"
+    )
+    with pytest.raises(ExtractionError, match="exactly one executable contract"):
+        extract_operator(
+            traced,
+            mm.id,
+            tmp_path / "tc",
+            contracts=["rmsnorm/last-dim/v1", "rope/rotate-half/v1"],
+        )
+
+
+def test_extract_refuses_existing_output_without_force(
+    traced: TracePackage, tmp_path: Path
+) -> None:
+    mm = next(
+        op
+        for op in traced.graph.ops_in_execution_order()
+        if op.canonical_name == "aten.mm.default"
+    )
+    out = tmp_path / "op"
+    first = extract_operator(traced, mm.id, out)
+    manifest_before = (out / "testcase.json").read_bytes()
+
+    with pytest.raises(ExtractionError, match="already exists"):
+        extract_operator(traced, mm.id, out)
+
+    assert (out / "testcase.json").read_bytes() == manifest_before
+    assert (out / "README.md").is_file()
+    assert first.inputs
+
+
+def test_extract_force_atomically_replaces_existing_output(
+    traced: TracePackage, tmp_path: Path
+) -> None:
+    mm = next(
+        op
+        for op in traced.graph.ops_in_execution_order()
+        if op.canonical_name == "aten.mm.default"
+    )
+    out = tmp_path / "op"
+    extract_operator(traced, mm.id, out)
+    marker = out / "stale-marker.txt"
+    marker.write_text("stale", encoding="utf-8")
+    before = (out / "testcase.json").read_bytes()
+
+    extract_operator(traced, mm.id, out, input_names=["a", "b"], force=True)
+
+    assert not marker.exists()
+    manifest = json.loads((out / "testcase.json").read_text(encoding="utf-8"))
+    assert [entry["name"] for entry in manifest["inputs"]] == ["a", "b"]
+    assert (out / "testcase.json").read_bytes() != before
+    assert not list(tmp_path.glob(".op.tmp-*"))
+
+
+def test_failed_extract_leaves_existing_testcase_untouched(
+    traced: TracePackage, tmp_path: Path
+) -> None:
+    mm = next(
+        op
+        for op in traced.graph.ops_in_execution_order()
+        if op.canonical_name == "aten.mm.default"
+    )
+    out = tmp_path / "op"
+    extract_operator(traced, mm.id, out)
+    manifest_before = (out / "testcase.json").read_bytes()
+    marker = out / "marker.txt"
+    marker.write_text("keep me", encoding="utf-8")
+
+    with pytest.raises(ExtractionError, match="not defined in this build"):
+        extract_operator(
+            traced,
+            mm.id,
+            out,
+            contracts=["softmax/last-dim/v1"],
+            force=True,
+        )
+
+    assert (out / "testcase.json").read_bytes() == manifest_before
+    assert marker.read_text(encoding="utf-8") == "keep me"
+    assert not list(tmp_path.glob(".op.tmp-*"))
+
+
+def test_extract_success_leaves_no_staging_directories(
+    traced: TracePackage, tmp_path: Path
+) -> None:
+    mm = next(
+        op
+        for op in traced.graph.ops_in_execution_order()
+        if op.canonical_name == "aten.mm.default"
+    )
+    extract_operator(traced, mm.id, tmp_path / "op")
+    assert not list(tmp_path.glob(".op.tmp-*"))
+    assert not list(tmp_path.glob(".op.bak-*"))
+
+
 def test_extracted_operator_reproduces_reference(
     traced: TracePackage, tmp_path: Path
 ) -> None:

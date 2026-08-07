@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-08-07 | [Contract observable outputs and atomic extraction](2026-08-07-contract-outputs-and-atomic-extraction.md) | Exact output role sets; input/output relation validators; staging+atomic publish; single contract per testcase; 529 tests |
 | 2026-08-06 | [Executable contract profiles and per-contract capability](2026-08-06-executable-contract-profiles.md) | Contract registry/role binding; per-contract preflight; native JSON parser; fresh XPU gate dirs; suite validate runnable split |
 | 2026-08-06 | [Agent attestation v0.5 hardening](2026-08-06-attestation-evidence-v05-hardening.md) | Claude settings binding; model identity policy; canonical worker launch policy; strict validators; 493 tests |
 | 2026-08-03 | [Formal attestation v0.4 identity-bound PASS](2026-08-03-formal-attestation-v04-pass.md) | Python-isolated worker; bound Codex/Claude executable chains; explicit model evidence; 2/2 PASS |

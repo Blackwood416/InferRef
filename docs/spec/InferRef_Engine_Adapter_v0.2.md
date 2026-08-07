@@ -131,7 +131,7 @@ Contracts come from an explicit extraction profile (`testcase extract
 ### Contract registry and role binding
 
 Each known contract is a registered profile with fixed input/output role names
-and a shape validator, not just an ID label:
+and shape validators, not just an ID label:
 
 | contract | inputs | outputs |
 | --- | --- | --- |
@@ -146,6 +146,43 @@ contract's role names, or when the bound tensors fail the contract shape
 validator. Standalone validation of an existing testcase applies the same
 profile when the contract is known; a well-formed but unknown contract ID
 produces a non-blocking warning so forward compatibility is preserved.
+
+### Observable outputs are exact and relationally validated
+
+For a known contract, standalone validation and extraction both enforce an
+**exact observable output set**: the testcase must provide precisely the
+contract's output roles. A RoPE testcase that keeps `q_embed` but drops
+`k_embed` is invalid even when every input is legal, so a PASS cannot hide a
+broken half of the contract.
+
+Each profile also validates output shapes and input-output relations:
+
+- `rmsnorm/last-dim/v1`: `y.shape == x.shape` and matching dtypes.
+- `rope/rotate-half/v1`: `q_embed.shape == query.shape`,
+  `k_embed.shape == key.shape`, and matching dtypes per branch.
+- `kv-cache/append/v1`: `cache_out` shares rank, non-sequence dimensions, and
+  width with `cache`; its sequence length equals
+  `cache.sequence + update.sequence`.
+- `kv-cache/indexed-update/v1`: `cache_out.shape == cache.shape`.
+
+### Exactly one executable contract per testcase
+
+v0.2 restricts a testcase to **exactly one** executable contract. The `contracts`
+array must contain a single unique ID when present, extraction rejects repeated
+`--contract` values, and the native engine refuses multiple supported
+contracts. Composite operations (for example a fused RMSNorm→RoPE region)
+should be expressed as a dedicated composite contract rather than an ambiguous
+multi-contract array.
+
+### Atomic extraction publish
+
+Extraction builds the payloads, manifest, contract binding, and standalone
+validation inside a hidden staging directory and only then promotes it into
+place. A failed extraction never partially overwrites an existing testcase:
+the output directory must not exist unless `--force` is passed, and `--force`
+replaces it via a backup-and-swap so a failure leaves the previous testcase
+intact. The extractor runs the same `validate_testcase` used by Suite and
+engine execution before publishing.
 
 The `contracts` field becomes mandatory in the next adapter/testcase format.
 

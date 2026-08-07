@@ -15,6 +15,10 @@ from typing import Any
 from inferref.testcase.requirements import derive_requirements
 
 InputValidator = Callable[[Mapping[str, dict[str, Any]]], Sequence[str]]
+OutputValidator = Callable[[Mapping[str, dict[str, Any]]], Sequence[str]]
+BoundaryValidator = Callable[
+    [Mapping[str, dict[str, Any]], Mapping[str, dict[str, Any]]], Sequence[str]
+]
 
 
 def _numel(shape: Sequence[Any]) -> int:
@@ -115,6 +119,105 @@ def _kv_indexed_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
     return issues
 
 
+def _rmsnorm_outputs(outputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    y = _shape(outputs.get("y"))
+    if y is None or _numel(y) <= 0:
+        return ["y must be a non-empty tensor"]
+    return []
+
+
+def _rmsnorm_relation(
+    inputs: Mapping[str, dict[str, Any]], outputs: Mapping[str, dict[str, Any]]
+) -> Sequence[str]:
+    x = _shape(inputs.get("x"))
+    y = _shape(outputs.get("y"))
+    if x is None or y is None:
+        return []
+    issues: list[str] = []
+    if y != x:
+        issues.append("y.shape must equal x.shape")
+    if inputs.get("x", {}).get("dtype") is not None and outputs.get("y", {}).get(
+        "dtype"
+    ) != inputs["x"].get("dtype"):
+        issues.append("y.dtype must equal x.dtype")
+    return issues
+
+
+def _rope_outputs(outputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    issues: list[str] = []
+    for name in ("q_embed", "k_embed"):
+        shape = _shape(outputs.get(name))
+        if shape is None or _numel(shape) <= 0:
+            issues.append(f"{name} must be a non-empty tensor")
+    return issues
+
+
+def _rope_relation(
+    inputs: Mapping[str, dict[str, Any]], outputs: Mapping[str, dict[str, Any]]
+) -> Sequence[str]:
+    query = _shape(inputs.get("query"))
+    key = _shape(inputs.get("key"))
+    q_embed = _shape(outputs.get("q_embed"))
+    k_embed = _shape(outputs.get("k_embed"))
+    issues: list[str] = []
+    if query is not None and q_embed is not None and q_embed != query:
+        issues.append("q_embed.shape must equal query.shape")
+    if key is not None and k_embed is not None and k_embed != key:
+        issues.append("k_embed.shape must equal key.shape")
+    for input_name, output_name in (("query", "q_embed"), ("key", "k_embed")):
+        input_dtype = inputs.get(input_name, {}).get("dtype")
+        output_dtype = outputs.get(output_name, {}).get("dtype")
+        if input_dtype is not None and output_dtype != input_dtype:
+            issues.append(f"{output_name}.dtype must equal {input_name}.dtype")
+    return issues
+
+
+def _kv_outputs(outputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    cache_out = _shape(outputs.get("cache_out"))
+    if cache_out is None or _numel(cache_out) <= 0:
+        return ["cache_out must be a non-empty tensor"]
+    return []
+
+
+def _kv_append_relation(
+    inputs: Mapping[str, dict[str, Any]], outputs: Mapping[str, dict[str, Any]]
+) -> Sequence[str]:
+    cache = _shape(inputs.get("cache"))
+    update = _shape(inputs.get("update"))
+    cache_out = _shape(outputs.get("cache_out"))
+    if cache is None or update is None or cache_out is None:
+        return []
+    if len(cache_out) != len(cache):
+        return ["cache_out rank must equal cache rank"]
+    issues: list[str] = []
+    sequence_axis = len(cache) - 2
+    if any(
+        cache_out[axis] != cache[axis]
+        for axis in range(len(cache))
+        if axis != sequence_axis
+    ):
+        issues.append("cache_out non-sequence dimensions must equal cache")
+    if cache_out[-1] != cache[-1]:
+        issues.append("cache_out width must equal cache width")
+    if cache_out[sequence_axis] != cache[sequence_axis] + update[sequence_axis]:
+        issues.append(
+            "cache_out sequence length must equal cache + update sequence lengths"
+        )
+    return issues
+
+
+def _kv_indexed_relation(
+    inputs: Mapping[str, dict[str, Any]], outputs: Mapping[str, dict[str, Any]]
+) -> Sequence[str]:
+    cache = _shape(inputs.get("cache"))
+    cache_out = _shape(outputs.get("cache_out"))
+    if cache is None or cache_out is None:
+        return []
+    if cache_out != cache:
+        return ["cache_out.shape must equal cache.shape for an indexed update"]
+    return []
+
+
 @dataclass(frozen=True)
 class ExecutableContract:
     """One versioned semantic operation profile an engine can implement."""
@@ -123,6 +226,8 @@ class ExecutableContract:
     inputs: tuple[str, ...]
     outputs: tuple[str, ...]
     validate_inputs: InputValidator
+    validate_outputs: OutputValidator | None = None
+    validate_relation: BoundaryValidator | None = None
     description: str = ""
 
 
@@ -132,6 +237,8 @@ EXECUTABLE_CONTRACTS: tuple[ExecutableContract, ...] = (
         inputs=("x", "weight", "epsilon"),
         outputs=("y",),
         validate_inputs=_rmsnorm_inputs,
+        validate_outputs=_rmsnorm_outputs,
+        validate_relation=_rmsnorm_relation,
         description="RMSNorm over the last dimension with weight and scalar epsilon",
     ),
     ExecutableContract(
@@ -139,6 +246,8 @@ EXECUTABLE_CONTRACTS: tuple[ExecutableContract, ...] = (
         inputs=("query", "key", "cos", "sin"),
         outputs=("q_embed", "k_embed"),
         validate_inputs=_rope_inputs,
+        validate_outputs=_rope_outputs,
+        validate_relation=_rope_relation,
         description="rotate-half RoPE with per-token cos/sin over the last dimension",
     ),
     ExecutableContract(
@@ -146,6 +255,8 @@ EXECUTABLE_CONTRACTS: tuple[ExecutableContract, ...] = (
         inputs=("cache", "update"),
         outputs=("cache_out",),
         validate_inputs=_kv_append_inputs,
+        validate_outputs=_kv_outputs,
+        validate_relation=_kv_append_relation,
         description="append a new sequence block to the cache sequence axis",
     ),
     ExecutableContract(
@@ -153,6 +264,8 @@ EXECUTABLE_CONTRACTS: tuple[ExecutableContract, ...] = (
         inputs=("cache", "update", "index"),
         outputs=("cache_out",),
         validate_inputs=_kv_indexed_inputs,
+        validate_outputs=_kv_outputs,
+        validate_relation=_kv_indexed_relation,
         description="overwrite one contiguous sequence block of the cache",
     ),
 )
@@ -177,6 +290,24 @@ def contract_input_issues(
     if contract is None:
         return ()
     return contract.validate_inputs(inputs)
+
+
+def contract_boundary_issues(
+    contract_id: str,
+    inputs: Mapping[str, dict[str, Any]],
+    outputs: Mapping[str, dict[str, Any]],
+) -> Sequence[str]:
+    """Input, output, and input-output relational invariants for a contract."""
+
+    contract = REGISTRY.get(contract_id)
+    if contract is None:
+        return ()
+    issues = list(contract.validate_inputs(inputs))
+    if contract.validate_outputs is not None:
+        issues.extend(contract.validate_outputs(outputs))
+    if contract.validate_relation is not None:
+        issues.extend(contract.validate_relation(inputs, outputs))
+    return issues
 
 
 def contract_requirements(manifest: dict[str, Any], contract_id: str) -> dict[str, Any]:
