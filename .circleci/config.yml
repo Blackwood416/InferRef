@@ -559,7 +559,7 @@ workflows:
           name: core-windows-py3.10-tag
           filters:
             branches:
-              ignore: /.+/
+              ignore: /.*/
             tags:
               only: /^v.*/
           python: "3.10"
@@ -567,7 +567,7 @@ workflows:
           name: core-windows-py3.12-tag
           filters:
             branches:
-              ignore: /.+/
+              ignore: /.*/
             tags:
               only: /^v.*/
           python: "3.12"
@@ -575,7 +575,7 @@ workflows:
           name: core-windows-py3.13-tag
           filters:
             branches:
-              ignore: /.+/
+              ignore: /.*/
             tags:
               only: /^v.*/
           python: "3.13"
@@ -583,7 +583,7 @@ workflows:
           name: frontend-windows-py3.10-torch-min-tag
           filters:
             branches:
-              ignore: /.+/
+              ignore: /.*/
             tags:
               only: /^v.*/
           python: "3.10"
@@ -592,7 +592,7 @@ workflows:
           name: frontend-windows-py3.12-torch-current-tag
           filters:
             branches:
-              ignore: /.+/
+              ignore: /.*/
             tags:
               only: /^v.*/
           python: "3.12"
@@ -601,7 +601,7 @@ workflows:
           name: frontend-windows-generic-fixed-tag
           filters:
             branches:
-              ignore: /.+/
+              ignore: /.*/
             tags:
               only: /^v.*/
           python: "3.13"
@@ -612,6 +612,7 @@ workflows:
           name: cpp-windows-tag
           filters:
             branches:
-              ignore: /.+/
+              ignore: /.*/
             tags:
               only: /^v.*/
+
