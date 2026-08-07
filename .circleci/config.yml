@@ -4,7 +4,7 @@ orbs:
   win: circleci/windows@5.0.0
 
 # Migration of .github/workflows/ci.yml.
-# GPU/XPU/nightly workflows remain in GitHub Actions; this config owns the
+# GPU/XPU-specific workflows remain in GitHub Actions; this config owns the
 # framework-neutral CPU, PyTorch/HF frontend, and C++ reader checks.
 
 commands:
@@ -102,30 +102,17 @@ commands:
         default: ""
     steps:
       - run:
-          name: Assert optional HF capability
+          name: Report versions and assert frontend capabilities
+          command: python .circleci/check_ci.py frontend --hf-suite "<< parameters.hf-suite >>"
+      - run:
+          name: Run required HF capability tests
           command: |
             set -euo pipefail
             case "<< parameters.hf-suite >>" in
               generic-*)
-                python - <<'PY'
-            from transformers import LlamaConfig, LlamaForCausalLM
-            print("generic Llama model APIs are available")
-            PY
                 python -m pytest tests/frontend/test_semantic_hf.py -q -s
                 ;;
               qwen35-*)
-                python - <<'PY'
-            import transformers
-            required = (
-                "Qwen3_5TextConfig",
-                "Qwen3_5ForCausalLM",
-                "Qwen3_5ForConditionalGeneration",
-            )
-            missing = [name for name in required if not hasattr(transformers, name)]
-            if missing:
-                raise SystemExit("Qwen3.5 capability missing: " + ", ".join(missing))
-            print("Qwen3.5 model classes are available")
-            PY
                 python -m pytest tests/frontend/test_hf_hybrid_cache.py -q
                 ;;
               "")
@@ -135,43 +122,9 @@ commands:
                 exit 2
                 ;;
             esac
-
-      - run:
-          name: Report versions and private PyTorch APIs
-          command: |
-            python - <<'PY'
-            import sys, numpy, torch
-            print(f"python {sys.version.split()[0]}")
-            print(f"torch  {torch.__version__}")
-            print(f"numpy  {numpy.__version__}")
-            try:
-                import transformers
-                print(f"transformers {transformers.__version__}")
-            except ImportError:
-                print("transformers not installed (real-model tests will skip)")
-
-            missing = []
-            try:
-                from torch.utils._python_dispatch import TorchDispatchMode  # noqa: F401
-            except Exception as exc:
-                missing.append(f"TorchDispatchMode: {exc}")
-            try:
-                from torch.multiprocessing.reductions import StorageWeakRef  # noqa: F401
-            except Exception as exc:
-                missing.append(f"StorageWeakRef: {exc}")
-            import torch.nn.modules.module as m
-            for hook in ("register_module_forward_pre_hook", "register_module_forward_hook"):
-                if not hasattr(m, hook):
-                    missing.append(f"nn.modules.module.{hook}")
-            if missing:
-                raise SystemExit("private APIs unavailable:\n  " + "\n  ".join(missing))
-            print("all required PyTorch APIs are present")
-            PY
-
       - run:
           name: Run full suite
           command: python -m pytest tests -q
-
       - run:
           name: Run documented end-to-end loop
           command: |
@@ -185,7 +138,6 @@ commands:
               --input-names cos,sin,query,key --output-names q_embed,k_embed
             python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
             inferref compare repro/rope engine-out/ --first-failure
-
             python examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
             if inferref compare repro/rope engine-bad/ --first-failure; then
               echo "comparator reported PASS for a deliberately broken engine" >&2
@@ -200,32 +152,20 @@ commands:
         default: ""
     steps:
       - run:
-          name: Assert optional HF capability
+          name: Report versions and assert frontend capabilities
+          shell: bash.exe
+          command: ./.venv/Scripts/python.exe .circleci/check_ci.py frontend --hf-suite "<< parameters.hf-suite >>"
+      - run:
+          name: Run required HF capability tests
           shell: bash.exe
           command: |
             set -euo pipefail
             PY="./.venv/Scripts/python.exe"
             case "<< parameters.hf-suite >>" in
               generic-*)
-                "$PY" - <<'PY'
-            from transformers import LlamaConfig, LlamaForCausalLM
-            print("generic Llama model APIs are available")
-            PY
                 "$PY" -m pytest tests/frontend/test_semantic_hf.py -q -s
                 ;;
               qwen35-*)
-                "$PY" - <<'PY'
-            import transformers
-            required = (
-                "Qwen3_5TextConfig",
-                "Qwen3_5ForCausalLM",
-                "Qwen3_5ForConditionalGeneration",
-            )
-            missing = [name for name in required if not hasattr(transformers, name)]
-            if missing:
-                raise SystemExit("Qwen3.5 capability missing: " + ", ".join(missing))
-            print("Qwen3.5 model classes are available")
-            PY
                 "$PY" -m pytest tests/frontend/test_hf_hybrid_cache.py -q
                 ;;
               "")
@@ -235,46 +175,10 @@ commands:
                 exit 2
                 ;;
             esac
-
-      - run:
-          name: Report versions and private PyTorch APIs
-          shell: bash.exe
-          command: |
-            set -euo pipefail
-            ./.venv/Scripts/python.exe - <<'PY'
-            import sys, numpy, torch
-            print(f"python {sys.version.split()[0]}")
-            print(f"torch  {torch.__version__}")
-            print(f"numpy  {numpy.__version__}")
-            try:
-                import transformers
-                print(f"transformers {transformers.__version__}")
-            except ImportError:
-                print("transformers not installed (real-model tests will skip)")
-
-            missing = []
-            try:
-                from torch.utils._python_dispatch import TorchDispatchMode  # noqa: F401
-            except Exception as exc:
-                missing.append(f"TorchDispatchMode: {exc}")
-            try:
-                from torch.multiprocessing.reductions import StorageWeakRef  # noqa: F401
-            except Exception as exc:
-                missing.append(f"StorageWeakRef: {exc}")
-            import torch.nn.modules.module as m
-            for hook in ("register_module_forward_pre_hook", "register_module_forward_hook"):
-                if not hasattr(m, hook):
-                    missing.append(f"nn.modules.module.{hook}")
-            if missing:
-                raise SystemExit("private APIs unavailable:\n  " + "\n  ".join(missing))
-            print("all required PyTorch APIs are present")
-            PY
-
       - run:
           name: Run full suite
           shell: bash.exe
           command: ./.venv/Scripts/python.exe -m pytest tests -q
-
       - run:
           name: Run documented end-to-end loop
           shell: bash.exe
@@ -282,7 +186,6 @@ commands:
             set -euo pipefail
             PY="./.venv/Scripts/python.exe"
             INFERREF="./.venv/Scripts/inferref.exe"
-
             "$PY" examples/mini_llama/run_trace.py --output trace/
             "$INFERREF" validate trace/
             "$INFERREF" analyze trace/ --json > /dev/null
@@ -292,7 +195,6 @@ commands:
               --input-names cos,sin,query,key --output-names q_embed,k_embed
             "$PY" examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
             "$INFERREF" compare repro/rope engine-out/ --first-failure
-
             "$PY" examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
             if "$INFERREF" compare repro/rope engine-bad/ --first-failure; then
               echo "comparator reported PASS for a deliberately broken engine" >&2
@@ -316,13 +218,7 @@ jobs:
             pip install -e ".[dev]"
       - run:
           name: Assert PyTorch really is absent
-          command: |
-            python - <<'PY'
-            import importlib.util, sys
-            if importlib.util.find_spec("torch") is not None:
-                sys.exit("torch is installed; this job must run without it")
-            print("confirmed: torch is not installed")
-            PY
+          command: python .circleci/check_ci.py no-torch --message "torch is installed; this job must run without it"
       - run:
           name: Run core suite
           command: python -m pytest tests/core -q
@@ -347,13 +243,7 @@ jobs:
       - run:
           name: Assert PyTorch really is absent
           shell: bash.exe
-          command: |
-            ./.venv/Scripts/python.exe - <<'PY'
-            import importlib.util, sys
-            if importlib.util.find_spec("torch") is not None:
-                sys.exit("torch is installed; this job must run without it")
-            print("confirmed: torch is not installed")
-            PY
+          command: ./.venv/Scripts/python.exe .circleci/check_ci.py no-torch --message "torch is installed; this job must run without it"
       - run:
           name: Run core suite
           shell: bash.exe
@@ -371,13 +261,7 @@ jobs:
             pip install -e ".[dev,agent]"
       - run:
           name: Assert PyTorch really is absent
-          command: |
-            python - <<'PY'
-            import importlib.util, sys
-            if importlib.util.find_spec("torch") is not None:
-                sys.exit("torch is installed; Agent integration must remain framework-neutral")
-            print("confirmed: torch is not installed")
-            PY
+          command: python .circleci/check_ci.py no-torch --message "torch is installed; Agent integration must remain framework-neutral"
       - run:
           name: Run core and Agent suites
           command: python -m pytest tests/core tests/agent -q
@@ -406,11 +290,9 @@ jobs:
       - store_artifacts:
           path: trace
           destination: trace
-          when: on_fail
       - store_artifacts:
           path: repro
           destination: repro
-          when: on_fail
 
   frontend-windows:
     parameters:
@@ -439,15 +321,10 @@ jobs:
       - store_artifacts:
           path: trace
           destination: trace
-          when: on_fail
       - store_artifacts:
           path: repro
           destination: repro
-          when: on_fail
 
-  # PyTorch nightly is an early-warning leg. CircleCI has no direct equivalent
-  # of GitHub Actions' job-level continue-on-error, so this job records a warning
-  # and returns success if upstream nightly breaks.
   frontend-nightly-linux:
     docker:
       - image: cimg/python:3.12
@@ -462,20 +339,7 @@ jobs:
               python -m pip install --upgrade pip
               pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cpu
               pip install -e ".[dev]"
-
-              python - <<'PY'
-            import sys, numpy, torch
-            print(f"python {sys.version.split()[0]}")
-            print(f"torch  {torch.__version__}")
-            print(f"numpy  {numpy.__version__}")
-            from torch.utils._python_dispatch import TorchDispatchMode  # noqa: F401
-            from torch.multiprocessing.reductions import StorageWeakRef  # noqa: F401
-            import torch.nn.modules.module as m
-            for hook in ("register_module_forward_pre_hook", "register_module_forward_hook"):
-                if not hasattr(m, hook):
-                    raise SystemExit(f"missing nn.modules.module.{hook}")
-            PY
-
+              python .circleci/check_ci.py frontend
               python -m pytest tests -q
               python examples/mini_llama/run_trace.py --output trace/
               inferref validate trace/
@@ -486,7 +350,6 @@ jobs:
                 --input-names cos,sin,query,key --output-names q_embed,k_embed
               python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
               inferref compare repro/rope engine-out/ --first-failure
-
               python examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
               if inferref compare repro/rope engine-bad/ --first-failure; then
                 echo "comparator reported PASS for a deliberately broken engine" >&2
@@ -524,28 +387,23 @@ jobs:
             python -m pip install --upgrade pip
             python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
             python -m pip install -e ".[dev]"
-
             python examples/mini_llama/run_trace.py --output trace/
             inferref region detect trace/
             inferref testcase extract trace/ --region "RoPE@layers.0.self_attn" \
               -o repro/rope \
               --input-names cos,sin,query,key --output-names q_embed,k_embed
             python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
-
             BIN=cpp/build/inferref_compare
             [ -x "$BIN" ] || BIN=cpp/build/Release/inferref_compare.exe
-
             for name in q_embed k_embed; do
               "$BIN" "repro/rope/reference/${name}.irtensor" "engine-out/${name}.irtensor"
             done
-
             python examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
             if "$BIN" repro/rope/reference/q_embed.irtensor engine-bad/q_embed.irtensor; then
               echo "C++ comparator reported PASS for a broken engine" >&2
               exit 1
             fi
             "$BIN" repro/rope/reference/k_embed.irtensor engine-bad/k_embed.irtensor
-
             cp engine-bad/q_embed.irtensor engine-bad/k_embed.irtensor
             if "$BIN" repro/rope/reference/k_embed.irtensor engine-bad/k_embed.irtensor; then
               echo "C++ comparator reported PASS for a corrupted k_embed" >&2
@@ -576,32 +434,26 @@ jobs:
             set -euo pipefail
             PY="./.venv/Scripts/python.exe"
             INFERREF="./.venv/Scripts/inferref.exe"
-
             "$PY" -m pip install --upgrade pip
             "$PY" -m pip install torch --index-url https://download.pytorch.org/whl/cpu
             "$PY" -m pip install -e ".[dev]"
-
             "$PY" examples/mini_llama/run_trace.py --output trace/
             "$INFERREF" region detect trace/
             "$INFERREF" testcase extract trace/ --region "RoPE@layers.0.self_attn" \
               -o repro/rope \
               --input-names cos,sin,query,key --output-names q_embed,k_embed
             "$PY" examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
-
             BIN=cpp/build/inferref_compare.exe
             [ -x "$BIN" ] || BIN=cpp/build/Release/inferref_compare.exe
-
             for name in q_embed k_embed; do
               "$BIN" "repro/rope/reference/${name}.irtensor" "engine-out/${name}.irtensor"
             done
-
             "$PY" examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
             if "$BIN" repro/rope/reference/q_embed.irtensor engine-bad/q_embed.irtensor; then
               echo "C++ comparator reported PASS for a broken engine" >&2
               exit 1
             fi
             "$BIN" repro/rope/reference/k_embed.irtensor engine-bad/k_embed.irtensor
-
             cp engine-bad/q_embed.irtensor engine-bad/k_embed.irtensor
             if "$BIN" repro/rope/reference/k_embed.irtensor engine-bad/k_embed.irtensor; then
               echo "C++ comparator reported PASS for a corrupted k_embed" >&2
@@ -611,13 +463,6 @@ jobs:
 
 workflows:
   ci:
-    # Match the old Actions intent (main, PRs, manual) while also allowing this
-    # setup branch to validate the migration before it is merged.
-    when: >
-      pipeline.git.branch == "main" or
-      pipeline.git.branch == "circleci-project-setup" or
-      pipeline.event.name == "pull_request" or
-      pipeline.event.name == "api"
     jobs:
       - core-linux:
           matrix:
@@ -627,9 +472,7 @@ workflows:
           matrix:
             parameters:
               python: ["3.10", "3.12", "3.13"]
-
       - agent-linux
-
       - frontend-linux:
           name: frontend-linux-py3.10-torch-min
           python: "3.10"
@@ -650,7 +493,6 @@ workflows:
           name: frontend-linux-py3.13-torch-current
           python: "3.13"
           torch: current
-
       - frontend-linux:
           name: frontend-linux-generic-min
           python: "3.10"
@@ -675,8 +517,6 @@ workflows:
           torch: current
           transformers: latest
           hf-suite: qwen35-latest
-
       - frontend-nightly-linux
-
       - cpp-linux
       - cpp-windows
