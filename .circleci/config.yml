@@ -420,13 +420,23 @@ jobs:
       - install-windows-python:
           version: "3.12"
       - run:
+          name: Install CMake
+          shell: powershell.exe
+          command: |
+            $ErrorActionPreference = "Stop"
+            choco install cmake --yes --no-progress --installargs 'ADD_CMAKE_TO_PATH=System' --apply-install-arguments-to-dependencies
+            & "C:\Program Files\CMake\bin\cmake.exe" --version
+            & "C:\Program Files\CMake\bin\ctest.exe" --version
+      - run:
           name: Configure, build, and self-test
           shell: bash.exe
           command: |
             set -euo pipefail
-            cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
-            cmake --build cpp/build --config Release
-            ctest --test-dir cpp/build --output-on-failure -C Release
+            CMAKE="/c/Program Files/CMake/bin/cmake.exe"
+            CTEST="/c/Program Files/CMake/bin/ctest.exe"
+            "$CMAKE" -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+            "$CMAKE" --build cpp/build --config Release
+            "$CTEST" --test-dir cpp/build --output-on-failure -C Release
       - run:
           name: Cross-language agreement
           shell: bash.exe
