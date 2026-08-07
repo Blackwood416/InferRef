@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-08-07 | [Contract dtype ABI and CircleCI cost tiers](2026-08-07-dtype-abi-and-circleci-cost-tiers.md) | Required dtype metadata; duplicate contract rejection; CircleCI 3-tier Windows 7→3; numpy-only cpp-windows; on_fail artifacts |
 | 2026-08-07 | [Gate safety and contract ABI details](2026-08-07-gate-safety-and-contract-abi-details.md) | Safe evidence-dir deletion; scalar epsilon; per-contract subset; KV dtype relation; JSON control chars |
 | 2026-08-07 | [Contract observable outputs and atomic extraction](2026-08-07-contract-outputs-and-atomic-extraction.md) | Exact output role sets; input/output relation validators; staging+atomic publish; single contract per testcase; 529 tests |
 | 2026-08-06 | [Executable contract profiles and per-contract capability](2026-08-06-executable-contract-profiles.md) | Contract registry/role binding; per-contract preflight; native JSON parser; fresh XPU gate dirs; suite validate runnable split |

@@ -319,7 +319,14 @@ def contract_boundary_issues(
     contract = REGISTRY.get(contract_id)
     if contract is None:
         return ()
-    issues = list(contract.validate_inputs(inputs))
+    issues: list[str] = []
+    for role in (*contract.inputs, *contract.outputs):
+        record = inputs.get(role) or outputs.get(role)
+        if record is None:
+            continue
+        if not isinstance(record.get("dtype"), str) or not record["dtype"]:
+            issues.append(f"{role} must declare a non-empty dtype")
+    issues.extend(contract.validate_inputs(inputs))
     if contract.validate_outputs is not None:
         issues.extend(contract.validate_outputs(outputs))
     if contract.validate_relation is not None:

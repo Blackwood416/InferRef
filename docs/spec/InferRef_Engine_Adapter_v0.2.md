@@ -182,10 +182,10 @@ Each profile also validates output shapes and input-output relations:
 
 v0.2 restricts a testcase to **exactly one** executable contract. The `contracts`
 array must contain a single unique ID when present, extraction rejects repeated
-`--contract` values, and the native engine refuses multiple supported
-contracts. Composite operations (for example a fused RMSNorm→RoPE region)
-should be expressed as a dedicated composite contract rather than an ambiguous
-multi-contract array.
+`--contract` values (including duplicates of the same ID), and the native
+engine refuses multiple supported contracts. Composite operations (for example
+a fused RMSNorm→RoPE region) should be expressed as a dedicated composite
+contract rather than an ambiguous multi-contract array.
 
 ### Atomic extraction publish
 

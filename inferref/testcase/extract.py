@@ -585,7 +585,15 @@ def _build_staged_testcase(
         if value.id in referenced_value_ids
     ]
 
-    selected_contracts = list(dict.fromkeys(contracts or ()))
+    raw_contracts = list(contracts or ())
+    if len(raw_contracts) != len(set(raw_contracts)):
+        duplicates = sorted(
+            {item for item in raw_contracts if raw_contracts.count(item) > 1}
+        )
+        raise ExtractionError(
+            "duplicate executable contract(s): " + ", ".join(duplicates)
+        )
+    selected_contracts = list(dict.fromkeys(raw_contracts))
     invalid_contracts = [
         item for item in selected_contracts if not is_contract_id(item)
     ]

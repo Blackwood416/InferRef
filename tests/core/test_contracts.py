@@ -107,6 +107,29 @@ def test_unknown_contract_has_no_registry_validation() -> None:
     assert contract_input_issues("softmax/last-dim/v1", {}) == ()
 
 
+def test_boundary_requires_dtype_metadata_for_known_roles() -> None:
+    inputs = {
+        "x": {"shape": [2, 3, 64]},
+        "weight": _tensor([64], dtype="float16"),
+        "epsilon": _tensor([1], dtype="float32"),
+    }
+    outputs = {"y": _tensor([2, 3, 64], dtype="float16")}
+    issues = contract_boundary_issues("rmsnorm/last-dim/v1", inputs, outputs)
+    assert any("x must declare a non-empty dtype" in issue for issue in issues)
+
+    outputs_missing = {"y": {"shape": [2, 3, 64]}}
+    issues = contract_boundary_issues(
+        "rmsnorm/last-dim/v1",
+        {
+            "x": _tensor([2, 3, 64], dtype="float16"),
+            "weight": _tensor([64], dtype="float16"),
+            "epsilon": _tensor([1], dtype="float32"),
+        },
+        outputs_missing,
+    )
+    assert any("y must declare a non-empty dtype" in issue for issue in issues)
+
+
 def test_contract_requirements_are_role_scoped() -> None:
     manifest = {
         "inputs": [

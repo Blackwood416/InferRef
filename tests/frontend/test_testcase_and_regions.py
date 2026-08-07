@@ -178,6 +178,23 @@ def test_extract_rejects_multiple_contracts(
         )
 
 
+def test_extract_rejects_duplicate_contracts(
+    traced: TracePackage, tmp_path: Path
+) -> None:
+    mm = next(
+        op
+        for op in traced.graph.ops_in_execution_order()
+        if op.canonical_name == "aten.mm.default"
+    )
+    with pytest.raises(ExtractionError, match="duplicate executable contract"):
+        extract_operator(
+            traced,
+            mm.id,
+            tmp_path / "tc",
+            contracts=["rmsnorm/last-dim/v1", "rmsnorm/last-dim/v1"],
+        )
+
+
 def test_extract_refuses_existing_output_without_force(
     traced: TracePackage, tmp_path: Path
 ) -> None:
