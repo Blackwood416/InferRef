@@ -19,7 +19,7 @@ commands:
           command: |
             $ErrorActionPreference = "Stop"
             $package = "python" + ("<< parameters.version >>").Replace(".", "")
-            & py "-<< parameters.version >>" --version 2>&1 | Out-Null
+            cmd /c "py -<< parameters.version >> --version >nul 2>&1"
             if ($LASTEXITCODE -ne 0) {
                 choco install $package --yes --no-progress
             }
@@ -431,7 +431,7 @@ jobs:
           shell: powershell.exe
           command: |
             $ErrorActionPreference = "Stop"
-            cmake --version 2>&1 | Out-Null
+            cmd /c "cmake --version >nul 2>&1"
             if ($LASTEXITCODE -ne 0) {
                 choco install cmake --yes --no-progress --installargs 'ADD_CMAKE_TO_PATH=System' --apply-install-arguments-to-dependencies
             }
