@@ -1,0 +1,532 @@
+version: 2.1
+
+orbs:
+  win: circleci/windows@5.0.0
+
+# Migration of .github/workflows/ci.yml.
+# GPU/XPU-specific workflows remain in GitHub Actions; this config owns the
+# framework-neutral CPU, PyTorch/HF frontend, and C++ reader checks.
+
+commands:
+  install-windows-python:
+    parameters:
+      version:
+        type: string
+    steps:
+      - run:
+          name: Install Python << parameters.version >>
+          shell: powershell.exe
+          command: |
+            $ErrorActionPreference = "Stop"
+            $package = "python" + ("<< parameters.version >>").Replace(".", "")
+            choco install $package --yes --no-progress
+            py -<< parameters.version >> -m venv .venv
+            .\.venv\Scripts\python.exe --version
+
+  install-frontend-linux:
+    parameters:
+      torch:
+        type: string
+      transformers:
+        type: string
+        default: ""
+    steps:
+      - run:
+          name: Install PyTorch and InferRef
+          command: |
+            set -euo pipefail
+            python -m pip install --upgrade pip
+            case "<< parameters.torch >>" in
+              min)
+                pip install "numpy<2"
+                pip install "torch==2.1.*" --index-url https://download.pytorch.org/whl/cpu
+                ;;
+              current)
+                pip install torch --index-url https://download.pytorch.org/whl/cpu
+                ;;
+              *)
+                echo "unsupported torch selector: << parameters.torch >>" >&2
+                exit 2
+                ;;
+            esac
+            pip install -e ".[dev]"
+            if [ -n "<< parameters.transformers >>" ]; then
+              if [ "<< parameters.transformers >>" = "latest" ]; then
+                pip install transformers
+              else
+                pip install "transformers==<< parameters.transformers >>"
+              fi
+            fi
+
+  install-frontend-windows:
+    parameters:
+      torch:
+        type: string
+      transformers:
+        type: string
+        default: ""
+    steps:
+      - run:
+          name: Install PyTorch and InferRef
+          shell: bash.exe
+          command: |
+            set -euo pipefail
+            PY="./.venv/Scripts/python.exe"
+            "$PY" -m pip install --upgrade pip
+            case "<< parameters.torch >>" in
+              min)
+                "$PY" -m pip install "numpy<2"
+                "$PY" -m pip install "torch==2.1.*" --index-url https://download.pytorch.org/whl/cpu
+                ;;
+              current)
+                "$PY" -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+                ;;
+              *)
+                echo "unsupported torch selector: << parameters.torch >>" >&2
+                exit 2
+                ;;
+            esac
+            "$PY" -m pip install -e ".[dev]"
+            if [ -n "<< parameters.transformers >>" ]; then
+              if [ "<< parameters.transformers >>" = "latest" ]; then
+                "$PY" -m pip install transformers
+              else
+                "$PY" -m pip install "transformers==<< parameters.transformers >>"
+              fi
+            fi
+
+  frontend-checks-linux:
+    parameters:
+      hf-suite:
+        type: string
+        default: ""
+    steps:
+      - run:
+          name: Report versions and assert frontend capabilities
+          command: python .circleci/check_ci.py frontend --hf-suite "<< parameters.hf-suite >>"
+      - run:
+          name: Run required HF capability tests
+          command: |
+            set -euo pipefail
+            case "<< parameters.hf-suite >>" in
+              generic-*)
+                python -m pytest tests/frontend/test_semantic_hf.py -q -s
+                ;;
+              qwen35-*)
+                python -m pytest tests/frontend/test_hf_hybrid_cache.py -q
+                ;;
+              "")
+                ;;
+              *)
+                echo "unknown HF suite: << parameters.hf-suite >>" >&2
+                exit 2
+                ;;
+            esac
+      - run:
+          name: Run full suite
+          command: python -m pytest tests -q
+      - run:
+          name: Run documented end-to-end loop
+          command: |
+            set -euo pipefail
+            python examples/mini_llama/run_trace.py --output trace/
+            inferref validate trace/
+            inferref analyze trace/ --json > /dev/null
+            inferref region detect trace/
+            inferref testcase extract trace/ --region "RoPE@layers.0.self_attn" \
+              -o repro/rope \
+              --input-names cos,sin,query,key --output-names q_embed,k_embed
+            python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
+            inferref compare repro/rope engine-out/ --first-failure
+            python examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
+            if inferref compare repro/rope engine-bad/ --first-failure; then
+              echo "comparator reported PASS for a deliberately broken engine" >&2
+              exit 1
+            fi
+            echo "end-to-end loop behaved correctly in both directions"
+
+  frontend-checks-windows:
+    parameters:
+      hf-suite:
+        type: string
+        default: ""
+    steps:
+      - run:
+          name: Report versions and assert frontend capabilities
+          shell: bash.exe
+          command: ./.venv/Scripts/python.exe .circleci/check_ci.py frontend --hf-suite "<< parameters.hf-suite >>"
+      - run:
+          name: Run required HF capability tests
+          shell: bash.exe
+          command: |
+            set -euo pipefail
+            PY="./.venv/Scripts/python.exe"
+            case "<< parameters.hf-suite >>" in
+              generic-*)
+                "$PY" -m pytest tests/frontend/test_semantic_hf.py -q -s
+                ;;
+              qwen35-*)
+                "$PY" -m pytest tests/frontend/test_hf_hybrid_cache.py -q
+                ;;
+              "")
+                ;;
+              *)
+                echo "unknown HF suite: << parameters.hf-suite >>" >&2
+                exit 2
+                ;;
+            esac
+      - run:
+          name: Run full suite
+          shell: bash.exe
+          command: ./.venv/Scripts/python.exe -m pytest tests -q
+      - run:
+          name: Run documented end-to-end loop
+          shell: bash.exe
+          command: |
+            set -euo pipefail
+            PY="./.venv/Scripts/python.exe"
+            INFERREF="./.venv/Scripts/inferref.exe"
+            "$PY" examples/mini_llama/run_trace.py --output trace/
+            "$INFERREF" validate trace/
+            "$INFERREF" analyze trace/ --json > /dev/null
+            "$INFERREF" region detect trace/
+            "$INFERREF" testcase extract trace/ --region "RoPE@layers.0.self_attn" \
+              -o repro/rope \
+              --input-names cos,sin,query,key --output-names q_embed,k_embed
+            "$PY" examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
+            "$INFERREF" compare repro/rope engine-out/ --first-failure
+            "$PY" examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
+            if "$INFERREF" compare repro/rope engine-bad/ --first-failure; then
+              echo "comparator reported PASS for a deliberately broken engine" >&2
+              exit 1
+            fi
+            echo "end-to-end loop behaved correctly in both directions"
+
+jobs:
+  core-linux:
+    parameters:
+      python:
+        type: string
+    docker:
+      - image: cimg/python:<< parameters.python >>
+    steps:
+      - checkout
+      - run:
+          name: Install core only
+          command: |
+            python -m pip install --upgrade pip
+            pip install -e ".[dev]"
+      - run:
+          name: Assert PyTorch really is absent
+          command: python .circleci/check_ci.py no-torch --message "torch is installed; this job must run without it"
+      - run:
+          name: Run core suite
+          command: python -m pytest tests/core -q
+
+  core-windows:
+    parameters:
+      python:
+        type: string
+    executor:
+      name: win/default
+      size: medium
+    steps:
+      - checkout
+      - install-windows-python:
+          version: << parameters.python >>
+      - run:
+          name: Install core only
+          shell: bash.exe
+          command: |
+            ./.venv/Scripts/python.exe -m pip install --upgrade pip
+            ./.venv/Scripts/python.exe -m pip install -e ".[dev]"
+      - run:
+          name: Assert PyTorch really is absent
+          shell: bash.exe
+          command: ./.venv/Scripts/python.exe .circleci/check_ci.py no-torch --message "torch is installed; this job must run without it"
+      - run:
+          name: Run core suite
+          shell: bash.exe
+          command: ./.venv/Scripts/python.exe -m pytest tests/core -q
+
+  agent-linux:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Install core and Agent transport
+          command: |
+            python -m pip install --upgrade pip
+            pip install -e ".[dev,agent]"
+      - run:
+          name: Assert PyTorch really is absent
+          command: python .circleci/check_ci.py no-torch --message "torch is installed; Agent integration must remain framework-neutral"
+      - run:
+          name: Run core and Agent suites
+          command: python -m pytest tests/core tests/agent -q
+
+  frontend-linux:
+    parameters:
+      python:
+        type: string
+      torch:
+        type: string
+      transformers:
+        type: string
+        default: ""
+      hf-suite:
+        type: string
+        default: ""
+    docker:
+      - image: cimg/python:<< parameters.python >>
+    steps:
+      - checkout
+      - install-frontend-linux:
+          torch: << parameters.torch >>
+          transformers: << parameters.transformers >>
+      - frontend-checks-linux:
+          hf-suite: << parameters.hf-suite >>
+      - store_artifacts:
+          path: trace
+          destination: trace
+      - store_artifacts:
+          path: repro
+          destination: repro
+
+  frontend-windows:
+    parameters:
+      python:
+        type: string
+      torch:
+        type: string
+      transformers:
+        type: string
+        default: ""
+      hf-suite:
+        type: string
+        default: ""
+    executor:
+      name: win/default
+      size: medium
+    steps:
+      - checkout
+      - install-windows-python:
+          version: << parameters.python >>
+      - install-frontend-windows:
+          torch: << parameters.torch >>
+          transformers: << parameters.transformers >>
+      - frontend-checks-windows:
+          hf-suite: << parameters.hf-suite >>
+      - store_artifacts:
+          path: trace
+          destination: trace
+      - store_artifacts:
+          path: repro
+          destination: repro
+
+  frontend-nightly-linux:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Run non-gating PyTorch nightly compatibility check
+          command: |
+            set +e
+            (
+              set -euo pipefail
+              python -m pip install --upgrade pip
+              pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cpu
+              pip install -e ".[dev]"
+              python .circleci/check_ci.py frontend
+              python -m pytest tests -q
+              python examples/mini_llama/run_trace.py --output trace/
+              inferref validate trace/
+              inferref analyze trace/ --json > /dev/null
+              inferref region detect trace/
+              inferref testcase extract trace/ --region "RoPE@layers.0.self_attn" \
+                -o repro/rope \
+                --input-names cos,sin,query,key --output-names q_embed,k_embed
+              python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
+              inferref compare repro/rope engine-out/ --first-failure
+              python examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
+              if inferref compare repro/rope engine-bad/ --first-failure; then
+                echo "comparator reported PASS for a deliberately broken engine" >&2
+                exit 1
+              fi
+            )
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "WARNING: PyTorch nightly compatibility failed (non-gating), exit=$status"
+              exit 0
+            fi
+            echo "PyTorch nightly compatibility passed"
+
+  cpp-linux:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Install CMake
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y cmake
+      - run:
+          name: Configure, build, and self-test
+          command: |
+            set -euo pipefail
+            cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+            cmake --build cpp/build --config Release
+            ctest --test-dir cpp/build --output-on-failure -C Release
+      - run:
+          name: Cross-language agreement
+          command: |
+            set -euo pipefail
+            python -m pip install --upgrade pip
+            python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+            python -m pip install -e ".[dev]"
+            python examples/mini_llama/run_trace.py --output trace/
+            inferref region detect trace/
+            inferref testcase extract trace/ --region "RoPE@layers.0.self_attn" \
+              -o repro/rope \
+              --input-names cos,sin,query,key --output-names q_embed,k_embed
+            python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
+            BIN=cpp/build/inferref_compare
+            [ -x "$BIN" ] || BIN=cpp/build/Release/inferref_compare.exe
+            for name in q_embed k_embed; do
+              "$BIN" "repro/rope/reference/${name}.irtensor" "engine-out/${name}.irtensor"
+            done
+            python examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
+            if "$BIN" repro/rope/reference/q_embed.irtensor engine-bad/q_embed.irtensor; then
+              echo "C++ comparator reported PASS for a broken engine" >&2
+              exit 1
+            fi
+            "$BIN" repro/rope/reference/k_embed.irtensor engine-bad/k_embed.irtensor
+            cp engine-bad/q_embed.irtensor engine-bad/k_embed.irtensor
+            if "$BIN" repro/rope/reference/k_embed.irtensor engine-bad/k_embed.irtensor; then
+              echo "C++ comparator reported PASS for a corrupted k_embed" >&2
+              exit 1
+            fi
+            echo "C++ and Python comparators agree for every output and both failure directions"
+
+  cpp-windows:
+    executor:
+      name: win/default
+      size: medium
+    steps:
+      - checkout
+      - install-windows-python:
+          version: "3.12"
+      - run:
+          name: Install CMake
+          shell: powershell.exe
+          command: |
+            $ErrorActionPreference = "Stop"
+            choco install cmake --yes --no-progress --installargs 'ADD_CMAKE_TO_PATH=System' --apply-install-arguments-to-dependencies
+            & "C:\Program Files\CMake\bin\cmake.exe" --version
+            & "C:\Program Files\CMake\bin\ctest.exe" --version
+      - run:
+          name: Configure, build, and self-test
+          shell: bash.exe
+          command: |
+            set -euo pipefail
+            CMAKE="/c/Program Files/CMake/bin/cmake.exe"
+            CTEST="/c/Program Files/CMake/bin/ctest.exe"
+            "$CMAKE" -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+            "$CMAKE" --build cpp/build --config Release
+            "$CTEST" --test-dir cpp/build --output-on-failure -C Release
+      - run:
+          name: Cross-language agreement
+          shell: bash.exe
+          command: |
+            set -euo pipefail
+            PY="./.venv/Scripts/python.exe"
+            INFERREF="./.venv/Scripts/inferref.exe"
+            "$PY" -m pip install --upgrade pip
+            "$PY" -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+            "$PY" -m pip install -e ".[dev]"
+            "$PY" examples/mini_llama/run_trace.py --output trace/
+            "$INFERREF" region detect trace/
+            "$INFERREF" testcase extract trace/ --region "RoPE@layers.0.self_attn" \
+              -o repro/rope \
+              --input-names cos,sin,query,key --output-names q_embed,k_embed
+            "$PY" examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
+            BIN=cpp/build/inferref_compare.exe
+            [ -x "$BIN" ] || BIN=cpp/build/Release/inferref_compare.exe
+            for name in q_embed k_embed; do
+              "$BIN" "repro/rope/reference/${name}.irtensor" "engine-out/${name}.irtensor"
+            done
+            "$PY" examples/engine_sim/rope_numpy.py repro/rope --output engine-bad/ --inject-bug
+            if "$BIN" repro/rope/reference/q_embed.irtensor engine-bad/q_embed.irtensor; then
+              echo "C++ comparator reported PASS for a broken engine" >&2
+              exit 1
+            fi
+            "$BIN" repro/rope/reference/k_embed.irtensor engine-bad/k_embed.irtensor
+            cp engine-bad/q_embed.irtensor engine-bad/k_embed.irtensor
+            if "$BIN" repro/rope/reference/k_embed.irtensor engine-bad/k_embed.irtensor; then
+              echo "C++ comparator reported PASS for a corrupted k_embed" >&2
+              exit 1
+            fi
+            echo "C++ and Python comparators agree for every output and both failure directions"
+
+workflows:
+  ci:
+    jobs:
+      - core-linux:
+          matrix:
+            parameters:
+              python: ["3.10", "3.12", "3.13"]
+      - core-windows:
+          matrix:
+            parameters:
+              python: ["3.10", "3.12", "3.13"]
+      - agent-linux
+      - frontend-linux:
+          name: frontend-linux-py3.10-torch-min
+          python: "3.10"
+          torch: min
+      - frontend-windows:
+          name: frontend-windows-py3.10-torch-min
+          python: "3.10"
+          torch: min
+      - frontend-linux:
+          name: frontend-linux-py3.12-torch-current
+          python: "3.12"
+          torch: current
+      - frontend-windows:
+          name: frontend-windows-py3.12-torch-current
+          python: "3.12"
+          torch: current
+      - frontend-linux:
+          name: frontend-linux-py3.13-torch-current
+          python: "3.13"
+          torch: current
+      - frontend-linux:
+          name: frontend-linux-generic-min
+          python: "3.10"
+          torch: min
+          transformers: "4.40.*"
+          hf-suite: generic-min
+      - frontend-windows:
+          name: frontend-windows-generic-fixed
+          python: "3.13"
+          torch: current
+          transformers: "4.57.6"
+          hf-suite: generic-windows-fixed
+      - frontend-linux:
+          name: frontend-linux-qwen35-fixed
+          python: "3.12"
+          torch: current
+          transformers: "5.14.1"
+          hf-suite: qwen35-fixed
+      - frontend-linux:
+          name: frontend-linux-qwen35-latest
+          python: "3.12"
+          torch: current
+          transformers: latest
+          hf-suite: qwen35-latest
+      - frontend-nightly-linux
+      - cpp-linux
+      - cpp-windows
