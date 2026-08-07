@@ -239,6 +239,17 @@ void TestJsonParser()
         non_array_rejected = true;
     }
     Check(non_array_rejected, "non-array contracts rejected");
+
+    bool control_rejected = false;
+    try
+    {
+        inferref::json::Parse("{\"name\": \"bad\x01!\"}");
+    }
+    catch (const inferref::json::ParseError &)
+    {
+        control_rejected = true;
+    }
+    Check(control_rejected, "unescaped control character rejected");
 }
 
 void TestKvIndexBounds()

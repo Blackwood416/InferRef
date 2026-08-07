@@ -52,8 +52,8 @@ def _rmsnorm_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
         issues.append("x must be non-empty with a positive last dimension")
     elif weight is not None and _numel(weight) != x[-1]:
         issues.append("weight numel must equal x.shape[-1]")
-    if epsilon is None or _numel(epsilon) < 1:
-        issues.append("epsilon must contain at least one value")
+    if epsilon is None or _numel(epsilon) != 1:
+        issues.append("epsilon must contain exactly one value")
     return issues
 
 
@@ -179,6 +179,23 @@ def _kv_outputs(outputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
     return []
 
 
+def _kv_dtype_issues(
+    inputs: Mapping[str, dict[str, Any]], outputs: Mapping[str, dict[str, Any]]
+) -> Sequence[str]:
+    dtypes = [
+        value.get("dtype")
+        for value in (
+            inputs.get("cache"),
+            inputs.get("update"),
+            outputs.get("cache_out"),
+        )
+        if isinstance(value, dict) and value.get("dtype") is not None
+    ]
+    if len(dtypes) == 3 and len(set(dtypes)) != 1:
+        return ["cache, update, and cache_out dtypes must match"]
+    return []
+
+
 def _kv_append_relation(
     inputs: Mapping[str, dict[str, Any]], outputs: Mapping[str, dict[str, Any]]
 ) -> Sequence[str]:
@@ -203,7 +220,7 @@ def _kv_append_relation(
         issues.append(
             "cache_out sequence length must equal cache + update sequence lengths"
         )
-    return issues
+    return [*issues, *_kv_dtype_issues(inputs, outputs)]
 
 
 def _kv_indexed_relation(
@@ -215,7 +232,7 @@ def _kv_indexed_relation(
         return []
     if cache_out != cache:
         return ["cache_out.shape must equal cache.shape for an indexed update"]
-    return []
+    return list(_kv_dtype_issues(inputs, outputs))
 
 
 @dataclass(frozen=True)

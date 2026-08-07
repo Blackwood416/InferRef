@@ -241,6 +241,8 @@ private:
                 return result;
             if (current != '\\')
             {
+                if (static_cast<unsigned char>(current) < 0x20)
+                    Fail("unescaped control character in string");
                 out.push_back(current);
                 continue;
             }

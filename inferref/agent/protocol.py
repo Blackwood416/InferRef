@@ -181,6 +181,32 @@ class AdapterCapabilities:
                 contract_capabilities[contract] = ContractCapability.from_dict(
                     value, contract=contract
                 )
+            global_dtypes = set(dtypes)
+            global_features = set(features)
+            for contract, capability in contract_capabilities.items():
+                if capability.dtypes is not None:
+                    extra_dtypes = set(capability.dtypes) - global_dtypes
+                    if extra_dtypes:
+                        raise AgentProtocolError(
+                            "capabilities.contract_capabilities["
+                            f"{contract}].dtypes exceeds global capabilities.dtypes: "
+                            + ", ".join(sorted(extra_dtypes))
+                        )
+                if capability.max_rank is not None and capability.max_rank > max_rank:
+                    raise AgentProtocolError(
+                        "capabilities.contract_capabilities["
+                        f"{contract}].max_rank {capability.max_rank} exceeds global "
+                        f"capabilities.max_rank {max_rank}"
+                    )
+                if capability.features is not None:
+                    extra_features = set(capability.features) - global_features
+                    if extra_features:
+                        raise AgentProtocolError(
+                            "capabilities.contract_capabilities["
+                            f"{contract}].features exceeds global "
+                            "capabilities.features: "
+                            + ", ".join(sorted(extra_features))
+                        )
         return cls(
             devices, dtypes, max_rank, features, contracts, contract_capabilities
         )

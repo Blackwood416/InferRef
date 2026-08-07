@@ -14,8 +14,28 @@ if (-not $Python) {
 $Python = (Resolve-Path $Python).Path
 $BuildDirectory = [IO.Path]::GetFullPath((Join-Path $Repository $BuildDirectory))
 $EvidenceDirectory = [IO.Path]::GetFullPath((Join-Path $Repository $EvidenceDirectory))
-if (-not $EvidenceDirectory.StartsWith($Repository, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Evidence directory must be inside the repository: $EvidenceDirectory"
+$Relative = [IO.Path]::GetRelativePath($Repository, $EvidenceDirectory)
+if (
+    $Relative -eq "." -or
+    $Relative -eq ".." -or
+    $Relative.StartsWith("..\") -or
+    $Relative.StartsWith("../") -or
+    [IO.Path]::IsPathRooted($Relative)
+) {
+    throw "Evidence directory must be a subdirectory of the repository, got relative path '$Relative'"
+}
+# Recursive cleanup is only allowed under the two well-known evidence roots, so
+# a typo like -EvidenceDirectory . or C:\work\InferRef-old can never target the
+# repository itself or a sibling checkout.
+$Safe = $false
+foreach ($Root in @("xpu-sycl-evidence", ".scratch")) {
+    if ($Relative -eq $Root -or $Relative.StartsWith("$Root\") -or $Relative.StartsWith("$Root/")) {
+        $Safe = $true
+        break
+    }
+}
+if (-not $Safe) {
+    throw "Evidence directory must live under xpu-sycl-evidence or .scratch, got relative path '$Relative'"
 }
 if (Test-Path -LiteralPath $EvidenceDirectory) {
     if (-not $CleanEvidenceDirectory) {

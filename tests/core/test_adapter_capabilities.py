@@ -169,6 +169,45 @@ def test_contract_capabilities_parse_and_validate() -> None:
         )
 
 
+def test_contract_capabilities_must_be_global_subset() -> None:
+    base = {
+        "device_types": ["xpu"],
+        "dtypes": ["float32"],
+        "max_rank": 4,
+        "features": [],
+        "contracts": ["rope/rotate-half/v1"],
+    }
+    with pytest.raises(AgentProtocolError, match="exceeds global capabilities.dtypes"):
+        AdapterCapabilities.from_dict(
+            {
+                **base,
+                "contract_capabilities": {
+                    "rope/rotate-half/v1": {"dtypes": ["float16"]}
+                },
+            }
+        )
+    with pytest.raises(
+        AgentProtocolError, match="exceeds global capabilities.max_rank"
+    ):
+        AdapterCapabilities.from_dict(
+            {
+                **base,
+                "contract_capabilities": {"rope/rotate-half/v1": {"max_rank": 8}},
+            }
+        )
+    with pytest.raises(
+        AgentProtocolError, match="exceeds global capabilities.features"
+    ):
+        AdapterCapabilities.from_dict(
+            {
+                **base,
+                "contract_capabilities": {
+                    "rope/rotate-half/v1": {"features": ["multiple_outputs"]}
+                },
+            }
+        )
+
+
 def test_empty_contracts_array_is_strict_zero_support() -> None:
     caps = AdapterCapabilities.from_dict(
         {

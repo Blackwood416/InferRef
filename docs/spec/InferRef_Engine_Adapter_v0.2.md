@@ -77,11 +77,16 @@ not a proof that every contract supports every combination.
 
 Every key must be declared in `contracts`, and each value may carry `dtypes`,
 `max_rank`, and `features` (all optional, each using the same rules as the
-global fields). Preflight derives per-contract requirements from the tensors
-bound to the contract roles, so a float16 RoPE case is rejected by an adapter
-that only declares float32 RoPE even when its global `dtypes` list is wider.
-Mismatches are reported as `contract_dtype`, `contract_max_rank`, or
-`contract_feature` issues before any engine process starts.
+global fields). Per-contract values must be subsets of the global declaration:
+`contract_capabilities[C].dtypes ⊆ capabilities.dtypes`,
+`contract_capabilities[C].features ⊆ capabilities.features`, and
+`contract_capabilities[C].max_rank ≤ capabilities.max_rank`; a contradictory
+adapter file is rejected at load time. Preflight derives per-contract
+requirements from the tensors bound to the contract roles, so a float16 RoPE
+case is rejected by an adapter that only declares float32 RoPE even when its
+global `dtypes` list is wider. Mismatches are reported as `contract_dtype`,
+`contract_max_rank`, or `contract_feature` issues before any engine process
+starts.
 
 ## Testcase requirements
 
@@ -117,13 +122,14 @@ but the run records `capability_status: unchecked`.
 The initial native contracts are:
 
 - `rmsnorm/last-dim/v1`: normalize over a non-empty last dimension; weight
-  numel equals that dimension.
+  numel equals that dimension; epsilon is exactly one scalar value.
 - `rope/rotate-half/v1`: positive even rotary dimension, split-half rotation,
   and matching `[sequence, rotary_dim]` cosine/sine inputs.
 - `kv-cache/append/v1`: append update tensors on the penultimate sequence axis;
   all other dimensions match.
 - `kv-cache/indexed-update/v1`: replace one or more positions on the penultimate
-  sequence axis using one non-negative scalar index.
+  sequence axis using one non-negative scalar index. For both KV contracts,
+  `cache`, `update`, and `cache_out` dtypes must match.
 
 Contracts come from an explicit extraction profile (`testcase extract
 --contract ...`) or an engine mapping, never from a Suite tag or testcase name.
@@ -139,6 +145,13 @@ and shape validators, not just an ID label:
 | `rope/rotate-half/v1` | `query`, `key`, `cos`, `sin` | `q_embed`, `k_embed` |
 | `kv-cache/append/v1` | `cache`, `update` | `cache_out` |
 | `kv-cache/indexed-update/v1` | `cache`, `update`, `index` | `cache_out` |
+
+Contract outputs are an **exact role set**. Contract inputs are **required
+named roles**: a testcase must provide every input role, but may carry
+additional non-contract input tensors that an engine is allowed to ignore. This
+is deliberate — a region may expose auxiliary context beyond the contract's
+operand set — so third-party adapter authors should treat inputs as a
+capability projection and outputs as the full observable ABI.
 
 Extraction refuses to publish a testcase when a requested contract is not in
 the local registry, when the extracted boundary cannot be bound to the
@@ -183,6 +196,12 @@ the output directory must not exist unless `--force` is passed, and `--force`
 replaces it via a backup-and-swap so a failure leaves the previous testcase
 intact. The extractor runs the same `validate_testcase` used by Suite and
 engine execution before publishing.
+
+The guarantee is rename-based atomic publication under normal process
+execution. A hard crash between the two renames of a `--force` replacement (old
+directory moved to a `.bak-*` sibling, staging moved into place) can leave a
+`.bak-*`/`.tmp-*` pair without a final target; startup recovery for that window
+is not provided by the extractor.
 
 The `contracts` field becomes mandatory in the next adapter/testcase format.
 

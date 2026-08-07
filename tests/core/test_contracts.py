@@ -59,6 +59,10 @@ def test_rmsnorm_validator_accepts_and_rejects_shapes() -> None:
         "rmsnorm/last-dim/v1",
         {"x": _tensor([2, 3, 64]), "weight": _tensor([64]), "epsilon": _tensor([0])},
     )
+    assert contract_input_issues(
+        "rmsnorm/last-dim/v1",
+        {"x": _tensor([2, 3, 64]), "weight": _tensor([64]), "epsilon": _tensor([2])},
+    )
 
 
 def test_rope_validator_enforces_even_last_dim_and_cos_sin_contract() -> None:
@@ -231,3 +235,28 @@ def test_kv_boundary_validates_append_sequence_and_indexed_identity() -> None:
         {"cache_out": _tensor([2, 4, 5, 8])},
     )
     assert any("cache_out.shape must equal cache.shape" in issue for issue in issues)
+
+
+def test_kv_boundary_requires_matching_dtypes() -> None:
+    append_inputs = {
+        "cache": _tensor([2, 4, 4, 8], dtype="float32"),
+        "update": _tensor([2, 4, 1, 8], dtype="float16"),
+    }
+    issues = contract_boundary_issues(
+        "kv-cache/append/v1",
+        append_inputs,
+        {"cache_out": _tensor([2, 4, 5, 8], dtype="float32")},
+    )
+    assert any("dtypes must match" in issue for issue in issues)
+
+    indexed_inputs = {
+        "cache": _tensor([2, 4, 4, 8], dtype="float32"),
+        "update": _tensor([2, 4, 1, 8], dtype="float32"),
+        "index": _tensor([1]),
+    }
+    issues = contract_boundary_issues(
+        "kv-cache/indexed-update/v1",
+        indexed_inputs,
+        {"cache_out": _tensor([2, 4, 4, 8], dtype="float16")},
+    )
+    assert any("dtypes must match" in issue for issue in issues)

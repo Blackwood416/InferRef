@@ -164,7 +164,7 @@ void RunRmsNorm(sycl::queue &queue, const fs::path &root, const fs::path &output
     const std::size_t width = static_cast<std::size_t>(x_tensor.shape.back());
     if (w_tensor.Numel() != static_cast<std::int64_t>(width))
         InvalidContract(contract, "weight", "numel == x.shape[-1]", w_tensor.ShapeString());
-    if (e_tensor.Numel() < 1) InvalidContract(contract, "epsilon", "at least one value", e_tensor.ShapeString());
+    if (e_tensor.Numel() != 1) InvalidContract(contract, "epsilon", "exactly one value", e_tensor.ShapeString());
     if (x_tensor.Numel() % static_cast<std::int64_t>(width) != 0)
         InvalidContract(contract, "x", "numel divisible by last dimension", x_tensor.ShapeString());
     auto x = x_tensor.AsFloat32(); auto w = w_tensor.AsFloat32(); const float eps = e_tensor.AsFloat32()[0];
@@ -238,6 +238,8 @@ void RunCache(sycl::queue &queue, const fs::path &root, const fs::path &output, 
     if (cache_tensor.shape.back() <= 0 || cache_tensor.shape[cache_tensor.Rank() - 2] <= 0 ||
         update_tensor.shape[update_tensor.Rank() - 2] <= 0)
         InvalidContract(contract, "cache/update", "positive sequence and width dimensions", cache_tensor.ShapeString() + " / " + update_tensor.ShapeString());
+    if (cache_tensor.dtype != update_tensor.dtype)
+        InvalidContract(contract, "update", "dtype equal to cache", inferref::DataTypeName(update_tensor.dtype));
     auto cache = cache_tensor.AsFloat32(), update = update_tensor.AsFloat32();
     const std::size_t width = static_cast<std::size_t>(cache_tensor.shape.back());
     const std::size_t old_sequence = static_cast<std::size_t>(cache_tensor.shape[cache_tensor.Rank() - 2]);

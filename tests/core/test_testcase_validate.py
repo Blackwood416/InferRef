@@ -336,6 +336,51 @@ def test_contract_rejects_empty_kernel_input_before_execution(tmp_path: Path) ->
     assert "contract_shape_invalid" in {issue.code for issue in result.errors}
 
 
+def test_contract_rejects_non_scalar_epsilon(tmp_path: Path) -> None:
+    root, manifest = _make_testcase(tmp_path / "tc")
+    manifest["format_version"] = "0.2"
+    next_id = 3
+    for name, array in (
+        ("x", np.ones((2, 3, 8), dtype=np.float32)),
+        ("weight", np.ones(8, dtype=np.float32)),
+        ("epsilon", np.ones(2, dtype=np.float32)),
+    ):
+        payload = codec.write_array(root / "inputs" / f"{name}.irtensor", array)
+        metadata = codec.read(payload).to_metadata()
+        manifest["inputs"].append(
+            {
+                "name": name,
+                "value_id": next_id,
+                "payload": f"inputs/{name}.irtensor",
+                **metadata,
+            }
+        )
+        manifest["values"].append({"id": next_id, **metadata})
+        next_id += 1
+    y_payload = codec.write_array(
+        root / "reference" / "y.irtensor",
+        np.ones((2, 3, 8), dtype=np.float32),
+    )
+    y_metadata = codec.read(y_payload).to_metadata()
+    manifest["outputs"] = [
+        {
+            "name": "y",
+            "value_id": 2,
+            "payload": "reference/y.irtensor",
+            **y_metadata,
+        }
+    ]
+    manifest["values"][1] = {"id": 2, **y_metadata}
+    manifest["contracts"] = ["rmsnorm/last-dim/v1"]
+    manifest["requirements"] = derive_requirements(manifest)
+    _write_manifest(root, manifest)
+
+    result = validate_testcase(root)
+
+    assert "contract_shape_invalid" in {issue.code for issue in result.errors}
+    assert any("exactly one value" in issue.message for issue in result.errors)
+
+
 def _rope_testcase(root: Path, *, output_names: list[str]) -> tuple[Path, dict]:
     _, manifest = _make_testcase(root)
     manifest["format_version"] = "0.2"
