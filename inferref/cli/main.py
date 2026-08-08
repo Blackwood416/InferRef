@@ -9,6 +9,7 @@
     ├── compare
     ├── validate
     ├── testcase {extract, dedup}
+    ├── contract {list, show, validate}
     ├── region   {list, create, detect, delete}
     ├── agent    {capabilities, context, extract, compare, run, evaluate}
     └── export
@@ -332,6 +333,164 @@ def cmd_testcase_dedup(args: argparse.Namespace) -> int:
 
     payload = {"summary": summary, "signatures": [g.to_dict() for g in groups]}
     _emit(payload, "\n".join(lines), args.json)
+    return EXIT_OK
+
+
+# -- contract ---------------------------------------------------------------
+
+
+def cmd_contract_list(args: argparse.Namespace) -> int:
+    from inferref.contracts import contract_list, verify_contracts
+
+    entries = contract_list()
+    errors = [
+        {
+            "entry_point": status.entry_point,
+            "distribution": status.distribution,
+            "message": status.error or f"{status.entry_point}: {status.status}",
+        }
+        for status in verify_contracts()
+        if status.status == "error"
+    ]
+    payload = {
+        "format": "inferref-contract-list",
+        "contracts": [entry.to_dict() for entry in entries],
+        "errors": errors,
+    }
+    lines = [
+        f"{'Contract':<40} {'Source':<15} Status",
+        f"{'-' * 40} {'-' * 15} -------",
+    ]
+    for entry in entries:
+        source = entry.distribution or entry.source
+        lines.append(f"{entry.id:<40} {source:<15} {entry.status}")
+    if errors:
+        lines.append("")
+        for error in errors:
+            distribution = error["distribution"] or "unknown distribution"
+            lines.append(
+                f"  {error['entry_point']} ({distribution}): {error['message']}"
+            )
+    _emit(payload, "\n".join(lines), args.json)
+    # Discovery errors are data, not CLI failures (section 12.1).
+    return EXIT_OK
+
+
+def cmd_contract_show(args: argparse.Namespace) -> int:
+    from inferref.contracts import get_contract
+
+    contract = get_contract(args.id)
+    if contract is None:
+        payload = {
+            "format": "inferref-contract-show",
+            "status": "error",
+            "error": {
+                "code": "contract_unknown",
+                "message": f"unknown contract {args.id!r}",
+            },
+        }
+        _emit(payload, f"error: unknown contract {args.id!r}", args.json)
+        return EXIT_FAIL
+    payload = {
+        "format": "inferref-contract-show",
+        "status": "ok",
+        "contract": contract.to_dict(),
+    }
+    _emit(
+        payload,
+        json.dumps(contract.to_dict(), indent=2, ensure_ascii=False),
+        args.json,
+    )
+    return EXIT_OK
+
+
+def cmd_contract_validate(args: argparse.Namespace) -> int:
+    from inferref.contracts import ContractSchemaError
+    from inferref.contracts.schema import build_contract
+
+    path = Path(args.path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        payload = {
+            "format": "inferref-contract-validation",
+            "status": "fail",
+            "issues": [
+                {
+                    "code": "contract_schema_invalid",
+                    "message": f"{path}: invalid JSON: {exc}",
+                }
+            ],
+        }
+        _emit(payload, payload["issues"][0]["message"], args.json)
+        return EXIT_FAIL
+
+    descriptors = raw if isinstance(raw, list) else [raw]
+    contracts = []
+    issues: list[dict[str, Any]] = []
+    seen_ids: dict[str, int] = {}
+    for index, descriptor in enumerate(descriptors):
+        raw_id = descriptor.get("id") if isinstance(descriptor, dict) else None
+        try:
+            if not isinstance(descriptor, dict):
+                raise ContractSchemaError(
+                    "contract_schema_invalid", "descriptor must be an object"
+                )
+            contract = build_contract(descriptor)
+        except ContractSchemaError as exc:
+            issue: dict[str, Any] = {
+                "code": exc.code,
+                "message": exc.message,
+                "entry": index,
+            }
+            if isinstance(raw_id, str):
+                issue["id"] = raw_id
+            issues.append(issue)
+            continue
+        contracts.append(contract)
+        if isinstance(raw_id, str) and raw_id in seen_ids:
+            issues.append(
+                {
+                    "code": "contract_duplicate_id",
+                    "message": f"duplicate contract id {raw_id!r}",
+                    "id": raw_id,
+                    "entry": index,
+                }
+            )
+        seen_ids[raw_id] = index
+
+    def summary(contract: Any) -> dict[str, Any]:
+        return {
+            "id": contract.id,
+            "inputs": list(contract.inputs),
+            "outputs": list(contract.outputs),
+            "relations": contract.to_dict().get("relations", 0),
+        }
+
+    if issues:
+        payload = {
+            "format": "inferref-contract-validation",
+            "status": "fail",
+            "issues": issues,
+        }
+        text = "\n".join(f"{issue['code']}: {issue['message']}" for issue in issues)
+        _emit(payload, text, args.json)
+        return EXIT_FAIL
+    if len(contracts) == 1:
+        payload = {
+            "format": "inferref-contract-validation",
+            "status": "pass",
+            "contract": summary(contracts[0]),
+        }
+        text = f"valid contract {contracts[0].id}"
+    else:
+        payload = {
+            "format": "inferref-contract-validation",
+            "status": "pass",
+            "contracts": [summary(contract) for contract in contracts],
+        }
+        text = f"valid contracts: {', '.join(contract.id for contract in contracts)}"
+    _emit(payload, text, args.json)
     return EXIT_OK
 
 
@@ -889,6 +1048,31 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--limit", type=int, default=20, help="how many signatures to show")
     _add_json(q)
     q.set_defaults(func=cmd_testcase_dedup)
+
+    # contract
+    p = sub.add_parser(
+        "contract",
+        help="inspect executable contracts and validate contract files",
+    )
+    csub = p.add_subparsers(dest="contract_command", metavar="<subcommand>")
+
+    q = csub.add_parser(
+        "list", help="list built-in and discovered plugin contracts"
+    )
+    _add_json(q)
+    q.set_defaults(func=cmd_contract_list)
+
+    q = csub.add_parser("show", help="show one resolved executable contract")
+    q.add_argument("id", help="versioned contract ID, e.g. swiglu/fused/v1")
+    _add_json(q)
+    q.set_defaults(func=cmd_contract_show)
+
+    q = csub.add_parser(
+        "validate", help="validate a .contract.json schema file (no entry points)"
+    )
+    q.add_argument("path", help="contract JSON file")
+    _add_json(q)
+    q.set_defaults(func=cmd_contract_validate)
 
     # region
     p = sub.add_parser("region", help="create and list reference regions")

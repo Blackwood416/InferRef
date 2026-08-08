@@ -5,8 +5,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
-CONTRACT_ID_PATTERN = r"^[a-z0-9][a-z0-9_.-]*(?:/[a-z0-9][a-z0-9_.-]*)+/v[1-9][0-9]*$"
+# Contract Schema v0.1 section 4: at least two /-separated segments, every
+# non-version segment matches [a-z0-9][a-z0-9-]*, and the final segment is
+# "v" followed by one or more digits.
+CONTRACT_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*(?:/[a-z0-9][a-z0-9-]*)+/v[0-9]+$"
 _CONTRACT_ID = re.compile(CONTRACT_ID_PATTERN)
 
 

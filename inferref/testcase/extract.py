@@ -26,6 +26,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from inferref.contracts import (
+    contract_boundary_issues,
+    get_contract,
+)
 from inferref.ir.operator import OperatorRecord
 from inferref.ir.package import TracePackage
 from inferref.ir.region import RegionRecord
@@ -41,10 +45,6 @@ from inferref.ir.values import (
     Value,
 )
 from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_FORMAT_VERSION
-from inferref.testcase.contracts import (
-    contract_boundary_issues,
-    get_contract,
-)
 from inferref.testcase.requirements import derive_requirements, is_contract_id
 from inferref.testcase.validate import validate_testcase
 

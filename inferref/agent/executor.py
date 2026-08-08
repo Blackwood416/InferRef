@@ -23,7 +23,7 @@ from inferref.agent.protocol import AgentProtocolError, EngineAdapter
 from inferref.agent.run_record import write_run_record
 from inferref.compare.compare import compare_testcase
 from inferref.compare.tolerance import TolerancePolicy
-from inferref.testcase.contracts import contract_requirements
+from inferref.contracts import contract_requirements
 from inferref.testcase.requirements import testcase_requirements
 from inferref.testcase.validate import require_valid_testcase
 

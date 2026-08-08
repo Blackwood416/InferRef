@@ -7,13 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from inferref.ir.paths import PathBoundaryError, resolve_contained_path
-from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_READ_VERSIONS
-from inferref.tensor import codec
-from inferref.testcase.contracts import (
+from inferref.contracts import (
     contract_boundary_issues,
     get_contract,
 )
+from inferref.ir.paths import PathBoundaryError, resolve_contained_path
+from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_READ_VERSIONS
+from inferref.tensor import codec
 from inferref.testcase.requirements import derive_requirements, is_contract_id
 
 

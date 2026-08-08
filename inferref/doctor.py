@@ -96,6 +96,30 @@ def run_doctor(
             )
         )
 
+    from inferref.contracts import builtin_contracts, verify_contracts
+
+    checks.append(
+        DoctorCheck(
+            "contract.registry",
+            "pass",
+            f"{len(builtin_contracts())} built-in executable contract(s) registered",
+        )
+    )
+    contract_plugins = verify_contracts() if verify_plugins else []
+    for plugin in contract_plugins:
+        checks.append(
+            DoctorCheck(
+                f"contract.plugin.{plugin.entry_point}",
+                "pass" if plugin.status == "loaded" else "warn",
+                (
+                    f"{plugin.distribution or 'unknown distribution'} "
+                    f"{plugin.version or ''}: {plugin.status}"
+                ).strip(),
+                plugin.to_dict(),
+                remediation=plugin.error,
+            )
+        )
+
     status = "fail" if any(item.status == "fail" for item in checks) else (
         "warn"
         if requested is None and any(item.status == "warn" for item in checks)
@@ -107,6 +131,7 @@ def run_doctor(
         "status": status,
         "requested_device": requested,
         "plugin_verification": verify_plugins,
+        "contracts": [plugin.to_dict() for plugin in contract_plugins],
         "runtime": {
             "python": platform.python_version(),
             "platform": platform.platform(),
