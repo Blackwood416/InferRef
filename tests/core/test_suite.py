@@ -488,6 +488,54 @@ def test_suite_report_renders_failed_scenario_steps(tmp_path: Path) -> None:
     assert "first failed step: prefill" in html
 
 
+def test_suite_scenario_partial_with_allow_unsupported(tmp_path: Path) -> None:
+    suite, adapter = _scenario_fixture(tmp_path)
+    data = json.loads(adapter.read_text(encoding="utf-8"))
+    data["capabilities"]["features"] = []
+    adapter.write_text(json.dumps(data), encoding="utf-8")
+
+    report = run_suite(suite, adapter, tmp_path / "runs", allow_unsupported=True)
+    cell = report["cases"][0]["results"][0]
+    assert cell["status"] == "partial"
+    assert cell["accepted"] is True
+    assert report["status"] == "partial"
+    assert report["accepted"] is True
+
+    strict = run_suite(suite, adapter, tmp_path / "strict")
+    assert strict["status"] == "fail"
+    assert strict["accepted"] is False
+
+
+def test_suite_scenario_all_unsupported_with_allow_unsupported(
+    tmp_path: Path,
+) -> None:
+    suite, adapter = _scenario_fixture(tmp_path)
+    data = json.loads(adapter.read_text(encoding="utf-8"))
+    data["capabilities"]["dtypes"] = ["float16"]
+    adapter.write_text(json.dumps(data), encoding="utf-8")
+
+    report = run_suite(suite, adapter, tmp_path / "runs", allow_unsupported=True)
+    assert report["status"] == "unsupported"
+    assert report["accepted"] is True
+    assert report["cases"][0]["results"][0]["status"] == "unsupported"
+    assert report["cases"][0]["results"][0]["accepted"] is True
+
+
+def test_suite_report_sidecar_keeps_scenario_run_intact(tmp_path: Path) -> None:
+    suite, adapter = _scenario_fixture(tmp_path)
+    report = run_suite(suite, adapter, tmp_path / "runs")
+    rendered = render_suite_report(report, tmp_path / "report.html")
+    run_record = rendered["runs"]["kv-chain"]["kv-copy"]
+    assert run_record["format"] == "inferref-scenario-run"
+    assert [step["id"] for step in run_record["steps"]] == [
+        "prefill",
+        "decode-0",
+        "decode-1",
+    ]
+    sidecar = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert sidecar["runs"]["kv-chain"]["kv-copy"]["format"] == "inferref-scenario-run"
+
+
 def test_suite_rejects_invalid_kind(tmp_path: Path) -> None:
     suite, _ = _scenario_fixture(tmp_path, kind="benchmark")
     with pytest.raises(ValueError, match="kind"):

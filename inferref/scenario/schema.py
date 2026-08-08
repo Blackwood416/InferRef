@@ -95,7 +95,7 @@ class ScenarioStep:
 
 @dataclass(frozen=True)
 class Scenario:
-    #: Scenario root directory (``source`` is the directory, not the manifest).
+    #: Scenario root directory as the caller supplied it (used in reports).
     id: str
     source: Path
     description: str = ""
@@ -106,7 +106,7 @@ class Scenario:
 
     @property
     def root(self) -> Path:
-        return self.source
+        return self.source.resolve()
 
     def to_dict(self) -> dict[str, Any]:
         manifest: dict[str, Any] = {
@@ -214,7 +214,7 @@ def load_scenario(path: str | Path) -> Scenario:
         raise ScenarioError(issues)
     return Scenario(
         id=scenario_id,
-        source=root,
+        source=Path(path),
         description=description,
         inputs=inputs,
         state=state,
@@ -266,10 +266,10 @@ def _scenario_id(data: dict[str, Any], issues: list[dict[str, Any]]) -> str:
 
 
 def _description(data: dict[str, Any], issues: list[dict[str, Any]]) -> str:
-    value = data.get("description", "")
-    if value is None or value == "":
+    value = data.get("description")
+    if value is None:
         return ""
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value.strip():
         issues.append(
             _issue(
                 "scenario_invalid_manifest",
@@ -289,6 +289,8 @@ def _value_map(
     *,
     required: bool,
 ) -> tuple[Any, ...]:
+    from inferref.suite.paths import portable_id_key, validate_case_id
+
     raw = data.get(field_name)
     if raw is None:
         if required:
@@ -310,17 +312,31 @@ def _value_map(
         )
         return ()
     records: list[Any] = []
+    portable_names: set[str] = set()
     for name, record in raw.items():
         where = f"{field_name}.{name}"
-        if not isinstance(name, str) or not _VALUE_NAME.fullmatch(name):
+        try:
+            valid_name = validate_case_id(name, where=where)
+        except ValueError as exc:
             issues.append(
                 _issue(
                     "scenario_invalid_manifest",
-                    f"{field_name} name {name!r} does not match the portable ID grammar",
+                    str(exc),
                     where,
                 )
             )
             continue
+        portable_key = portable_id_key(valid_name)
+        if portable_key in portable_names:
+            issues.append(
+                _issue(
+                    "scenario_invalid_manifest",
+                    f"{field_name} name {name!r} collides on a portable filesystem",
+                    where,
+                )
+            )
+            continue
+        portable_names.add(portable_key)
         if not isinstance(record, dict):
             issues.append(
                 _issue(

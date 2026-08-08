@@ -99,9 +99,14 @@ def render_suite_report(
     data = _load_run(run)
     adapters, rows = _cells(data)
     matrix: list[dict[str, Any]] = []
+    runs: dict[str, dict[str, Any]] = {}
     for row in rows:
         by_adapter = {
             item.get("adapter_id"): _cell_summary(item) for item in row["results"]
+        }
+        runs[str(row["case"].get("id"))] = {
+            item.get("adapter_id"): item.get("run")
+            for item in row["results"]
         }
         matrix.append(
             {
@@ -119,6 +124,7 @@ def render_suite_report(
         "adapters": adapters,
         "counts": data.get("counts", {}),
         "matrix": matrix,
+        "runs": runs,
     }
 
     output_path = Path(output).resolve()

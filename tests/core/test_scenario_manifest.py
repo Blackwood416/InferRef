@@ -97,6 +97,40 @@ def test_validate_rejects_non_tensor_value_kind(tmp_path: Path) -> None:
     assert "scenario_invalid_manifest" in _codes(report)
 
 
+def test_validate_rejects_portable_value_name_collisions(tmp_path: Path) -> None:
+    scenario = _fixture(tmp_path)
+    data = _manifest(scenario)
+    data["inputs"] = {"A": {"kind": "tensor"}, "a": {"kind": "tensor"}}
+    _write(scenario, data)
+    report = validate_scenario(scenario)
+    assert report["schema_valid"] is False
+    assert "scenario_invalid_manifest" in _codes(report)
+    assert any("collides" in issue["message"] for issue in report["issues"])
+
+
+@pytest.mark.parametrize("bad_name", ["CON", "nul.txt", "name.", "name "])
+def test_validate_rejects_nonportable_value_names(
+    tmp_path: Path, bad_name: str
+) -> None:
+    scenario = _fixture(tmp_path)
+    data = _manifest(scenario)
+    data["inputs"] = {bad_name: {"kind": "tensor"}}
+    _write(scenario, data)
+    report = validate_scenario(scenario)
+    assert report["schema_valid"] is False
+    assert "scenario_invalid_manifest" in _codes(report)
+
+
+def test_validate_rejects_whitespace_only_description(tmp_path: Path) -> None:
+    scenario = _fixture(tmp_path)
+    data = _manifest(scenario)
+    data["description"] = "   "
+    _write(scenario, data)
+    report = validate_scenario(scenario)
+    assert report["schema_valid"] is False
+    assert "scenario_invalid_manifest" in _codes(report)
+
+
 def test_validate_rejects_bad_and_duplicate_step_ids(tmp_path: Path) -> None:
     bad = _fixture(tmp_path / "bad")
     data = _manifest(bad)

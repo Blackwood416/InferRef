@@ -319,8 +319,10 @@ def cmd_testcase_dedup(args: argparse.Namespace) -> int:
     summary = summarise(groups)
 
     lines = [
-        f"{summary['total_executions']} executions -> "
-        f"{summary['total_signatures']} unique signatures",
+        (
+            f"{summary['total_executions']} executions -> "
+            f"{summary['total_signatures']} unique signatures"
+        ),
         "",
     ]
     for group in groups[: args.limit]:
@@ -570,8 +572,10 @@ def cmd_region_detect(args: argparse.Namespace) -> int:
     package.save(package.root)
 
     lines = [
-        f"Detected {len(result.detections)} semantic region(s), "
-        f"created {len(result.regions)}:",
+        (
+            f"Detected {len(result.detections)} semantic region(s), "
+            f"created {len(result.regions)}:"
+        ),
         "",
     ]
     for name, count in result.summary_by_name().items():
@@ -1365,6 +1369,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="compare all outputs instead of stopping at the first failure",
     )
+    q.add_argument(
+        "--first-failure",
+        dest="first_failure",
+        action="store_true",
+        help="stop at the earliest divergence (default)",
+    )
     q.set_defaults(first_failure=True)
     _add_json(q)
     q.set_defaults(func=cmd_scenario_run)
@@ -1396,6 +1406,12 @@ def _add_agent_compare_options(parser: argparse.ArgumentParser) -> None:
         dest="first_failure",
         action="store_false",
         help="compare all outputs instead of stopping at the first failure",
+    )
+    parser.add_argument(
+        "--first-failure",
+        dest="first_failure",
+        action="store_true",
+        help="stop at the earliest divergence (default)",
     )
     parser.set_defaults(first_failure=True)
 

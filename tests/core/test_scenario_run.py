@@ -137,6 +137,56 @@ def test_engine_state_value_corruption_surfaces_downstream_without_compare(
     )
 
 
+def test_engine_state_missing_state_output_stops_chain(tmp_path: Path) -> None:
+    report = run_scenario(
+        SCENARIO_FIXTURE,
+        _adapter(tmp_path, corruption="missing-state"),
+        tmp_path / "runs",
+        state_mode="engine",
+        compare_state=True,
+    )
+    assert report["status"] == "error"
+    assert report["accepted"] is False
+    assert len(report["steps"]) == 1
+    step = report["steps"][0]
+    assert step["id"] == "prefill"
+    assert step["status"] == "error"
+    assert step["state_status"] == "state_missing"
+    assert step["run"]["scenario_error"]["code"] == "scenario_state_missing"
+
+    without_compare = run_scenario(
+        SCENARIO_FIXTURE,
+        _adapter(tmp_path, corruption="missing-state"),
+        tmp_path / "runs-without-compare",
+        state_mode="engine",
+        compare_state=False,
+    )
+    assert without_compare["status"] == "error"
+    assert len(without_compare["steps"]) == 1
+    assert without_compare["steps"][0]["state_status"] == "state_missing"
+
+
+def test_engine_state_unsupported_step_stops_chain(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path, features=[])
+    report = run_scenario(
+        SCENARIO_FIXTURE,
+        adapter,
+        tmp_path / "runs",
+        state_mode="engine",
+        allow_unsupported=True,
+    )
+    assert report["status"] == "unsupported"
+    assert report["accepted"] is True
+    assert len(report["steps"]) == 1
+    assert report["steps"][0]["status"] == "unsupported"
+
+    strict = run_scenario(
+        SCENARIO_FIXTURE, adapter, tmp_path / "strict", state_mode="engine"
+    )
+    assert strict["status"] == "fail"
+    assert strict["accepted"] is False
+
+
 def test_unbound_input_falls_back_to_embedded_payload(tmp_path: Path) -> None:
     report = run_scenario(SCENARIO_FIXTURE, _adapter(tmp_path), tmp_path / "runs")
     assert report["status"] == "pass"

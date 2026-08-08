@@ -77,7 +77,12 @@ def run_suite(
                 raise SuiteError(str(exc)) from exc
             try:
                 if case.kind == "scenario":
-                    result = run_scenario(case.testcase, engine, case_root)
+                    result = run_scenario(
+                        case.testcase,
+                        engine,
+                        case_root,
+                        allow_unsupported=allow_unsupported,
+                    )
                 else:
                     result = execute_adapter(case.testcase, engine, case_root)
             except (AgentProtocolError, OSError, ValueError) as exc:
@@ -97,9 +102,12 @@ def run_suite(
                         "message": str(exc),
                     },
                 }
-            accepted = result["status"] == "pass" or (
-                allow_unsupported and result["status"] == "unsupported"
-            )
+            if case.kind == "scenario":
+                accepted = bool(result.get("accepted"))
+            else:
+                accepted = result["status"] == "pass" or (
+                    allow_unsupported and result["status"] == "unsupported"
+                )
             cell = {
                 "adapter_id": adapter_id,
                 "adapter_name": engine.name,
@@ -162,12 +170,10 @@ def _aggregate_status(cells: Sequence[dict[str, Any]], *, accepted: bool) -> str
     if not accepted:
         return "fail"
     statuses = [str(cell["status"]) for cell in cells]
-    passed = sum(status == "pass" for status in statuses)
-    unsupported = sum(status == "unsupported" for status in statuses)
-    if passed == len(statuses):
+    if all(status == "pass" for status in statuses):
         return "pass"
-    if unsupported == len(statuses):
+    if all(status == "unsupported" for status in statuses):
         return "unsupported"
-    if passed + unsupported == len(statuses):
+    if all(status in ("pass", "unsupported", "partial") for status in statuses):
         return "partial"
     return "fail"

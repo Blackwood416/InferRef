@@ -104,6 +104,11 @@ def run_scenario(
                 strict_layout=strict_layout,
                 first_failure=first_failure,
             )
+        except ScenarioError as exc:
+            if fail_fast:
+                raise
+            code = exc.issues[0]["code"] if exc.issues else "scenario_invalid_manifest"
+            record = _scenario_error_step(step, code, str(exc))
         except (AgentProtocolError, OSError, ValueError) as exc:
             if fail_fast:
                 raise
@@ -113,6 +118,10 @@ def run_scenario(
             record["status"] != "pass"
             and record["state_status"] in _STATE_FAILURE_STATUSES
         ):
+            stop = True
+        if record["state_status"] == "state_missing":
+            stop = True
+        if state_mode == "engine" and record["status"] == "unsupported":
             stop = True
 
     status, accepted = _aggregate_status(
@@ -243,9 +252,12 @@ def _run_step(
     effective = step_root / "testcase"
     shutil.copytree(step.testcase, effective, dirs_exist_ok=False)
 
-    _patch_bound_inputs(step, effective, run_root, state_slots)
     try:
+        _patch_bound_inputs(step, effective, run_root, state_slots)
         require_valid_testcase(effective)
+    except ScenarioError as exc:
+        code = exc.issues[0]["code"] if exc.issues else "scenario_invalid_manifest"
+        return _scenario_error_step(step, code, str(exc))
     except (ValueError, OSError) as exc:
         return _validation_error_step(step, exc)
 
@@ -284,12 +296,21 @@ def _run_step(
         strict_layout=strict_layout,
     )
     if bindings_error is not None:
+        code = (
+            "scenario_state_missing"
+            if state_status == "state_missing"
+            else "scenario_output_missing"
+        )
         result = {
             **result,
             "status": "error",
-            "scenario_error": {"code": "scenario_output_missing", "message": bindings_error},
+            "scenario_error": {"code": code, "message": bindings_error},
         }
         status = "error"
+        (step_root / "inferref-run.json").write_text(
+            json.dumps(result, indent=2, ensure_ascii=False, default=str) + "\n",
+            encoding="utf-8",
+        )
     elif state_status in _STATE_FAILURE_STATUSES:
         status = "mismatch"
 
@@ -431,7 +452,7 @@ def _apply_output_bindings(
         if not engine_ran:
             continue
         if engine_file is None or not engine_file.is_file():
-            return "not_compared", (
+            return "state_missing", (
                 f"engine produced no output for state role {role!r}"
             )
         shutil.copyfile(engine_file, slot_path)
@@ -533,6 +554,23 @@ def _validation_error_step(step: ScenarioStep, exc: Exception) -> dict[str, Any]
             "run_id": None,
             "status": "validation_error",
             "error": {"type": type(exc).__name__, "message": str(exc)},
+        },
+        "inputs": dict(step.input_bindings),
+        "outputs": dict(step.output_bindings),
+    }
+
+
+def _scenario_error_step(
+    step: ScenarioStep, code: str, message: str
+) -> dict[str, Any]:
+    return {
+        "id": step.id,
+        "status": "error",
+        "state_status": "not_applicable",
+        "run": {
+            "run_id": None,
+            "status": "scenario_error",
+            "scenario_error": {"code": code, "message": message},
         },
         "inputs": dict(step.input_bindings),
         "outputs": dict(step.output_bindings),

@@ -7,7 +7,8 @@ validation without a real accelerator:
 
 - ``shape``   truncates the appended cache by one sequence position;
 - ``dtype``   writes ``cache_out`` as float16;
-- ``value``   writes the correct shape but shifts every value by one.
+- ``value``   writes the correct shape but shifts every value by one;
+- ``missing-state`` omits ``cache_out`` entirely (engine-state fail-fast case).
 """
 
 from __future__ import annotations
@@ -36,6 +37,12 @@ def main() -> int:
     update = codec.read(testcase / inputs["update"]["payload"]).data
     cache_out = np.concatenate([cache, update], axis=2)
     corruption = os.environ.get("INFERREF_ENGINE_STATE_CORRUPTION")
+    if corruption == "missing-state":
+        if "scale" in inputs:
+            scale = codec.read(testcase / inputs["scale"]["payload"]).data
+            logits = (update * scale).sum(axis=2, keepdims=True)
+            codec.write_array(output / "logits.irtensor", np.ascontiguousarray(logits))
+        return 0
     if corruption == "shape":
         cache_out = cache_out[:, :, :-1, :]
         cache_out = np.ascontiguousarray(cache_out)
