@@ -9,12 +9,16 @@ from inferref.agent.protocol import (
     AgentResponse,
     EngineAdapter,
 )
-from inferref.agent.service import (
-    capabilities,
-    compare_outputs,
-    context,
-    extract_testcase,
-    run_engine,
+
+_SERVICE_OPERATIONS = frozenset(
+    {
+        "capabilities",
+        "compare_outputs",
+        "context",
+        "extract_testcase",
+        "run_engine",
+        "run_scenario",
+    }
 )
 
 __all__ = [
@@ -30,4 +34,15 @@ __all__ = [
     "context",
     "extract_testcase",
     "run_engine",
+    "run_scenario",
 ]
+
+
+def __getattr__(name: str):
+    """Lazily expose service operations to avoid import cycles with scenario."""
+
+    if name in _SERVICE_OPERATIONS:
+        from inferref.agent import service
+
+        return getattr(service, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

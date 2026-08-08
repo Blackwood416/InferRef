@@ -6,11 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from inferref.ir.paths import PathBoundaryError, resolve_contained_path
+from inferref.scenario import ScenarioError, load_scenario, validate_scenario
 from inferref.suite.paths import portable_id_key, validate_case_id
 from inferref.testcase.validate import validate_testcase
 
 SUITE_FORMAT = "inferref-suite"
-SUITE_FORMAT_VERSION = "0.1"
+SUITE_FORMAT_VERSION = "0.2"
+SUITE_READ_VERSIONS = ("0.1", "0.2")
+SUITE_KINDS = ("testcase", "scenario")
 
 
 class SuiteError(ValueError):
@@ -22,10 +25,12 @@ class SuiteCase:
     id: str
     testcase: Path
     tags: tuple[str, ...] = ()
+    kind: str = "testcase"
 
     def to_dict(self, root: Path) -> dict[str, Any]:
         return {
             "id": self.id,
+            "kind": self.kind,
             "testcase": self.testcase.relative_to(root).as_posix(),
             "tags": list(self.tags),
         }
@@ -58,7 +63,7 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
         raise SuiteError("suite root must be an object")
     if data.get("format") != SUITE_FORMAT:
         raise SuiteError(f"not an InferRef suite: {data.get('format')!r}")
-    if data.get("format_version") != SUITE_FORMAT_VERSION:
+    if data.get("format_version") not in SUITE_READ_VERSIONS:
         raise SuiteError(
             f"unsupported suite format_version {data.get('format_version')!r}"
         )
@@ -78,6 +83,15 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
             case_id = validate_case_id(record.get("id"), where=f"cases[{index}].id")
         except ValueError as exc:
             raise SuiteError(str(exc)) from exc
+        kind = record.get("kind", "testcase")
+        if kind not in SUITE_KINDS:
+            raise SuiteError(
+                f"cases[{index}].kind must be 'testcase' or 'scenario', got {kind!r}"
+            )
+        if data.get("format_version") == "0.1" and kind != "testcase":
+            raise SuiteError(
+                f"cases[{index}].kind must be 'testcase' in suite format 0.1"
+            )
         portable_key = portable_id_key(case_id)
         if case_id in ids or portable_key in portable_ids:
             raise SuiteError(
@@ -98,14 +112,27 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
         ):
             raise SuiteError(f"cases[{index}].tags must be a string array")
         if validate_cases:
-            validation = validate_testcase(testcase_path)
-            if not validation.valid:
-                raise SuiteError(
-                    f"case {case_id!r} is invalid: {validation.issues[0].message}"
-                )
+            if kind == "scenario":
+                try:
+                    load_scenario(testcase_path)
+                except (ScenarioError, OSError, json.JSONDecodeError) as exc:
+                    message = getattr(exc, "issues", None)
+                    if message:
+                        message = "; ".join(
+                            f"{item['code']}: {item['message']}" for item in message[:3]
+                        )
+                    else:
+                        message = str(exc)
+                    raise SuiteError(f"case {case_id!r} is invalid: {message}") from exc
+            else:
+                validation = validate_testcase(testcase_path)
+                if not validation.valid:
+                    raise SuiteError(
+                        f"case {case_id!r} is invalid: {validation.issues[0].message}"
+                    )
         ids.add(case_id)
         portable_ids.add(portable_key)
-        cases.append(SuiteCase(case_id, testcase_path, tuple(tags)))
+        cases.append(SuiteCase(case_id, testcase_path, tuple(tags), kind))
     return Suite(name, source, tuple(cases))
 
 
@@ -137,9 +164,14 @@ def validate_suite(
         }
     non_runnable: list[str] = []
     for case in suite.cases:
-        validation = validate_testcase(case.testcase)
-        if not validation.reproducible:
-            non_runnable.append(case.id)
+        if case.kind == "scenario":
+            validation = validate_scenario(case.testcase)
+            if not validation["runnable"]:
+                non_runnable.append(case.id)
+        else:
+            validation = validate_testcase(case.testcase)
+            if not validation.reproducible:
+                non_runnable.append(case.id)
     runnable = not non_runnable
     return {
         "format": SUITE_FORMAT,

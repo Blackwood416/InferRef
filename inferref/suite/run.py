@@ -10,9 +10,9 @@ from typing import Any
 from inferref.agent.adapter import execute_adapter
 from inferref.agent.protocol import AgentProtocolError, EngineAdapter
 from inferref.ir.paths import PathBoundaryError, resolve_contained_path
+from inferref.scenario import run_scenario
 from inferref.suite.paths import artifact_key
 from inferref.suite.schema import Suite, SuiteError, load_suite
-
 
 AdapterInput = str | Path | EngineAdapter
 
@@ -76,7 +76,10 @@ def run_suite(
             except PathBoundaryError as exc:  # defensive: keys are single components
                 raise SuiteError(str(exc)) from exc
             try:
-                result = execute_adapter(case.testcase, engine, case_root)
+                if case.kind == "scenario":
+                    result = run_scenario(case.testcase, engine, case_root)
+                else:
+                    result = execute_adapter(case.testcase, engine, case_root)
             except (AgentProtocolError, OSError, ValueError) as exc:
                 if fail_fast:
                     raise

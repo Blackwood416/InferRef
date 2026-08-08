@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import sys
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +11,10 @@ from inferref.agent.protocol import ENGINE_ADAPTER_FORMAT, ENGINE_ADAPTER_VERSIO
 from inferref.cli.main import EXIT_FAIL, EXIT_OK, main
 from inferref.suite import load_suite, render_suite_report, run_suite, validate_suite
 from inferref.tensor import codec
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCENARIO_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "scenarios" / "kv-chain"
+COPY_ENGINE = REPO_ROOT / "tests" / "fixtures" / "adapters" / "copy_engine.py"
 
 
 ENGINE = r"""
@@ -63,7 +67,7 @@ def _fixture(
     case_contract: str | None = None,
     adapter_contracts: list[str] | None = None,
 ):
-    case = _case(tmp_path / "cases" / "add", contract=case_contract)
+    _case(tmp_path / "cases" / "add", contract=case_contract)
     suite = tmp_path / "suite.json"
     suite.write_text(
         json.dumps(
@@ -361,6 +365,157 @@ def test_suite_validate_cli_exit_code_follows_runnable_policy(
         main(["suite", "validate", str(suite), "--allow-nonreproducible", "--json"])
         == EXIT_OK
     )
+
+
+def _scenario_fixture(tmp_path: Path, *, kind: str = "scenario") -> tuple[Path, Path]:
+    suite_dir = tmp_path / "suite-scenario"
+    (suite_dir / "scenarios").mkdir(parents=True)
+    shutil.copytree(SCENARIO_FIXTURE, suite_dir / "scenarios" / "kv-chain")
+    suite = suite_dir / "suite.json"
+    suite.write_text(
+        json.dumps(
+            {
+                "format": "inferref-suite",
+                "format_version": "0.2",
+                "name": "kv-corpus",
+                "cases": [
+                    {
+                        "id": "kv-chain",
+                        "kind": kind,
+                        "testcase": "scenarios/kv-chain",
+                        "tags": ["kv", "stateful"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    adapter = tmp_path / "adapter.json"
+    adapter.write_text(
+        json.dumps(
+            {
+                "format": ENGINE_ADAPTER_FORMAT,
+                "format_version": ENGINE_ADAPTER_VERSION,
+                "name": "kv-copy",
+                "target_device": "cpu",
+                "capabilities": {
+                    "device_types": ["cpu"],
+                    "dtypes": ["float32"],
+                    "max_rank": 8,
+                    "features": ["multiple_outputs"],
+                },
+                "command": ["{python}", str(COPY_ENGINE), "{testcase}", "{output}"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return suite, adapter
+
+
+def test_suite_0_2_writer_emits_kind(tmp_path: Path) -> None:
+    from inferref.suite.schema import Suite, SuiteCase
+
+    suite = Suite(
+        name="tiny",
+        source=(tmp_path / "suite.json").resolve(),
+        cases=(
+            SuiteCase(
+                id="kv-chain",
+                testcase=(tmp_path / "scenarios" / "kv-chain").resolve(),
+                kind="scenario",
+            ),
+        ),
+    )
+    data = suite.to_dict()
+    assert data["format_version"] == "0.2"
+    assert data["cases"][0]["kind"] == "scenario"
+
+
+def test_suite_0_1_reads_without_kind(tmp_path: Path) -> None:
+    suite, _ = _fixture(tmp_path)
+    data = json.loads(suite.read_text(encoding="utf-8"))
+    assert data["format_version"] == "0.1"
+    loaded = load_suite(suite)
+    assert loaded.cases[0].kind == "testcase"
+
+
+def test_suite_scenario_cell_runs_and_report_renders_steps(tmp_path: Path) -> None:
+    suite, adapter = _scenario_fixture(tmp_path)
+    validation = validate_suite(suite)
+    assert validation["schema_valid"] is True
+    assert validation["runnable"] is True
+    assert validation["non_runnable_cases"] == []
+
+    report = run_suite(suite, adapter, tmp_path / "runs")
+    assert report["status"] == "pass"
+    assert report["format_version"] == "0.2"
+    assert report["counts"] == {"total": 1, "pass": 1, "unsupported": 0, "failed": 0}
+    cell = report["cases"][0]["results"][0]
+    assert cell["status"] == "pass"
+    assert cell["run"]["format"] == "inferref-scenario-run"
+    assert [step["id"] for step in cell["run"]["steps"]] == [
+        "prefill",
+        "decode-0",
+        "decode-1",
+    ]
+
+    rendered = render_suite_report(report, tmp_path / "report.html")
+    summary = rendered["matrix"][0]["engines"]["kv-copy"]
+    assert summary["kind"] == "scenario"
+    assert summary["step_counts"] == {"pass": 3}
+    assert summary["first_failed_step"] is None
+    html = (tmp_path / "report.html").read_text(encoding="utf-8")
+    assert "steps: 3 pass" in html
+
+
+def test_suite_report_renders_failed_scenario_steps(tmp_path: Path) -> None:
+    suite, adapter = _scenario_fixture(tmp_path)
+    data = json.loads(adapter.read_text(encoding="utf-8"))
+    data["environment"] = {"INFERREF_ENGINE_STATE_CORRUPTION": "value"}
+    adapter.write_text(json.dumps(data), encoding="utf-8")
+    report = run_suite(
+        suite,
+        adapter,
+        tmp_path / "runs",
+    )
+    cell = report["cases"][0]["results"][0]
+    assert cell["status"] == "fail"
+    rendered = render_suite_report(report, tmp_path / "report.html")
+    summary = rendered["matrix"][0]["engines"]["kv-copy"]
+    assert summary["first_failed_step"] == "prefill"
+    assert summary["step_counts"]["mismatch"] == 3
+    html = (tmp_path / "report.html").read_text(encoding="utf-8")
+    assert "first failed step: prefill" in html
+
+
+def test_suite_rejects_invalid_kind(tmp_path: Path) -> None:
+    suite, _ = _scenario_fixture(tmp_path, kind="benchmark")
+    with pytest.raises(ValueError, match="kind"):
+        load_suite(suite)
+
+
+def test_suite_flags_non_reproducible_scenario_steps(tmp_path: Path) -> None:
+    suite, _ = _scenario_fixture(tmp_path)
+    testcase = tmp_path / "suite-scenario" / "scenarios" / "kv-chain"
+    case = testcase / "cases" / "decode-0" / "testcase.json"
+    data = json.loads(case.read_text(encoding="utf-8"))
+    data["reproducible"] = False
+    case.write_text(json.dumps(data), encoding="utf-8")
+
+    validation = validate_suite(suite)
+    assert validation["schema_valid"] is True
+    assert validation["runnable"] is False
+    assert validation["non_runnable_cases"] == ["kv-chain"]
+
+
+def test_suite_scenario_path_escape_is_schema_invalid(tmp_path: Path) -> None:
+    suite, _ = _scenario_fixture(tmp_path)
+    data = json.loads(suite.read_text(encoding="utf-8"))
+    data["cases"][0]["testcase"] = "../outside"
+    suite.write_text(json.dumps(data), encoding="utf-8")
+    report = validate_suite(suite)
+    assert report["schema_valid"] is False
+    assert report["status"] == "fail"
 
 
 def test_report_requires_html_extension(tmp_path: Path) -> None:

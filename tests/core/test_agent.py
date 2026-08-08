@@ -9,12 +9,22 @@ from pathlib import Path
 
 import numpy as np
 
-from inferref.agent import capabilities, compare_outputs, context, run_engine
+from inferref.agent import (
+    capabilities,
+    compare_outputs,
+    context,
+    run_engine,
+    run_scenario,
+)
 from inferref.agent.adapter import _scan_artifacts
 from inferref.agent.protocol import ENGINE_ADAPTER_FORMAT, ENGINE_ADAPTER_VERSION
 from inferref.cli.main import EXIT_OK, main
 from inferref.ir.version import INFERREF_VERSION
 from inferref.tensor import codec
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCENARIO_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "scenarios" / "kv-chain"
+COPY_ENGINE = REPO_ROOT / "tests" / "fixtures" / "adapters" / "copy_engine.py"
 
 ENGINE_SOURCE = r"""from __future__ import annotations
 import json
@@ -125,6 +135,29 @@ def _fixture(tmp_path: Path, *, mode: str | None = None) -> tuple[Path, Path]:
     return testcase, _make_adapter(tmp_path, script, mode=mode)
 
 
+def _scenario_adapter(
+    tmp_path: Path, *, corruption: str | None = None
+) -> Path:
+    payload = {
+        "format": ENGINE_ADAPTER_FORMAT,
+        "format_version": ENGINE_ADAPTER_VERSION,
+        "name": "kv-copy",
+        "target_device": "cpu",
+        "capabilities": {
+            "device_types": ["cpu"],
+            "dtypes": ["float32"],
+            "max_rank": 8,
+            "features": ["multiple_outputs"],
+        },
+        "command": ["{python}", str(COPY_ENGINE), "{testcase}", "{output}"],
+    }
+    if corruption is not None:
+        payload["environment"] = {"INFERREF_ENGINE_STATE_CORRUPTION": corruption}
+    path = tmp_path / "scenario-adapter.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
 def test_capabilities_are_versioned_and_actionable() -> None:
     payload = capabilities().to_dict()
     assert payload["protocol"] == {
@@ -134,6 +167,13 @@ def test_capabilities_are_versioned_and_actionable() -> None:
     assert payload["data"]["inferref_version"] == INFERREF_VERSION
     assert "inferref_run_engine" in payload["data"]["mcp_tools"]
     assert payload["next_actions"][0]["operation"] == "context"
+
+
+def test_capabilities_advertise_run_scenario() -> None:
+    payload = capabilities().to_dict()
+    operations = [item["name"] for item in payload["data"]["operations"]]
+    assert "run_scenario" in operations
+    assert "inferref_run_scenario" in payload["data"]["mcp_tools"]
 
 
 def test_testcase_context_is_compact_and_actionable(tmp_path: Path) -> None:
@@ -180,6 +220,46 @@ def test_engine_process_error_is_structured_and_persisted(tmp_path: Path) -> Non
     assert response.data["execution"]["exit_code"] == 17
     assert "deliberate adapter failure" in response.data["execution"]["stderr"]
     assert Path(response.data["output"], "inferref-run.json").is_file()
+
+
+def test_agent_run_scenario_envelope_pass_and_fail(tmp_path: Path) -> None:
+    adapter = _scenario_adapter(tmp_path)
+    response = run_scenario(
+        SCENARIO_FIXTURE,
+        adapter,
+        tmp_path / "runs",
+        state_mode="engine",
+        compare_state=True,
+    )
+    assert response.operation == "run_scenario"
+    assert response.status == "pass"
+    assert response.data["format"] == "inferref-scenario-run"
+    assert response.data["status"] == "pass"
+    assert response.next_actions == ()
+
+    corrupt = _scenario_adapter(tmp_path, corruption="value")
+    failing = run_scenario(
+        SCENARIO_FIXTURE,
+        corrupt,
+        tmp_path / "failing-runs",
+        state_mode="engine",
+        compare_state=True,
+    )
+    assert failing.status == "fail"
+    assert failing.data["status"] == "fail"
+    assert failing.next_actions[0]["step"] == "prefill"
+    assert failing.diagnostics[0]["code"] == "state_mismatch"
+
+
+def test_agent_run_scenario_error_maps_to_envelope_error(tmp_path: Path) -> None:
+    adapter = _scenario_adapter(tmp_path)
+    data = json.loads(adapter.read_text(encoding="utf-8"))
+    data["cwd"] = "missing-directory"
+    adapter.write_text(json.dumps(data), encoding="utf-8")
+    response = run_scenario(SCENARIO_FIXTURE, adapter, tmp_path / "runs")
+    assert response.status == "error"
+    assert response.data["status"] == "error"
+    assert response.diagnostics[0]["severity"] == "error"
 
 
 def test_stdout_flood_hits_hard_limit_without_unbounded_capture(tmp_path: Path) -> None:

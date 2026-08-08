@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,22 @@ def _cells(data: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, A
 
 def _cell_summary(result: dict[str, Any]) -> dict[str, Any]:
     run = result.get("run") or {}
+    if run.get("format") == "inferref-scenario-run":
+        steps = run.get("steps", [])
+        counts = Counter(str(step.get("status")) for step in steps)
+        first_failed = next(
+            (step.get("id") for step in steps if step.get("status") != "pass"),
+            None,
+        )
+        return {
+            "status": result.get("status", "unknown"),
+            "kind": "scenario",
+            "step_counts": dict(counts),
+            "first_failed_step": first_failed,
+            "duration_ms": run.get("duration_ms"),
+            "run_id": None,
+            "unsupported_reasons": [],
+        }
     comparison = run.get("comparison") or {}
     comparisons = comparison.get("comparisons") or []
     max_error = max(
@@ -65,6 +82,7 @@ def _cell_summary(result: dict[str, Any]) -> dict[str, Any]:
     execution = run.get("execution") or {}
     return {
         "status": result.get("status", "unknown"),
+        "kind": "testcase",
         "max_abs_error": max_error,
         "first_divergence": mismatch,
         "duration_ms": execution.get("duration_ms"),
@@ -133,6 +151,20 @@ def render_suite_report(
             cell = row["engines"].get(adapter["id"], {"status": "missing"})
             status = str(cell["status"])
             details = []
+            if cell.get("kind") == "scenario":
+                counts = cell.get("step_counts") or {}
+                if counts:
+                    details.append(
+                        "steps: "
+                        + " · ".join(
+                            f"{count} {status_name}"
+                            for status_name, count in counts.items()
+                        )
+                    )
+                if cell.get("first_failed_step"):
+                    details.append(
+                        "first failed step: " + str(cell["first_failed_step"])
+                    )
             if cell.get("max_abs_error") is not None:
                 details.append(f"max |error| {cell['max_abs_error']:.6g}")
             if cell.get("duration_ms") is not None:

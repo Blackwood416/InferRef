@@ -27,6 +27,7 @@ from inferref.ir.version import (
     TESTCASE_FORMAT,
     TESTCASE_FORMAT_VERSION,
 )
+from inferref.scenario import run_scenario as run_scenario_artifact
 from inferref.testcase.extract import ExtractionError, extract_operator, extract_region
 from inferref.testcase.validate import validate_testcase
 
@@ -58,6 +59,14 @@ def capabilities() -> AgentResponse:
                 "and compare its outputs."
             ),
         },
+        {
+            "name": "run_scenario",
+            "mutates": True,
+            "description": (
+                "Execute an ordered chain of testcases with explicit state binding "
+                "through one trusted engine adapter."
+            ),
+        },
     ]
     return AgentResponse(
         operation="capabilities",
@@ -70,6 +79,7 @@ def capabilities() -> AgentResponse:
                     "format": TESTCASE_FORMAT,
                     "version": TESTCASE_FORMAT_VERSION,
                 },
+                "scenario": {"format": "inferref-scenario", "version": "0.1"},
                 "tensor": {"format": "irtensor", "version": TENSOR_FORMAT_VERSION},
                 "engine_adapter": {
                     "format": ENGINE_ADAPTER_FORMAT,
@@ -300,6 +310,87 @@ def run_engine(
         )
     except (OSError, ValueError) as exc:
         return AgentResponse.error(operation, str(exc), code="adapter_failed")
+
+
+def run_scenario(
+    scenario: str | Path,
+    adapter_path: str | Path,
+    runs_root: str | Path,
+    *,
+    state_mode: str = "reference",
+    compare_state: bool = False,
+    atol: float | None = None,
+    rtol: float | None = None,
+    ignore_stride: bool = False,
+    strict_layout: bool = False,
+    first_failure: bool = True,
+) -> AgentResponse:
+    """Execute a scenario chain and return the standard Agent envelope."""
+
+    operation = "run_scenario"
+    try:
+        report = run_scenario_artifact(
+            scenario,
+            adapter_path,
+            runs_root,
+            state_mode=state_mode,
+            compare_state=compare_state,
+            atol=atol,
+            rtol=rtol,
+            ignore_stride=ignore_stride,
+            strict_layout=strict_layout,
+            first_failure=first_failure,
+        )
+    except (OSError, ValueError) as exc:
+        return AgentResponse.error(operation, str(exc), code="scenario_failed")
+    status = report["status"]
+    if status == "pass":
+        response_status = "pass"
+    elif status == "fail":
+        response_status = "fail"
+    else:
+        response_status = "error"
+    failed_steps = [step for step in report["steps"] if step["status"] != "pass"]
+    actions: tuple[dict[str, Any], ...]
+    if not failed_steps:
+        actions = ()
+    elif response_status == "fail":
+        actions = (
+            {
+                "operation": "run_scenario",
+                "step": failed_steps[0]["id"],
+                "reason": "Fix the first failing scenario step and rerun this adapter.",
+            },
+        )
+    else:
+        actions = (
+            {
+                "operation": "run_scenario",
+                "step": failed_steps[0]["id"],
+                "reason": "Inspect the first errored step's run record and adapter stderr.",
+            },
+        )
+    diagnostics = ()
+    if response_status != "pass":
+        step = failed_steps[0]
+        detail = step.get("run") or {}
+        diagnostics = (
+            {
+                "severity": "error" if response_status == "error" else "warning",
+                "code": step.get("state_status", detail.get("status", status)),
+                "message": (
+                    f"Scenario step {step['id']!r} finished with status "
+                    f"{step['status']!r}."
+                ),
+            },
+        )
+    return AgentResponse(
+        operation=operation,
+        status=response_status,
+        data=report,
+        diagnostics=diagnostics,
+        next_actions=actions,
+    )
 
 
 def _trace_context(root: Path) -> AgentResponse:

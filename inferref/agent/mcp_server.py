@@ -16,6 +16,7 @@ from inferref.agent.service import (
     context,
     extract_testcase,
     run_engine,
+    run_scenario,
 )
 from inferref.ir.version import INFERREF_VERSION
 
@@ -38,7 +39,10 @@ def create_server(
     server = MCPServer(
         "inferref",
         title="InferRef",
-        description="Trace inspection, testcase extraction, and engine comparison",
+        description=(
+            "Trace inspection, testcase extraction, engine comparison, and "
+            "stateful scenario execution"
+        ),
         instructions=(
             "Call inferref_capabilities first. Inspect an artifact with "
             "inferref_context before extraction or execution. Engine adapter files "
@@ -154,6 +158,42 @@ def create_server(
             allowed_testcase,
             allowed_adapter,
             allowed_runs,
+            atol=atol,
+            rtol=rtol,
+            ignore_stride=ignore_stride,
+            strict_layout=strict_layout,
+            first_failure=first_failure,
+        ).to_dict()
+
+    @server.tool()
+    def inferref_run_scenario(
+        scenario: str,
+        adapter: str,
+        runs_root: str,
+        state_mode: str = "reference",
+        compare_state: bool = False,
+        atol: float | None = None,
+        rtol: float | None = None,
+        ignore_stride: bool = False,
+        strict_layout: bool = False,
+        first_failure: bool = True,
+    ) -> dict[str, Any]:
+        """Run a stateful scenario chain through a trusted engine adapter."""
+
+        try:
+            allowed_scenario = policy.read(scenario, kind="scenario input")
+            allowed_adapter = policy.read(adapter, kind="engine adapter")
+            allowed_runs = policy.write(runs_root, kind="scenario runs output")
+        except ValueError as exc:
+            return AgentResponse.error(
+                "run_scenario", str(exc), code="path_not_allowed"
+            ).to_dict()
+        return run_scenario(
+            allowed_scenario,
+            allowed_adapter,
+            allowed_runs,
+            state_mode=state_mode,
+            compare_state=compare_state,
             atol=atol,
             rtol=rtol,
             ignore_stride=ignore_stride,

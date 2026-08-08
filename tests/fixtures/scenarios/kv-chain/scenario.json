@@ -1,0 +1,73 @@
+{
+  "format": "inferref-scenario",
+  "format_version": "0.1",
+  "id": "kv-chain",
+  "description": "KV cache prefill followed by two decode steps",
+  "inputs": {
+    "prefill_kv": {
+      "kind": "tensor"
+    },
+    "prefill_tokens": {
+      "kind": "tensor"
+    },
+    "decode_tokens_0": {
+      "kind": "tensor"
+    },
+    "decode_tokens_1": {
+      "kind": "tensor"
+    }
+  },
+  "state": {
+    "kv": {
+      "kind": "tensor",
+      "init": "scenario.inputs.prefill_kv"
+    }
+  },
+  "outputs": {
+    "logits": {
+      "kind": "tensor"
+    }
+  },
+  "steps": [
+    {
+      "id": "prefill",
+      "testcase": "cases/prefill",
+      "bindings": {
+        "inputs": {
+          "cache": "scenario.inputs.prefill_kv",
+          "update": "scenario.inputs.prefill_tokens"
+        },
+        "outputs": {
+          "cache_out": "state.kv",
+          "logits": "scenario.outputs.logits"
+        }
+      }
+    },
+    {
+      "id": "decode-0",
+      "testcase": "cases/decode-0",
+      "bindings": {
+        "inputs": {
+          "cache": "state.kv",
+          "update": "scenario.inputs.decode_tokens_0"
+        },
+        "outputs": {
+          "cache_out": "state.kv"
+        }
+      }
+    },
+    {
+      "id": "decode-1",
+      "testcase": "cases/decode-1",
+      "bindings": {
+        "inputs": {
+          "cache": "state.kv",
+          "update": "scenario.inputs.decode_tokens_1"
+        },
+        "outputs": {
+          "cache_out": "state.kv"
+        }
+      }
+    }
+  ]
+}

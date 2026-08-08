@@ -669,6 +669,24 @@ def cmd_agent_run(args: argparse.Namespace) -> int:
     return _agent_emit(response, args)
 
 
+def cmd_agent_run_scenario(args: argparse.Namespace) -> int:
+    from inferref.agent import run_scenario
+
+    response = run_scenario(
+        args.scenario,
+        args.adapter,
+        args.runs_dir,
+        state_mode=args.state_mode,
+        compare_state=args.compare_state,
+        atol=args.atol,
+        rtol=args.rtol,
+        ignore_stride=args.ignore_stride,
+        strict_layout=args.strict_layout,
+        first_failure=args.first_failure,
+    )
+    return _agent_emit(response, args)
+
+
 def cmd_agent_evaluate(args: argparse.Namespace) -> int:
     from inferref.agent.evaluation_host import evaluate_benchmark
 
@@ -740,6 +758,57 @@ def cmd_suite_report(args: argparse.Namespace) -> int:
         args.json,
     )
     return EXIT_OK
+
+
+# -- scenario --------------------------------------------------------------
+
+
+def cmd_scenario_validate(args: argparse.Namespace) -> int:
+    from inferref.scenario import validate_scenario
+
+    report = validate_scenario(
+        args.scenario, allow_nonreproducible=args.allow_nonreproducible
+    )
+    summary = (
+        f"Scenario {report.get('scenario_id')}: "
+        f"schema_valid={report.get('schema_valid')} "
+        f"runnable={report.get('runnable')} ({report.get('steps')} step(s))"
+    )
+    if report.get("non_runnable_steps"):
+        summary += "; non-runnable: " + ", ".join(report["non_runnable_steps"])
+    _emit(report, summary, args.json)
+    if not report.get("schema_valid"):
+        return EXIT_FAIL
+    if not report.get("runnable") and not args.allow_nonreproducible:
+        return EXIT_FAIL
+    return EXIT_OK
+
+
+def cmd_scenario_run(args: argparse.Namespace) -> int:
+    from inferref.scenario import run_scenario
+
+    report = run_scenario(
+        args.scenario,
+        args.adapter,
+        args.runs_dir,
+        state_mode=args.state_mode,
+        compare_state=args.compare_state,
+        allow_unsupported=args.allow_unsupported,
+        fail_fast=args.fail_fast,
+        atol=args.atol,
+        rtol=args.rtol,
+        ignore_stride=args.ignore_stride,
+        strict_layout=args.strict_layout,
+        first_failure=args.first_failure,
+    )
+    _emit(
+        report,
+        f"Scenario run: {report['status'].upper()} "
+        f"({sum(1 for step in report['steps'] if step['status'] == 'pass')}/"
+        f"{len(report['steps'])} steps passed)",
+        args.json,
+    )
+    return EXIT_OK if report["accepted"] else EXIT_FAIL
 
 
 # -- export ----------------------------------------------------------------
@@ -1128,6 +1197,32 @@ def build_parser() -> argparse.ArgumentParser:
     q.set_defaults(func=cmd_agent_run)
 
     q = asub.add_parser(
+        "run_scenario",
+        help="execute a stateful scenario chain through one engine adapter",
+    )
+    q.add_argument("scenario", help="scenario root directory")
+    q.add_argument("--adapter", required=True, help="trusted adapter JSON file")
+    q.add_argument(
+        "--runs-dir",
+        default="inferref-runs",
+        help="parent directory for fresh per-run outputs",
+    )
+    q.add_argument(
+        "--state-mode",
+        default="reference",
+        choices=["reference", "engine"],
+        help="fill state slots from reference or engine outputs (default: reference)",
+    )
+    q.add_argument(
+        "--compare-state",
+        action="store_true",
+        help="compare engine-produced state against reference state in engine mode",
+    )
+    _add_agent_compare_options(q)
+    _add_json(q)
+    q.set_defaults(func=cmd_agent_run_scenario)
+
+    q = asub.add_parser(
         "evaluate",
         help="run a manual blind repair benchmark with external coding Agents",
     )
@@ -1204,6 +1299,75 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--output", required=True, help="output HTML path")
     _add_json(q)
     q.set_defaults(func=cmd_suite_report)
+
+    # scenario
+    p = sub.add_parser(
+        "scenario",
+        help="validate and run ordered chains of testcases with state binding",
+    )
+    ssub = p.add_subparsers(dest="scenario_command", metavar="<subcommand>")
+    q = ssub.add_parser(
+        "validate",
+        help="validate a scenario manifest and every referenced testcase",
+    )
+    q.add_argument("scenario", help="scenario root directory")
+    q.add_argument(
+        "--allow-nonreproducible",
+        action="store_true",
+        help="accept schema-valid scenarios with non-reproducible steps",
+    )
+    _add_json(q)
+    q.set_defaults(func=cmd_scenario_validate)
+
+    q = ssub.add_parser(
+        "run",
+        help="execute a scenario step chain through one engine adapter",
+    )
+    q.add_argument("scenario", help="scenario root directory")
+    q.add_argument("--adapter", required=True, help="trusted adapter JSON file")
+    q.add_argument("--runs-dir", required=True, help="output directory for scenario runs")
+    q.add_argument(
+        "--state-mode",
+        default="reference",
+        choices=["reference", "engine"],
+        help="fill state slots from reference or engine outputs (default: reference)",
+    )
+    q.add_argument(
+        "--compare-state",
+        action="store_true",
+        help="compare engine-produced state against reference state in engine mode",
+    )
+    q.add_argument(
+        "--allow-unsupported",
+        action="store_true",
+        help="accept fully or partially unsupported scenario runs for inventory",
+    )
+    q.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="raise on the first unexpected infrastructure exception",
+    )
+    q.add_argument("--atol", type=float, help="absolute tolerance override")
+    q.add_argument("--rtol", type=float, help="relative tolerance override")
+    q.add_argument(
+        "--ignore-stride",
+        action="store_true",
+        help="do not report stride/storage-offset differences",
+    )
+    q.add_argument(
+        "--strict-layout",
+        action="store_true",
+        help="treat stride/storage-offset differences as failures",
+    )
+    q.add_argument(
+        "--all-failures",
+        dest="first_failure",
+        action="store_false",
+        help="compare all outputs instead of stopping at the first failure",
+    )
+    q.set_defaults(first_failure=True)
+    _add_json(q)
+    q.set_defaults(func=cmd_scenario_run)
 
     # export
     p = sub.add_parser("export", help="export a trace as a single JSON document")
