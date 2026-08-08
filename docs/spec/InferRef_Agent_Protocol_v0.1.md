@@ -9,7 +9,7 @@ An Agent should be able to move through this loop without parsing terminal prose
 reopening the complete model implementation on every iteration:
 
 ```text
-discover -> inspect context -> extract testcase -> run engine -> compare -> fix -> rerun
+discover -> inspect context -> extract testcase -> run engine / run scenario -> compare -> fix -> rerun
 ```
 
 The protocol is framework-neutral. Trace reading, testcase extraction, engine
@@ -85,6 +85,34 @@ boundary names, contained and existing payloads, header metadata agreement,
 node/value/effect references, and declared non-portable or unobservable state.
 Tensor validation reads only the `.irtensor` header and file size, not the full
 payload.
+
+### `run_scenario(scenario, adapter, runs_root, ...)`
+
+Executes an ordered chain of standalone testcases with explicit state binding
+(Scenario v0.1). The operation:
+
+1. loads and structurally validates the scenario manifest plus every referenced
+   testcase;
+2. compiles each step into an effective standalone testcase, overriding bound
+   input roles with scenario inputs or the current state slot and leaving
+   unbound roles on the testcase's embedded payloads;
+3. runs each effective testcase through the same trusted adapter ABI as
+   `run_engine` and compares it against the step reference;
+4. applies output bindings into state slots or the scenario output area.
+
+`state_mode` selects replay semantics: `reference` (default) fills state slots
+from step reference outputs; `engine` feeds the engine's own outputs forward and
+always validates shape and dtype against the reference, with `compare_state`
+additionally comparing numeric state. A state shape/dtype/numeric divergence or
+a missing engine state output stops the chain immediately so garbage state is
+never propagated to later steps.
+
+`data` is the `inferref-scenario-run` v0.1 report, which embeds the complete
+per-step `inferref-run` execution records, `state_status`, input/output binding
+maps, and the first failed step. Status mapping follows the Scenario spec:
+every step `pass` returns envelope `pass`; at least one numerical mismatch
+returns `fail`; adapter, process, or validation failure — and chains that are
+unsupported or only partially supported — returns `error`.
 
 ## 4. Engine adapter v0.1
 
@@ -180,11 +208,14 @@ pip install "inferref[agent]"
 - `inferref_extract_testcase`
 - `inferref_compare_outputs`
 - `inferref_run_engine`
+- `inferref_run_scenario`
 
 The host configures repeatable `--read-root` and `--write-root` arguments when
 starting the server. Every trace, testcase, adapter, engine-output, extraction,
-and run path is resolved against those roots before an operation begins. Payload
-paths inside trace, testcase, and engine manifests must be relative and remain
+and run path is resolved against those roots before an operation begins.
+`inferref_run_scenario` resolves the scenario directory and adapter against the
+read roots and the runs root against the write roots. Payload paths inside
+trace, testcase, scenario, and engine manifests must be relative and remain
 contained after symlink/junction resolution.
 
 The server uses the official MCP Python SDK v2. Tool return values are the response
@@ -192,9 +223,9 @@ envelope above, so MCP and `inferref agent ... --json` have the same semantics.
 
 ## 6. Compatibility
 
-Agent protocol, engine adapter, Trace IR, testcase, and tensor payload versions are
-independent. A client must inspect each format/version pair rather than infer wire
-compatibility from the InferRef package version.
+Agent protocol, engine adapter, Trace IR, testcase, scenario, and tensor payload
+versions are independent. A client must inspect each format/version pair rather
+than infer wire compatibility from the InferRef package version.
 
 Protocol v0.1 is additive: new fields may appear. Clients should ignore unknown
 fields and branch on `protocol.version`, `operation`, and `status`.
