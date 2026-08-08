@@ -857,6 +857,10 @@ def test_fixture_pack_pip_install_end_to_end(
 
     target = tmp_path / "site"
     fixture = REPO_ROOT / "tests" / "fixtures" / "contract_pack"
+    # Use pip's standard build isolation instead of --no-build-isolation: the
+    # host venv's setuptools is not guaranteed (Python 3.12+ venvs ship none,
+    # Python 3.10 venvs ship a version that needs the separate wheel package),
+    # while an isolated build env provisions the declared backend for us.
     try:
         result = subprocess.run(
             [
@@ -865,7 +869,6 @@ def test_fixture_pack_pip_install_end_to_end(
                 "pip",
                 "install",
                 "--no-deps",
-                "--no-build-isolation",
                 "--target",
                 str(target),
                 str(fixture),
