@@ -38,8 +38,10 @@ _EFFECT_TO_FEATURE = {
 }
 
 _ROLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Section 4: at least two /-separated segments (e.g. a/v1), a final v<digits>
+# segment and lowercase [a-z0-9-] segments in between.
 _CONTRACT_ID = re.compile(
-    r"^[a-z0-9][a-z0-9-]*(?:/[a-z0-9][a-z0-9-]*)+/v[0-9]+$"
+    r"^[a-z0-9][a-z0-9-]*(?:/[a-z0-9][a-z0-9-]*)*/v[0-9]+$"
 )
 
 InputValidator = Callable[[Mapping[str, dict[str, Any]]], Sequence[str]]
@@ -133,6 +135,16 @@ def validate_contract_roles(
                     f"invalid {field_name} role name {role!r}: expected "
                     "^[A-Za-z_][A-Za-z0-9_]*$",
                 )
+    shared = set(input_roles) & set(output_roles)
+    if shared:
+        raise ContractSchemaError(
+            "contract_schema_invalid",
+            (
+                "input and output role names must be unique across both maps in "
+                "v0.1; the relation language cannot disambiguate shared name(s): "
+                + ", ".join(sorted(shared))
+            ),
+        )
     return input_roles, output_roles
 
 
@@ -197,16 +209,18 @@ def _vocabulary(
 def _effective_features(
     features: Sequence[str], effects: Sequence[str]
 ) -> tuple[str, ...]:
-    if "pure" in effects and set(effects) & {"alias_effects", "mutation_effects"}:
-        raise ContractSchemaError(
-            "contract_schema_invalid",
-            "'pure' must not coexist with 'alias_effects' or 'mutation_effects'",
-        )
     merged = set(features)
     for effect in effects:
         feature = _EFFECT_TO_FEATURE[effect]
         if feature is not None:
             merged.add(feature)
+    if "pure" in effects and merged & {"alias_effects", "mutation_effects"}:
+        raise ContractSchemaError(
+            "contract_schema_invalid",
+            "'pure' must not coexist with 'alias_effects' or 'mutation_effects' "
+            "(checked on the merged effective set, so features and effects "
+            "combined are validated too)",
+        )
     return tuple(sorted(merged))
 
 
@@ -359,6 +373,7 @@ def build_contract(descriptor: Mapping[str, Any]) -> ExecutableContract:
 
     input_roles = tuple(_role_map(descriptor.get("inputs"), "inputs"))
     output_roles = tuple(_role_map(descriptor.get("outputs"), "outputs"))
+    validate_contract_roles(input_roles, output_roles)
 
     raw_relations = descriptor.get("relations", [])
     if not isinstance(raw_relations, list) or not all(

@@ -9,14 +9,15 @@ Grammar::
     expr        := or_expr
     or_expr     := and_expr ("or" and_expr)*
     and_expr    := not_expr ("and" not_expr)*
-    not_expr    := "not" not_expr | comparison
+    not_expr    := "not" not_expr | "(" expr ")" | comparison
     comparison  := operand ("==" | "!=") operand
     operand     := path | length | integer | string
-    path        := NAME ("." attr)? ("[" index "]")*
+    path        := NAME ("." attr)? ("[" index "]")?
     attr        := "shape" | "dtype" | "rank" | "numel"
     length      := "len" "(" NAME "." "shape" ")"
     index       := integer
     integer     := "-"? DIGIT+
+    string      := '"' [^"]* '"'
 """
 
 from __future__ import annotations
@@ -241,14 +242,22 @@ class _Parser:
                     f"supported: {', '.join(sorted(_ATTRS))}"
                 )
             node = ("path", token.value, attr.value, ())
-        indexes: list[int] = []
-        while self._peek().kind == "LBRACKET":
-            self._next()
+        if self._peek().kind == "LBRACKET":
+            bracket = self._next()
+            if node[2] is None:
+                raise RelationSyntaxError(
+                    f"cannot index role {token.value!r} directly at position "
+                    f"{bracket.position}; only shape dimensions can be indexed"
+                )
             integer = self._expect("INTEGER")
-            indexes.append(int(integer.value))
             self._expect("RBRACKET")
-        if indexes:
-            node = ("path", token.value, node[2], tuple(indexes))
+            node = ("path", token.value, node[2], (int(integer.value),))
+            if self._peek().kind == "LBRACKET":
+                extra = self._peek()
+                raise RelationSyntaxError(
+                    f"only a single shape index is supported at position "
+                    f"{extra.position}"
+                )
         return node
 
 

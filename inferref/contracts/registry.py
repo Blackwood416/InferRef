@@ -111,6 +111,25 @@ def _coerce_descriptor(descriptor: Any, entry_point: str) -> ExecutableContract:
         contract = descriptor
         validate_contract_id(contract.id)
         validate_contract_roles(contract.inputs, contract.outputs)
+        if not callable(contract.validate_inputs):
+            raise ContractSchemaError(
+                "contract_schema_invalid",
+                f"contract {contract.id!r} validate_inputs must be callable",
+            )
+        if contract.validate_outputs is not None and not callable(
+            contract.validate_outputs
+        ):
+            raise ContractSchemaError(
+                "contract_schema_invalid",
+                f"contract {contract.id!r} validate_outputs must be callable",
+            )
+        if contract.validate_relation is not None and not callable(
+            contract.validate_relation
+        ):
+            raise ContractSchemaError(
+                "contract_schema_invalid",
+                f"contract {contract.id!r} validate_relation must be callable",
+            )
         unknown_features = set(contract.features) - FEATURE_VOCABULARY
         unknown_effects = set(contract.effects) - EFFECT_VOCABULARY
         if unknown_features or unknown_effects:
@@ -132,6 +151,51 @@ def _coerce_descriptor(descriptor: Any, entry_point: str) -> ExecutableContract:
             f"{type(descriptor).__name__}"
         ),
     )
+
+
+def _entry_point_issue(
+    entry: Any, name_counts: Counter[str]
+) -> tuple[str, str | None]:
+    """Metadata-level status/error for one entry point, without loading it."""
+
+    if entry.name == BUILTIN_PACK_NAME:
+        return (
+            "error",
+            (
+                "contract_shadows_builtin: entry point name "
+                f"{entry.name!r} shadows the built-in contract pack"
+            ),
+        )
+    if name_counts[entry.name] > 1:
+        return (
+            "error",
+            (
+                "contract_entry_point_error: duplicate contract entry-point "
+                f"name {entry.name!r}"
+            ),
+        )
+    return "loaded", None
+
+
+def _discovery_only_statuses() -> list[ContractPluginStatus]:
+    """Per-plugin statuses without calling any factory (section 3.4)."""
+
+    plugin_entries = _plugin_entry_points()
+    name_counts = Counter(entry.name for entry in plugin_entries)
+    statuses: list[ContractPluginStatus] = []
+    for entry in plugin_entries:
+        distribution = getattr(entry, "dist", None)
+        dist_name = getattr(distribution, "name", None)
+        dist_version = getattr(distribution, "version", None)
+        status, error = _entry_point_issue(entry, name_counts)
+        if status == "loaded":
+            status = "discovered"
+        statuses.append(
+            ContractPluginStatus(
+                entry.name, dist_name, dist_version, status, (), error
+            )
+        )
+    return statuses
 
 
 def _discover(
@@ -170,23 +234,8 @@ def _discover(
         status = "loaded"
         error: str | None = None
         loaded: list[ExecutableContract] = []
-        if entry.name == BUILTIN_PACK_NAME:
-            status, error = (
-                "error",
-                (
-                    "contract_shadows_builtin: entry point name "
-                    f"{entry.name!r} shadows the built-in contract pack"
-                ),
-            )
-        elif name_counts[entry.name] > 1:
-            status, error = (
-                "error",
-                (
-                    "contract_entry_point_error: duplicate contract entry-point "
-                    f"name {entry.name!r}"
-                ),
-            )
-        else:
+        status, error = _entry_point_issue(entry, name_counts)
+        if status != "error":
             try:
                 factory = entry.load()
                 if not callable(factory):
@@ -204,6 +253,9 @@ def _discover(
                 for descriptor in descriptors:
                     loaded.append(_coerce_descriptor(descriptor, entry.name))
             except Exception as exc:  # noqa: BLE001 - plugin failures are reported, never fatal
+                # A plugin that fails part-way must not register the contracts
+                # it produced before the failure (section 2.4, 3.3.5).
+                loaded = []
                 if isinstance(exc, ContractSchemaError):
                     error_message = f"{exc.code}: {exc.message}"
                 else:
@@ -336,6 +388,14 @@ def verify_contracts() -> list[ContractPluginStatus]:
     return list(statuses)
 
 
+def contract_plugin_statuses(*, load: bool = False) -> list[ContractPluginStatus]:
+    """Per-plugin statuses; ``load=True`` performs a fresh full load."""
+
+    if load:
+        return verify_contracts()
+    return _discovery_only_statuses()
+
+
 def load_contract_file(path: str | Path) -> ExecutableContract:
     """Load and validate one ``.contract.json`` file without entry points."""
 
@@ -353,6 +413,77 @@ def load_contract_file(path: str | Path) -> ExecutableContract:
             f"{contract_path}: contract file must contain a single object",
         )
     return build_contract(raw)
+
+
+def validate_contract_file(path: str | Path) -> dict[str, Any]:
+    """Validate one ``.contract.json`` file and return a structured result.
+
+    Accepts a single descriptor object or a JSON array of descriptors.
+    Duplicate IDs within one file are rejected with ``contract_duplicate_id``.
+    The CLI ``contract validate`` command and this function share one
+    implementation so their behavior cannot drift.
+    """
+
+    contract_path = Path(path)
+    try:
+        raw = json.loads(contract_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return {
+            "status": "fail",
+            "issues": [
+                {
+                    "code": "contract_schema_invalid",
+                    "message": f"{contract_path}: invalid JSON: {exc}",
+                }
+            ],
+        }
+    descriptors = raw if isinstance(raw, list) else [raw]
+    contracts: list[ExecutableContract] = []
+    issues: list[dict[str, Any]] = []
+    seen_ids: dict[str, int] = {}
+    for index, descriptor in enumerate(descriptors):
+        raw_id = descriptor.get("id") if isinstance(descriptor, dict) else None
+        try:
+            if not isinstance(descriptor, dict):
+                raise ContractSchemaError(
+                    "contract_schema_invalid", "descriptor must be an object"
+                )
+            contract = build_contract(descriptor)
+        except ContractSchemaError as exc:
+            issue: dict[str, Any] = {
+                "code": exc.code,
+                "message": exc.message,
+                "entry": index,
+            }
+            if isinstance(raw_id, str):
+                issue["id"] = raw_id
+            issues.append(issue)
+            continue
+        contracts.append(contract)
+        if isinstance(raw_id, str) and raw_id in seen_ids:
+            issues.append(
+                {
+                    "code": "contract_duplicate_id",
+                    "message": f"duplicate contract id {raw_id!r}",
+                    "id": raw_id,
+                    "entry": index,
+                }
+            )
+        seen_ids[raw_id] = index
+    if issues:
+        return {"status": "fail", "issues": issues}
+
+    def summary(contract: ExecutableContract) -> dict[str, Any]:
+        return {
+            "id": contract.id,
+            "inputs": list(contract.inputs),
+            "outputs": list(contract.outputs),
+            "relations": contract.to_dict().get("relations", 0),
+        }
+
+    if len(contracts) == 1:
+        return {"status": "pass", "contract": summary(contracts[0])}
+    return {"status": "pass", "contracts": [summary(contract) for contract in contracts]}
 
 
 def contract_input_issues(

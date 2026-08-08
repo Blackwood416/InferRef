@@ -96,7 +96,7 @@ def run_doctor(
             )
         )
 
-    from inferref.contracts import builtin_contracts, verify_contracts
+    from inferref.contracts import builtin_contracts, contract_plugin_statuses
 
     checks.append(
         DoctorCheck(
@@ -105,7 +105,7 @@ def run_doctor(
             f"{len(builtin_contracts())} built-in executable contract(s) registered",
         )
     )
-    contract_plugins = verify_contracts() if verify_plugins else []
+    contract_plugins = contract_plugin_statuses(load=verify_plugins)
     for plugin in contract_plugins:
         checks.append(
             DoctorCheck(

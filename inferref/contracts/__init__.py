@@ -24,9 +24,11 @@ from inferref.contracts.registry import (
     contract_boundary_issues,
     contract_input_issues,
     contract_list,
+    contract_plugin_statuses,
     contract_requirements,
     get_contract,
     load_contract_file,
+    validate_contract_file,
     verify_contracts,
 )
 from inferref.contracts.schema import (
@@ -49,8 +51,10 @@ __all__ = [
     "contract_boundary_issues",
     "contract_input_issues",
     "contract_list",
+    "contract_plugin_statuses",
     "contract_requirements",
     "get_contract",
     "load_contract_file",
+    "validate_contract_file",
     "verify_contracts",
 ]

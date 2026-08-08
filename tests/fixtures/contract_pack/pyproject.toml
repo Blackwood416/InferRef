@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inferref-qwen"
+version = "0.1.0"
+description = "Fixture contract pack for InferRef contract registry tests"
+requires-python = ">=3.10"
+
+[project.entry-points."inferref.contracts"]
+qwen = "inferref_qwen.contracts:build"
+qwen-broken = "inferref_qwen.contracts:build_broken"
+
+[tool.hatch.build.targets.wheel]
+packages = ["inferref_qwen"]

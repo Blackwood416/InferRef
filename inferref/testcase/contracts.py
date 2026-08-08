@@ -8,6 +8,8 @@ third-party callers do not break; new code should import from
 
 from __future__ import annotations
 
+import warnings
+
 from inferref.contracts import (
     EXECUTABLE_CONTRACTS,
     REGISTRY,
@@ -16,6 +18,13 @@ from inferref.contracts import (
     contract_input_issues,
     contract_requirements,
     get_contract,
+)
+
+warnings.warn(
+    "inferref.testcase.contracts is deprecated; import from inferref.contracts "
+    "instead",
+    DeprecationWarning,
+    stacklevel=2,
 )
 
 __all__ = [

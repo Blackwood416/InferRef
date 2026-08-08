@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -28,9 +29,11 @@ from inferref.contracts import (
     contract_boundary_issues,
     contract_input_issues,
     contract_list,
+    contract_plugin_statuses,
     contract_requirements,
     get_contract,
     load_contract_file,
+    validate_contract_file,
     verify_contracts,
 )
 from inferref.contracts import registry as contract_registry
@@ -51,6 +54,9 @@ from inferref.ir.values import TensorRef
 from inferref.tensor import codec
 from inferref.testcase.extract import ExtractionError, extract_operator
 from inferref.testcase.requirements import derive_requirements, is_contract_id
+from inferref.testcase.validate import validate_testcase
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 SWIGLU: dict[str, object] = {
     "format": "inferref-contract",
@@ -174,7 +180,6 @@ def test_schema_requires_format_and_format_version() -> None:
 @pytest.mark.parametrize(
     "contract_id",
     [
-        "swiglu/v1",
         "SwiGLU/fused/v1",
         "swiglu/fused/v",
         "swiglu/fused/v1x",
@@ -190,16 +195,17 @@ def test_schema_rejects_invalid_contract_ids(contract_id: str) -> None:
 
 
 def test_schema_accepts_version_zero_and_short_ids() -> None:
-    contract = build_contract(
-        {
-            "format": "inferref-contract",
-            "format_version": "0.1",
-            "id": "a/b/v0",
-            "inputs": {"x": {"kind": "tensor"}},
-            "outputs": {"y": {"kind": "tensor"}},
-        }
-    )
-    assert contract.id == "a/b/v0"
+    for contract_id in ("a/b/v0", "a/v1"):
+        contract = build_contract(
+            {
+                "format": "inferref-contract",
+                "format_version": "0.1",
+                "id": contract_id,
+                "inputs": {"x": {"kind": "tensor"}},
+                "outputs": {"y": {"kind": "tensor"}},
+            }
+        )
+        assert contract.id == contract_id
     assert contract.to_dict().get("relations") is None
 
 
@@ -212,6 +218,24 @@ def test_schema_enforces_role_rules() -> None:
         build_contract(_descriptor(outputs={}))
     with pytest.raises(ContractSchemaError, match="kind"):
         build_contract(_descriptor(inputs={"x": {"kind": "scalar"}}))
+
+
+def test_schema_rejects_shared_input_and_output_role_names() -> None:
+    descriptor = _descriptor(
+        inputs={"x": {"kind": "tensor"}, "gate": {"kind": "tensor"}},
+        outputs={"x": {"kind": "tensor"}},
+    )
+    with pytest.raises(ContractSchemaError, match="cannot disambiguate"):
+        build_contract(descriptor)
+    # The Python escape hatch is held to the same rule.
+    contract = ExecutableContract(
+        id="custom/shared/v1",
+        inputs=("x",),
+        outputs=("x",),
+        validate_inputs=lambda inputs: [],
+    )
+    with pytest.raises(ContractSchemaError, match="cannot disambiguate"):
+        contract_registry._coerce_descriptor(contract, "custom")
 
 
 def test_schema_rejects_bad_relation_syntax_and_roles() -> None:
@@ -240,11 +264,29 @@ def test_schema_effect_mapping_merges_into_features() -> None:
     assert contract.effects == ("alias_effects",)
 
 
+def test_schema_rejects_pure_with_effect_features_across_fields() -> None:
+    with pytest.raises(ContractSchemaError, match="must not coexist"):
+        build_contract(_descriptor(features=["mutation_effects"], effects=["pure"]))
+    with pytest.raises(ContractSchemaError, match="must not coexist"):
+        build_contract(_descriptor(features=["alias_effects"], effects=["pure"]))
+    # Python-constructed contracts get the same merged-set check.
+    contract = ExecutableContract(
+        id="custom/pure/v1",
+        inputs=("x",),
+        outputs=("y",),
+        validate_inputs=lambda inputs: [],
+        features=("mutation_effects",),
+        effects=("pure",),
+    )
+    with pytest.raises(ContractSchemaError, match="must not coexist"):
+        contract_registry._coerce_descriptor(contract, "custom")
+
+
 def test_contract_id_requirements_helper_matches_section_4() -> None:
     assert is_contract_id("rmsnorm/last-dim/v1")
     assert is_contract_id("swiglu/fused/v0")
+    assert is_contract_id("a/v1")
     assert not is_contract_id("qwen2.5/rope/v2")
-    assert not is_contract_id("softmax/v1")
 
 
 # -- relations -------------------------------------------------------------
@@ -299,12 +341,20 @@ def test_relation_syntax_errors_are_reported() -> None:
         "y.shape > x.shape",
         "y.shape = x.shape",
         "x.shape[",
+        "x.shape[0][1]",
+        "x[0] == 2",
         "y.shape == ",
         'y.dtype == "float32',
         "y.shape == x.shape == z.shape",
     ):
         with pytest.raises(RelationSyntaxError):
             parse(bad)
+
+
+def test_relation_multiple_indexes_and_bare_role_indexing_are_schema_errors() -> None:
+    for expression in ("y.shape[0][1] == x.shape[0]", "x[0] == 2"):
+        with pytest.raises(ContractSchemaError, match="does not parse"):
+            build_contract(_descriptor(relations=[expression]))
 
 
 def test_relation_role_collection_is_sorted_and_unique() -> None:
@@ -536,6 +586,28 @@ def test_invalid_descriptor_and_non_iterable_factory_are_errors(
     assert "is not a factory" in messages
 
 
+def test_generator_factory_failure_discards_partial_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def build() -> object:
+        yield _descriptor(id="ok/one/v1")
+        raise RuntimeError("boom mid-iteration")
+
+    _install_entry_points(
+        monkeypatch,
+        [Entry("partial", "partial.pack:build", build, Distribution("partial"))],
+    )
+    statuses = verify_contracts()
+    assert statuses[0].status == "error"
+    assert "boom mid-iteration" in statuses[0].error
+    assert statuses[0].contracts == ()
+    plugin_entries = [
+        entry for entry in contract_list() if entry.source == "plugin"
+    ]
+    assert plugin_entries == []
+    assert get_contract("ok/one/v1") is None
+
+
 def test_python_contract_escape_hatch_loads_and_merges_features(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -567,6 +639,25 @@ def test_python_contract_escape_hatch_loads_and_merges_features(
     assert loaded is not None
     assert loaded.features == ("multiple_outputs",)
     assert contract_input_issues("custom/python/v1", {}) == ["x required"]
+
+
+def test_python_contract_with_missing_validator_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = ExecutableContract(
+        id="custom/noop/v1",
+        inputs=("x",),
+        outputs=("y",),
+        validate_inputs=None,  # type: ignore[arg-type]
+    )
+    _install_entry_points(
+        monkeypatch,
+        [Entry("noop", "noop.pack:build", _factory(contract))],
+    )
+    status = verify_contracts()[0]
+    assert status.status == "error"
+    assert "validate_inputs must be callable" in status.error
+    assert get_contract("custom/noop/v1") is None
 
 
 def test_python_contract_with_invalid_effect_combination_is_rejected(
@@ -608,6 +699,43 @@ def test_verify_contracts_is_always_fresh_and_list_is_cached(
     assert calls["count"] == 3
 
 
+def test_plugin_statuses_without_load_are_discovered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def build() -> None:
+        raise AssertionError("factory must not be called for discovery-only status")
+
+    _install_entry_points(
+        monkeypatch,
+        [
+            Entry("qwen", "q:build", build, Distribution("inferref-qwen")),
+            Entry("broken", "b:build", build, Distribution("broken")),
+        ],
+    )
+    statuses = contract_plugin_statuses()
+    assert [status.status for status in statuses] == ["discovered", "discovered"]
+    assert all(status.contracts == () for status in statuses)
+
+
+def test_plugin_statuses_discovery_reports_metadata_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_entry_points(
+        monkeypatch,
+        [
+            Entry("builtin", "evil:build", _factory(_descriptor())),
+            Entry("shared", "a:build", _factory(_descriptor())),
+            Entry("shared", "b:build", _factory(_descriptor()), Distribution("b")),
+        ],
+    )
+    statuses = contract_plugin_statuses()
+    by_name = {status.entry_point: status for status in statuses}
+    assert by_name["builtin"].status == "error"
+    assert "contract_shadows_builtin" in by_name["builtin"].error
+    assert by_name["shared"].status == "error"
+    assert "duplicate contract entry-point name" in by_name["shared"].error
+
+
 def test_contract_registry_never_imports_torch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -645,6 +773,68 @@ def test_load_contract_file_round_trip(tmp_path: Path) -> None:
         array_path = tmp_path / "array.contract.json"
         array_path.write_text(json.dumps([_descriptor()]), encoding="utf-8")
         load_contract_file(array_path)
+
+
+def _install_fixture_distribution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Path:
+    """Install the tests/fixtures/contract_pack distribution into tmp_path.
+
+    The package source is copied next to a hand-written ``*.dist-info`` so
+    ``importlib.metadata`` discovers it through the real ``sys.path`` scanning
+    path — the same metadata that ``pip install`` would produce.
+    """
+
+    source = REPO_ROOT / "tests" / "fixtures" / "contract_pack" / "inferref_qwen"
+    target = tmp_path / "site"
+    shutil.copytree(source, target / "inferref_qwen")
+    dist_info = target / "inferref_qwen-0.1.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: inferref-qwen\nVersion: 0.1.0\n",
+        encoding="utf-8",
+    )
+    (dist_info / "entry_points.txt").write_text(
+        "[inferref.contracts]\n"
+        "qwen = inferref_qwen.contracts:build\n"
+        "qwen-broken = inferref_qwen.contracts:build_broken\n",
+        encoding="utf-8",
+    )
+    (dist_info / "RECORD").write_text("", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(target))
+    return target
+
+
+def test_real_distribution_discovery_via_importlib_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_fixture_distribution(monkeypatch, tmp_path)
+    plugin_ids = [
+        entry.id for entry in contract_list() if entry.source == "plugin"
+    ]
+    assert plugin_ids == ["gated-deltanet/step/v1", "swiglu/fused/v1"]
+    statuses = {status.entry_point: status for status in verify_contracts()}
+    assert statuses["qwen"].status == "loaded"
+    assert statuses["qwen"].contracts == ("swiglu/fused/v1", "gated-deltanet/step/v1")
+    assert statuses["qwen-broken"].status == "error"
+    assert "contract_entry_point_error" in statuses["qwen-broken"].error
+
+
+def test_contract_list_cli_with_real_distribution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_fixture_distribution(monkeypatch, tmp_path)
+    assert main(["contract", "list", "--json"]) == EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    by_id = {entry["id"]: entry for entry in payload["contracts"]}
+    assert by_id["swiglu/fused/v1"]["status"] == "loaded"
+    assert by_id["swiglu/fused/v1"]["distribution"] == "inferref-qwen"
+    assert by_id["gated-deltanet/step/v1"]["status"] == "loaded"
+    assert any(
+        error["entry_point"] == "qwen-broken" for error in payload["errors"]
+    )
 
 
 # -- CLI -------------------------------------------------------------------
@@ -694,6 +884,31 @@ def test_contract_list_text_render(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Contract" in text
     assert "rope/rotate-half/v1" in text
     assert "builtin" in text
+
+
+def test_contract_list_runs_each_factory_once(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: dict[str, int] = {}
+    descriptors = {"a": _descriptor(id="a/a/v1"), "b": GDN}
+
+    def make_factory(name: str) -> object:
+        def build() -> list[object]:
+            calls[name] = calls.get(name, 0) + 1
+            return [descriptors[name]]
+
+        return build
+
+    _install_entry_points(
+        monkeypatch,
+        [
+            Entry("a", "a.pack:build", make_factory("a"), Distribution("a-pack")),
+            Entry("b", "b.pack:build", make_factory("b"), Distribution("b-pack")),
+        ],
+    )
+    assert main(["contract", "list", "--json"]) == EXIT_OK
+    assert calls == {"a": 1, "b": 1}
+    capsys.readouterr()
 
 
 def test_contract_show_cli(
@@ -763,6 +978,34 @@ def test_contract_validate_cli_rejects_duplicate_ids_in_one_file(
     assert any(issue["code"] == "contract_duplicate_id" for issue in payload["issues"])
 
 
+def test_validate_contract_file_public_api_matches_cli(
+    tmp_path: Path,
+) -> None:
+    single = tmp_path / "single.contract.json"
+    single.write_text(json.dumps(_descriptor()), encoding="utf-8")
+    assert validate_contract_file(single) == {
+        "status": "pass",
+        "contract": {
+            "id": "swiglu/fused/v1",
+            "inputs": ["x", "gate"],
+            "outputs": ["y"],
+            "relations": 3,
+        },
+    }
+    duplicate = tmp_path / "duplicate.contract.json"
+    duplicate.write_text(json.dumps([_descriptor(), _descriptor()]), encoding="utf-8")
+    result = validate_contract_file(duplicate)
+    assert result["status"] == "fail"
+    assert any(
+        issue["code"] == "contract_duplicate_id" for issue in result["issues"]
+    )
+    malformed = tmp_path / "malformed.contract.json"
+    malformed.write_text("{not json", encoding="utf-8")
+    result = validate_contract_file(malformed)
+    assert result["status"] == "fail"
+    assert result["issues"][0]["code"] == "contract_schema_invalid"
+
+
 # -- doctor ----------------------------------------------------------------
 
 
@@ -802,6 +1045,30 @@ def test_doctor_contracts_section_empty_without_verify(
     assert main(["doctor", "--json"]) == EXIT_OK
     report = json.loads(capsys.readouterr().out)
     assert report["contracts"] == []
+
+
+def test_doctor_lists_discovered_contracts_without_verify(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _install_entry_points(
+        monkeypatch,
+        [Entry("qwen", "q:build", _factory(_descriptor()), Distribution("inferref-qwen"))],
+    )
+    assert main(["doctor", "--json"]) == EXIT_OK
+    report = json.loads(capsys.readouterr().out)
+    assert report["contracts"] == [
+        {
+            "entry_point": "qwen",
+            "distribution": "inferref-qwen",
+            "version": "0.1.0",
+            "status": "discovered",
+            "contracts": [],
+        }
+    ]
+    assert any(
+        check["id"] == "contract.plugin.qwen" and check["status"] == "warn"
+        for check in report["checks"]
+    )
 
 
 # -- preflight (C3) --------------------------------------------------------
@@ -1124,3 +1391,19 @@ def test_boundary_issues_for_plugin_contract_match_schema_relations(
     )
     assert contract_boundary_issues("swiglu/fused/v1", {}, {}) != []
     assert contract_boundary_issues("unknown/contract/v1", {}, {}) == ()
+
+
+def test_standalone_validation_emits_contract_relation_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_entry_points(
+        monkeypatch,
+        [Entry("qwen", "q:build", _factory(_descriptor()))],
+    )
+    case = _swiglu_case(tmp_path / "cases" / "swiglu", y_shape=[2, 3, 63])
+    result = validate_testcase(case)
+    assert result.valid is False
+    assert "contract_relation_failed" in {issue.code for issue in result.errors}
+    assert all(
+        issue.code != "contract_shape_invalid" for issue in result.errors
+    )

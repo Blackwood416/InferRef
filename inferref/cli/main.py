@@ -342,6 +342,10 @@ def cmd_testcase_dedup(args: argparse.Namespace) -> int:
 def cmd_contract_list(args: argparse.Namespace) -> int:
     from inferref.contracts import contract_list, verify_contracts
 
+    # verify_contracts() performs the fresh load and populates the process
+    # cache; contract_list() then reuses that single load so every factory
+    # runs exactly once per command invocation.
+    statuses = verify_contracts()
     entries = contract_list()
     errors = [
         {
@@ -349,7 +353,7 @@ def cmd_contract_list(args: argparse.Namespace) -> int:
             "distribution": status.distribution,
             "message": status.error or f"{status.entry_point}: {status.status}",
         }
-        for status in verify_contracts()
+        for status in statuses
         if status.status == "error"
     ]
     payload = {
@@ -405,93 +409,22 @@ def cmd_contract_show(args: argparse.Namespace) -> int:
 
 
 def cmd_contract_validate(args: argparse.Namespace) -> int:
-    from inferref.contracts import ContractSchemaError
-    from inferref.contracts.schema import build_contract
+    from inferref.contracts import validate_contract_file
 
-    path = Path(args.path)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        payload = {
-            "format": "inferref-contract-validation",
-            "status": "fail",
-            "issues": [
-                {
-                    "code": "contract_schema_invalid",
-                    "message": f"{path}: invalid JSON: {exc}",
-                }
-            ],
-        }
-        _emit(payload, payload["issues"][0]["message"], args.json)
-        return EXIT_FAIL
-
-    descriptors = raw if isinstance(raw, list) else [raw]
-    contracts = []
-    issues: list[dict[str, Any]] = []
-    seen_ids: dict[str, int] = {}
-    for index, descriptor in enumerate(descriptors):
-        raw_id = descriptor.get("id") if isinstance(descriptor, dict) else None
-        try:
-            if not isinstance(descriptor, dict):
-                raise ContractSchemaError(
-                    "contract_schema_invalid", "descriptor must be an object"
-                )
-            contract = build_contract(descriptor)
-        except ContractSchemaError as exc:
-            issue: dict[str, Any] = {
-                "code": exc.code,
-                "message": exc.message,
-                "entry": index,
-            }
-            if isinstance(raw_id, str):
-                issue["id"] = raw_id
-            issues.append(issue)
-            continue
-        contracts.append(contract)
-        if isinstance(raw_id, str) and raw_id in seen_ids:
-            issues.append(
-                {
-                    "code": "contract_duplicate_id",
-                    "message": f"duplicate contract id {raw_id!r}",
-                    "id": raw_id,
-                    "entry": index,
-                }
-            )
-        seen_ids[raw_id] = index
-
-    def summary(contract: Any) -> dict[str, Any]:
-        return {
-            "id": contract.id,
-            "inputs": list(contract.inputs),
-            "outputs": list(contract.outputs),
-            "relations": contract.to_dict().get("relations", 0),
-        }
-
-    if issues:
-        payload = {
-            "format": "inferref-contract-validation",
-            "status": "fail",
-            "issues": issues,
-        }
-        text = "\n".join(f"{issue['code']}: {issue['message']}" for issue in issues)
-        _emit(payload, text, args.json)
-        return EXIT_FAIL
-    if len(contracts) == 1:
-        payload = {
-            "format": "inferref-contract-validation",
-            "status": "pass",
-            "contract": summary(contracts[0]),
-        }
-        text = f"valid contract {contracts[0].id}"
+    payload = validate_contract_file(args.path)
+    payload = {"format": "inferref-contract-validation", **payload}
+    if payload["status"] == "fail":
+        text = "\n".join(
+            f"{issue['code']}: {issue['message']}" for issue in payload["issues"]
+        )
+    elif "contract" in payload:
+        text = f"valid contract {payload['contract']['id']}"
     else:
-        payload = {
-            "format": "inferref-contract-validation",
-            "status": "pass",
-            "contracts": [summary(contract) for contract in contracts],
-        }
-        text = f"valid contracts: {', '.join(contract.id for contract in contracts)}"
+        text = "valid contracts: " + ", ".join(
+            contract["id"] for contract in payload["contracts"]
+        )
     _emit(payload, text, args.json)
-    return EXIT_OK
+    return EXIT_OK if payload["status"] == "pass" else EXIT_FAIL
 
 
 # -- region ----------------------------------------------------------------

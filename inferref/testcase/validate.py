@@ -657,9 +657,16 @@ def _validate_executable_contracts(
             if name in output_by_name
         }
         for message in contract_boundary_issues(contract, role_inputs, role_outputs):
+            # Schema-derived relations report the stable contract_relation_failed
+            # code; built-in (Python) validators keep contract_shape_invalid.
+            issue_code = (
+                "contract_relation_failed"
+                if message.startswith("relation '")
+                else "contract_shape_invalid"
+            )
             _error(
                 result,
-                "contract_shape_invalid",
+                issue_code,
                 f"{contract}: {message}",
                 "inputs",
             )
