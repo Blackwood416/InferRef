@@ -57,5 +57,8 @@ jobs:
       - name: Core suite must be unaffected
         run: python -m pytest tests/core -q
 
+      - name: Slow contract acceptance gate
+        run: python -m pytest tests/core -m slow -q
+
       - name: Frontend suite
         run: python -m pytest tests/frontend -q

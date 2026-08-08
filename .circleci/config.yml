@@ -225,6 +225,9 @@ jobs:
       - run:
           name: Run core suite
           command: python -m pytest tests/core -q
+      - run:
+          name: Run slow contract acceptance gate
+          command: python -m pytest tests/core -m slow -q
 
   core-windows:
     parameters:
@@ -251,6 +254,10 @@ jobs:
           name: Run core suite
           shell: bash.exe
           command: ./.venv/Scripts/python.exe -m pytest tests/core -q
+      - run:
+          name: Run slow contract acceptance gate
+          shell: bash.exe
+          command: ./.venv/Scripts/python.exe -m pytest tests/core -m slow -q
 
   agent-linux:
     docker:

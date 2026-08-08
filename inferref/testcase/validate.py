@@ -657,17 +657,12 @@ def _validate_executable_contracts(
             if name in output_by_name
         }
         for message in contract_boundary_issues(contract, role_inputs, role_outputs):
-            # Schema-derived relations report the stable contract_relation_failed
-            # code; Python escape-hatch and built-in validators keep
-            # contract_shape_invalid. Classification is structural (the schema
-            # builder marks its contracts) rather than a message prefix, so a
-            # third-party validator returning a relation-looking string is not
-            # misclassified.
-            issue_code = (
-                "contract_relation_failed"
-                if getattr(profile, "_inferref_schema_generated", False)
-                and message.startswith("relation '")
-                else "contract_shape_invalid"
+            # Schema-derived relation failures carry their stable code on the
+            # message object; every other issue (built-in validators, role or
+            # dtype checks, Python escape-hatch validators) keeps
+            # contract_shape_invalid. No message-text parsing is involved.
+            issue_code = getattr(
+                message, "code", "contract_shape_invalid"
             )
             _error(
                 result,

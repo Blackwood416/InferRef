@@ -51,3 +51,4 @@ testpaths = ["tests"]
 markers = [
     "slow: end-to-end tests that build and install a fixture distribution",
 ]
+addopts = ["-m", "not slow"]

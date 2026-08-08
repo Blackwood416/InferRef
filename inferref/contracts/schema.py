@@ -65,6 +65,17 @@ class ContractSchemaError(ValueError):
         super().__init__(message)
 
 
+class RelationIssue(str):
+    """A relation failure message carrying its stable error code.
+
+    A plain ``str`` subclass so the validator contract (``list[str]``) and the
+    public boundary API stay unchanged, while callers can classify the issue
+    structurally via ``message.code`` instead of parsing the message text.
+    """
+
+    code = "contract_relation_failed"
+
+
 @dataclass(frozen=True)
 class ExecutableContract:
     """One versioned semantic operation profile an engine can implement.
@@ -246,15 +257,15 @@ def _relation_issue(
     expression: str,
     inputs: Mapping[str, dict[str, Any]],
     outputs: Mapping[str, dict[str, Any]],
-) -> str | None:
+) -> RelationIssue | None:
     roles: dict[str, Any] = {**inputs, **outputs}
     try:
         holds, message = evaluate(expression, roles)
     except RelationEvaluationError as exc:
-        return f"relation {expression!r} failed ({exc})"
+        return RelationIssue(f"relation {expression!r} failed ({exc})")
     if holds:
         return None
-    return message
+    return RelationIssue(message)
 
 
 def _generated_inputs(
@@ -423,10 +434,6 @@ def build_contract(descriptor: Mapping[str, Any]) -> ExecutableContract:
         effects=effects,
     )
     object.__setattr__(contract, "_relations", relations)
-    # Structured marker so callers can tell schema-generated validators apart
-    # from Python escape-hatch validators (used by testcase validation to
-    # classify relation failures without string sniffing).
-    object.__setattr__(contract, "_inferref_schema_generated", True)
     return contract
 
 
