@@ -1,5 +1,7 @@
 # InferRef
 
+[![CircleCI](https://dl.circleci.com/status-badge/img/circleci/PuMzCg2wMRTLmqJJN1tfGW/9g5ZmC1DWg3UfH9Eu8AKTb/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/circleci/PuMzCg2wMRTLmqJJN1tfGW/9g5ZmC1DWg3UfH9Eu8AKTb/tree/main)
+
 Reference execution tracing, testcase extraction, and numerical comparison for inference engine
 development.
 
@@ -417,8 +419,8 @@ Pass `--strict-layout` to enforce it.
 ## Tests
 
 ```bash
-python -m pytest tests -q          # 277 tests
-python -m pytest tests/core -q     # 161 tests, no PyTorch required
+python -m pytest tests -q
+python -m pytest tests/core -q     # no PyTorch required
 ```
 
 The suite is hermetic — no downloads, no network — and split along the dependency boundary:
@@ -431,9 +433,11 @@ The suite is hermetic — no downloads, no network — and split along the depen
 `tests/core` is verified to run with `import torch` hard-blocked, which is how Trace IR §57
 criterion 10 is enforced rather than assumed. All ten acceptance criteria are covered.
 
-CI runs the core suite with no torch installed at all, the frontend against torch 2.1 (the
-verified floor), current and nightly, one leg against real `transformers` model code, and the C++
-reader on Linux and Windows — see [.github/workflows/ci.yml](.github/workflows/ci.yml).
+The core/frontend CPU matrix runs on CircleCI — core with no torch installed at all, the
+frontend against torch 2.1 (the verified floor) and current, one leg against real `transformers`
+model code, and the C++ reader on Linux and Windows — see
+[.circleci/config.yml](.circleci/config.yml). GitHub Actions hosts the GPU, XPU, and nightly
+gates in [.github/workflows/](.github/workflows/).
 
 ## License
 
