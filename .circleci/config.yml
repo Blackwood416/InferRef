@@ -476,52 +476,89 @@ jobs:
 workflows:
   ci:
     jobs:
-      # Full Linux correctness matrix: every branch and every tag.
+      # Full Linux correctness matrix: every branch only. Tag pipelines run
+      # the Windows qualification below instead of duplicating the branch run.
       - core-linux:
-          filters: pipeline.git.branch or pipeline.git.tag
+          filters:
+            branches:
+              only: /.+/
+            tags:
+              ignore: /.*/
           matrix:
             parameters:
               python: ["3.10", "3.12", "3.13"]
       - agent-linux:
-          filters: pipeline.git.branch or pipeline.git.tag
+          filters:
+            branches:
+              only: /.+/
+            tags:
+              ignore: /.*/
       - frontend-linux:
           name: frontend-linux-py3.10-torch-min
-          filters: pipeline.git.branch or pipeline.git.tag
+          filters:
+            branches:
+              only: /.+/
+            tags:
+              ignore: /.*/
           python: "3.10"
           torch: min
       - frontend-linux:
           name: frontend-linux-py3.12-torch-current
-          filters: pipeline.git.branch or pipeline.git.tag
+          filters:
+            branches:
+              only: /.+/
+            tags:
+              ignore: /.*/
           python: "3.12"
           torch: current
       - frontend-linux:
           name: frontend-linux-py3.13-torch-current
-          filters: pipeline.git.branch or pipeline.git.tag
+          filters:
+            branches:
+              only: /.+/
+            tags:
+              ignore: /.*/
           python: "3.13"
           torch: current
       - frontend-linux:
           name: frontend-linux-generic-min
-          filters: pipeline.git.branch or pipeline.git.tag
+          filters:
+            branches:
+              only: /.+/
+            tags:
+              ignore: /.*/
           python: "3.10"
           torch: min
           transformers: "4.40.*"
           hf-suite: generic-min
       - frontend-linux:
           name: frontend-linux-qwen35-fixed
-          filters: pipeline.git.branch or pipeline.git.tag
+          filters:
+            branches:
+              only: /.+/
+            tags:
+              ignore: /.*/
           python: "3.12"
           torch: current
           transformers: "5.14.1"
           hf-suite: qwen35-fixed
       - frontend-linux:
           name: frontend-linux-qwen35-latest
-          filters: pipeline.git.branch or pipeline.git.tag
+          filters:
+            branches:
+              only: /.+/
+            tags:
+              ignore: /.*/
           python: "3.12"
           torch: current
           transformers: latest
           hf-suite: qwen35-latest
       - cpp-linux:
-          filters: pipeline.git.branch or pipeline.git.tag
+          filters:
+            branches:
+              only: /.+/
+            tags:
+              ignore: /.*/
 
       # Daily Windows smoke (branch pipelines only): minimum Python on core,
       # current ecosystem on the frontend, and the native MSVC reader. Feature
