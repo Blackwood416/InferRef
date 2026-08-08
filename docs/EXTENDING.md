@@ -4,6 +4,9 @@ This page is the "where do I plug in my thing" guide for external engine
 developers. InferRef ships four extension points: semantic detectors,
 executable contracts, engine adapters, and corpus cases.
 
+For stateful chains of testcases (prefill → decode), see
+[InferRef Scenario v0.1](spec/InferRef_Scenario_v0.1.md).
+
 ## 1. Add a semantic detector
 
 **Goal:** teach `inferref region detect` to recognise a construct your model

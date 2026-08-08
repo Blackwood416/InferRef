@@ -156,11 +156,12 @@ inferref-mcp --read-root E:/trusted/workspace --write-root E:/trusted/runs
 For a local MCP host, configure the `inferref-mcp` executable from this virtual
 environment as a stdio server. The tools are `inferref_capabilities`,
 `inferref_context`, `inferref_extract_testcase`, `inferref_compare_outputs`, and
-`inferref_run_engine`. Read and write roots are host policy, not tool arguments;
-requests outside them are rejected. If omitted, both policies default to the
-server's current working directory. These path checks prevent accidental and
-static lexical/resolve-based escapes; they are not a strong sandbox boundary
-against a same-user process racing directory symlinks or Windows reparse points.
+`inferref_run_engine`, plus `inferref_run_scenario` for stateful testcase
+chains. Read and write roots are host policy, not tool arguments; requests
+outside them are rejected. If omitted, both policies default to the server's
+current working directory. These path checks prevent accidental and static
+lexical/resolve-based escapes; they are not a strong sandbox boundary against a
+same-user process racing directory symlinks or Windows reparse points.
 
 Adapter JSON is executable configuration: InferRef uses an argv array and
 `shell=False`, but the configured process must still be trusted. The complete
@@ -348,8 +349,10 @@ inferref trace run_model.py --scope model.layers.0 -o trace/ -- --batch 4
 | `inferref testcase dedup` | Group executions into unique signatures (SPEC §24) |
 | `inferref region detect` | Find semantic regions automatically (SPEC §17) |
 | `inferref region create/list/delete` | Reference regions (SPEC §37) |
+| `inferref contract list/show/validate` | Built-in and plugin executable contracts (Contract Schema v0.1) |
 | `inferref agent capabilities/context` | Versioned discovery and artifact context |
 | `inferref agent extract/compare/run` | Structured Agent and engine-adapter loop |
+| `inferref scenario validate/run` | Ordered testcase chains with state binding (Scenario v0.1) |
 | `inferref export` | Whole trace as one JSON document |
 
 Every command supports `--json` for agent and CI consumption (SPEC §42). `compare` exits non-zero
