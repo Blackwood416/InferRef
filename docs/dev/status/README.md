@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-08-08 | [v0.6.0 contract ecosystem and CI/XPU gate](2026-08-08-v060-contract-ecosystem.md) | Contract registry + Scenario v0.1; Suite/Agent/CLI integration; 658 tests; Windows/XPU gates green; tag pipelines deduplicated |
 | 2026-08-07 | [Contract dtype ABI and CircleCI cost tiers](2026-08-07-dtype-abi-and-circleci-cost-tiers.md) | Required dtype metadata; duplicate contract rejection; CircleCI 3-tier Windows 7→3; numpy-only cpp-windows; on_fail artifacts |
 | 2026-08-07 | [Gate safety and contract ABI details](2026-08-07-gate-safety-and-contract-abi-details.md) | Safe evidence-dir deletion; scalar epsilon; per-contract subset; KV dtype relation; JSON control chars |
 | 2026-08-07 | [Contract observable outputs and atomic extraction](2026-08-07-contract-outputs-and-atomic-extraction.md) | Exact output role sets; input/output relation validators; staging+atomic publish; single contract per testcase; 529 tests |
