@@ -157,4 +157,3 @@ Files:
 Single task, no sequencing dependencies. Verify with the commands in section
 5 and a final `python -m pytest tests/core -q` smoke run to confirm the doc
 change did not affect the environment.
-
