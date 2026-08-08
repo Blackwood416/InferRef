@@ -48,3 +48,6 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: end-to-end tests that build and install a fixture distribution",
+]

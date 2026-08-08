@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
+import warnings
+
+# The shim intentionally emits DeprecationWarning; this module exists to prove
+# the shim still works, so the warning is suppressed here (keeps `-W error`
+# and filterwarnings=error runs green). The filter must be installed before
+# the import below because the warning fires at import time.
+warnings.filterwarnings(
+    "ignore",
+    message="inferref.testcase.contracts is deprecated",
+    category=DeprecationWarning,
+)
+
 from inferref.testcase.contracts import (
     EXECUTABLE_CONTRACTS,
     contract_boundary_issues,

@@ -343,6 +343,9 @@ def test_relation_syntax_errors_are_reported() -> None:
         "x.shape[",
         "x.shape[0][1]",
         "x[0] == 2",
+        'x.dtype[0] == "f"',
+        "x.rank[0] == 2",
+        "x.numel[0] == 6",
         "y.shape == ",
         'y.dtype == "float32',
         "y.shape == x.shape == z.shape",
@@ -352,7 +355,13 @@ def test_relation_syntax_errors_are_reported() -> None:
 
 
 def test_relation_multiple_indexes_and_bare_role_indexing_are_schema_errors() -> None:
-    for expression in ("y.shape[0][1] == x.shape[0]", "x[0] == 2"):
+    for expression in (
+        "y.shape[0][1] == x.shape[0]",
+        "x[0] == 2",
+        'x.dtype[0] == "f"',
+        "x.rank[0] == 2",
+        "x.numel[0] == 6",
+    ):
         with pytest.raises(ContractSchemaError, match="does not parse"):
             build_contract(_descriptor(relations=[expression]))
 
@@ -837,6 +846,50 @@ def test_contract_list_cli_with_real_distribution(
     )
 
 
+@pytest.mark.slow
+def test_fixture_pack_pip_install_end_to_end(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Acceptance 1: a real ``pip install`` of the fixture distribution."""
+
+    import subprocess
+    import sys
+
+    target = tmp_path / "site"
+    fixture = REPO_ROOT / "tests" / "fixtures" / "contract_pack"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-deps",
+                "--no-build-isolation",
+                "--target",
+                str(target),
+                str(fixture),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except FileNotFoundError as exc:  # pragma: no cover - exotic environments
+        pytest.skip(f"pip is unavailable: {exc}")
+    assert result.returncode == 0, result.stderr[-2000:]
+
+    monkeypatch.syspath_prepend(str(target))
+    contract_registry._reset_registry()
+    plugin_ids = [
+        entry.id for entry in contract_list() if entry.source == "plugin"
+    ]
+    assert plugin_ids == ["gated-deltanet/step/v1", "swiglu/fused/v1"]
+    statuses = {status.entry_point: status for status in verify_contracts()}
+    assert statuses["qwen"].status == "loaded"
+    assert statuses["qwen-broken"].status == "error"
+    assert "contract_entry_point_error" in statuses["qwen-broken"].error
+
+
 # -- CLI -------------------------------------------------------------------
 
 
@@ -1138,7 +1191,12 @@ def test_unknown_contract_requirements_unchanged() -> None:
     }
 
 
-def _swiglu_case(root: Path, *, y_shape: list[int] | None = None) -> Path:
+def _swiglu_case(
+    root: Path,
+    *,
+    y_shape: list[int] | None = None,
+    contract: str = "swiglu/fused/v1",
+) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     x = codec.write_array(
         root / "inputs/x.irtensor", np.zeros((2, 3, 64), dtype=np.float32)
@@ -1170,7 +1228,7 @@ def _swiglu_case(root: Path, *, y_shape: list[int] | None = None) -> Path:
         "format_version": "0.2",
         "name": "swiglu-probe",
         "reproducible": True,
-        "contracts": ["swiglu/fused/v1"],
+        "contracts": [contract],
         "inputs": entries[:2],
         "outputs": entries[2:],
         "nodes": [],
@@ -1407,3 +1465,30 @@ def test_standalone_validation_emits_contract_relation_failed(
     assert all(
         issue.code != "contract_shape_invalid" for issue in result.errors
     )
+
+
+def test_python_validator_relation_like_message_keeps_contract_shape_invalid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def validate_relation(inputs, outputs):
+        return ["relation 'y.shape == x.shape' failed (y.shape=[2], x.shape=[3])"]
+
+    contract = ExecutableContract(
+        id="custom/message/v1",
+        inputs=("x", "gate"),
+        outputs=("y",),
+        validate_inputs=lambda inputs: [],
+        validate_outputs=lambda outputs: [],
+        validate_relation=validate_relation,
+    )
+    _install_entry_points(
+        monkeypatch,
+        [Entry("custom", "custom.pack:build", _factory(contract))],
+    )
+    case = _swiglu_case(
+        tmp_path / "cases" / "custom", contract="custom/message/v1"
+    )
+    result = validate_testcase(case)
+    assert result.valid is False
+    assert "contract_shape_invalid" in {issue.code for issue in result.errors}
+    assert "contract_relation_failed" not in {issue.code for issue in result.errors}

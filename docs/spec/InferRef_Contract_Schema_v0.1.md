@@ -118,6 +118,10 @@ and smoke-tests it:
 
 The doctor report gains a `contracts` section with per-plugin status:
 `discovered`, `loaded`, or `error` plus a stable message.
+Without `--verify-plugins` the section lists discovered plugins without
+calling their factories; doctor marks them `warn`, so an environment with
+third-party contract plugins reports `warn` (not `pass`) until
+`--verify-plugins` confirms they load.
 
 ---
 
@@ -347,7 +351,7 @@ and_expr    := not_expr ("and" not_expr)*
 not_expr    := "not" not_expr | "(" expr ")" | comparison
 comparison  := operand ("==" | "!=") operand
 operand     := path | length | integer | string
-path        := NAME ("." attr)? ("[" index "]")?
+path        := NAME | NAME "." attr | NAME "." "shape" "[" index "]"
 attr        := "shape" | "dtype" | "rank" | "numel"
 length      := "len" "(" NAME "." "shape" ")"
 index       := integer
@@ -438,7 +442,9 @@ Public functions:
 ```python
 get_contract(contract_id: str) -> ExecutableContract | None
 contract_list() -> list[ContractEntry]            # deterministic order
+contract_plugin_statuses(*, load: bool = False) -> list[ContractPluginStatus]
 load_contract_file(path: str | Path) -> ExecutableContract
+validate_contract_file(path: str | Path) -> dict   # single object or array
 verify_contracts() -> list[ContractPluginStatus]
 contract_input_issues(contract_id, inputs) -> list[str]
 contract_boundary_issues(contract_id, inputs, outputs) -> list[str]

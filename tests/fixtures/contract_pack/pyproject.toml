@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "inferref-qwen"
@@ -12,5 +12,5 @@ requires-python = ">=3.10"
 qwen = "inferref_qwen.contracts:build"
 qwen-broken = "inferref_qwen.contracts:build_broken"
 
-[tool.hatch.build.targets.wheel]
+[tool.setuptools]
 packages = ["inferref_qwen"]

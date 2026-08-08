@@ -12,7 +12,7 @@ Grammar::
     not_expr    := "not" not_expr | "(" expr ")" | comparison
     comparison  := operand ("==" | "!=") operand
     operand     := path | length | integer | string
-    path        := NAME ("." attr)? ("[" index "]")?
+    path        := NAME | NAME "." attr | NAME "." "shape" "[" index "]"
     attr        := "shape" | "dtype" | "rank" | "numel"
     length      := "len" "(" NAME "." "shape" ")"
     index       := integer
@@ -249,6 +249,12 @@ class _Parser:
                     f"cannot index role {token.value!r} directly at position "
                     f"{bracket.position}; only shape dimensions can be indexed"
                 )
+            if node[2] != "shape":
+                raise RelationSyntaxError(
+                    f"only NAME.shape may be indexed at position "
+                    f"{bracket.position}; {token.value}.{node[2]}[...] is not "
+                    "supported"
+                )
             integer = self._expect("INTEGER")
             self._expect("RBRACKET")
             node = ("path", token.value, node[2], (int(integer.value),))
@@ -337,6 +343,8 @@ def _resolve_path(
         if node[3]:
             raise KeyError(f"role {name!r} cannot be indexed directly")
         return record
+    if node[3] and attr != "shape":
+        raise KeyError(f"{name}.{attr} does not support indexing")
     if attr == "dtype":
         value = record.get("dtype")
         if not isinstance(value, str) or not value:

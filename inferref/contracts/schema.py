@@ -423,6 +423,10 @@ def build_contract(descriptor: Mapping[str, Any]) -> ExecutableContract:
         effects=effects,
     )
     object.__setattr__(contract, "_relations", relations)
+    # Structured marker so callers can tell schema-generated validators apart
+    # from Python escape-hatch validators (used by testcase validation to
+    # classify relation failures without string sniffing).
+    object.__setattr__(contract, "_inferref_schema_generated", True)
     return contract
 
 
