@@ -14,7 +14,8 @@ Checks:
 3. Every ``inferref <subcommand>`` and ``inferref_<tool>`` name mentioned in
    code spans of the guide, skill, and references exists in the current CLI
    (verified against ``python -m inferref.cli.main`` help) and in the Agent
-   capabilities ``mcp_tools`` list.
+   capabilities ``mcp_tools`` list. Flags used with each command are checked
+   against that command's own help output.
 4. No scanned file contains author-machine absolute paths or credential-like
    values.
 
@@ -57,6 +58,11 @@ _CREDENTIAL_PATTERNS = (
     re.compile(r"\bbearer\s+[A-Za-z0-9._~+/-]+=*", re.IGNORECASE),
 )
 
+_COMMAND_RE = re.compile(
+    r"\binferref\b\s+([a-z][a-z0-9_]*)(?:\s+([a-z][a-z0-9_]*))?"
+)
+_FLAG_RE = re.compile(r"(?<![A-Za-z0-9])(--[a-z][a-z0-9-]*|-[a-z])(?![A-Za-z0-9])")
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -69,7 +75,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     repo = Path(args.repo).resolve()
     errors: list[str] = []
-    mentions: tuple[set[tuple[str, str]], set[str]] = (set(), set())
+    mentions: tuple[set[tuple[str, str]], set[str], dict[tuple[str, str], set[str]]] = (
+        set(),
+        set(),
+        {},
+    )
 
     _check_required_files(repo, errors)
     skill_path = repo / SKILL_REL
@@ -95,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         "OK: agent workflow checks passed "
         f"({len(files)} file(s), {len(mentions[0])} command mention(s), "
+        f"{sum(len(flags) for flags in mentions[2].values())} flag mention(s), "
         f"{len(mentions[1])} MCP tool mention(s))"
     )
     return 0
@@ -172,20 +183,20 @@ def _check_cleanliness(files: list[Path], errors: list[str]) -> None:
                 )
 
 
-def _extract_mentions(files: list[Path]) -> tuple[set[tuple[str, str]], set[str]]:
+def _extract_mentions(
+    files: list[Path],
+) -> tuple[
+    set[tuple[str, str]], set[str], dict[tuple[str, str], set[str]]
+]:
     commands: set[tuple[str, str]] = set()
     tools: set[str] = set()
+    flags: dict[tuple[str, str], set[str]] = {}
     for path in files:
         text = path.read_text(encoding="utf-8")
-        for span in _code_spans(text):
-            for match in re.finditer(
-                r"\binferref\b\s*([a-z][a-z0-9_]*)?(?:\s+([a-z][a-z0-9_]*))?",
-                span,
-            ):
-                top = match.group(1)
-                if top is None:
-                    continue
-                commands.add((top, match.group(2)))
+        for kind, span in _code_spans(text):
+            for command, line_flags in _span_commands((kind, span)):
+                commands.add(command)
+                flags.setdefault(command, set()).update(line_flags)
             for tool_match in re.finditer(r"\binferref_[a-z_]+", span):
                 # Skip JSON field names such as "inferref_version".
                 if (
@@ -194,18 +205,22 @@ def _extract_mentions(files: list[Path]) -> tuple[set[tuple[str, str]], set[str]
                 ):
                     continue
                 tools.add(tool_match.group(0))
-    return commands, tools
+    return commands, tools, flags
 
 
 def _check_commands(
-    mentions: tuple[set[tuple[str, str]], set[str]], errors: list[str]
+    mentions: tuple[
+        set[tuple[str, str]], set[str], dict[tuple[str, str], set[str]]
+    ],
+    errors: list[str],
 ) -> None:
-    commands, tools = mentions
+    commands, tools, flags = mentions
     top_commands = _cli_choices(REPO_ROOT)
     group_commands = {
         group: _cli_choices(REPO_ROOT, group) for group in COMMAND_GROUPS
     }
     mcp_tools = _mcp_tools(REPO_ROOT)
+    flag_cache: dict[tuple[str, ...], set[str]] = {}
 
     for top, sub in sorted(commands, key=lambda item: (item[0], item[1] or "")):
         if top not in top_commands:
@@ -217,15 +232,58 @@ def _check_commands(
             errors.append(
                 f"unknown CLI subcommand: inferref {top} {sub}"
             )
+        help_args = (top, sub) if sub else (top,)
+        known_flags = flag_cache.get(help_args)
+        if known_flags is None:
+            known_flags = _cli_flags(REPO_ROOT, *help_args)
+            flag_cache[help_args] = known_flags
+        for flag in sorted(flags.get((top, sub), ())):
+            if flag not in known_flags:
+                rendered = f"inferref {top}" + (f" {sub}" if sub else "")
+                errors.append(f"unknown flag {flag!r} for {rendered}")
     for tool in sorted(tools):
         if tool not in mcp_tools:
             errors.append(f"unknown MCP tool: {tool}")
 
 
-def _code_spans(text: str) -> list[str]:
-    spans = list(re.findall(r"```.*?```", text, flags=re.DOTALL))
-    spans.extend(re.findall(r"`([^`\n]+)`", text))
+def _code_spans(text: str) -> list[tuple[str, str]]:
+    spans: list[tuple[str, str]] = []
+    for match in re.finditer(r"```.*?```", text, flags=re.DOTALL):
+        spans.append(("block", match.group(0)[3:-3]))
+    for match in re.finditer(r"`([^`\n]+)`", text):
+        spans.append(("inline", match.group(1)))
     return spans
+
+
+def _span_commands(
+    span: tuple[str, str],
+) -> list[tuple[tuple[str, str], set[str]]]:
+    kind, content = span
+    result: list[tuple[tuple[str, str], set[str]]] = []
+    if kind == "inline":
+        match = _COMMAND_RE.search(content)
+        if match is not None:
+            result.append(
+                ((match.group(1), match.group(2)), _line_flags(content))
+            )
+        return result
+    current: tuple[str, str] | None = None
+    for line in content.splitlines():
+        match = _COMMAND_RE.search(line)
+        if match is not None:
+            current = (match.group(1), match.group(2))
+            result.append((current, _line_flags(line)))
+            continue
+        if not line.strip():
+            current = None
+            continue
+        if current is not None:
+            result.append((current, _line_flags(line)))
+    return result
+
+
+def _line_flags(line: str) -> set[str]:
+    return set(_FLAG_RE.findall(line))
 
 
 def _cli_choices(repo: Path, *args: str) -> set[str]:
@@ -244,6 +302,19 @@ def _cli_choices(repo: Path, *args: str) -> set[str]:
         if match is not None:
             choices.add(match.group(1))
     return choices
+
+
+def _cli_flags(repo: Path, *args: str) -> set[str]:
+    result = subprocess.run(
+        [sys.executable, "-m", "inferref.cli.main", *args, "--help"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return set()
+    return set(_FLAG_RE.findall(result.stdout))
 
 
 def _mcp_tools(repo: Path) -> set[str]:

@@ -25,7 +25,7 @@ the first divergence by default; pass `--all-failures` to compare everything.
   recognise semantic regions such as Linear, RMSNorm, RoPE, and Attention.
 - `inferref region list <trace> [--json]` - list regions.
 - `inferref region create <trace> --name <name> (--from-op <id> --to-op <id> | --module <path> | --source-function <name>) [--semantic <label>] [--engine-op <kernel>] [--json]`.
-- `inferref region delete <trace> --name <name> [--json]`.
+- `inferref region delete <trace> <name> [--json]`.
 
 ## Testcases
 

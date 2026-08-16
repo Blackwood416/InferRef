@@ -81,6 +81,19 @@ def test_check_fails_on_unknown_command(tmp_path: Path) -> None:
     assert "unknown CLI command: inferref frobnicate" in result.stderr
 
 
+def test_check_fails_on_unknown_flag(tmp_path: Path) -> None:
+    repo = _tree(tmp_path)
+    _write(repo, "skills/inferref/SKILL.md", MINIMAL_SKILL)
+    _write(
+        repo,
+        "docs/AGENT_WORKFLOW.md",
+        "```powershell\ninferref doctor --bogus-flag --json\n```\n",
+    )
+    result = _run(repo)
+    assert result.returncode == 1
+    assert "unknown flag '--bogus-flag' for inferref doctor" in result.stderr
+
+
 def test_check_fails_on_bad_frontmatter(tmp_path: Path) -> None:
     repo = _tree(tmp_path)
     _write(repo, "docs/AGENT_WORKFLOW.md", MINIMAL_GUIDE)

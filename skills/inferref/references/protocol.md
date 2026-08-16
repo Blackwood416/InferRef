@@ -20,7 +20,7 @@ Every operation returns one self-describing envelope:
 | `ok` | discovery/inspection succeeded | read `data` and `next_actions` |
 | `pass` | validation/extraction/execution succeeded | stop or move to the next case |
 | `fail` | domain found a mismatch or non-reproducible artifact | fix the first divergence and rerun |
-| `error` | adapter/process/protocol failure | inspect diagnostics, stderr, command, cwd |
+| `error` | adapter/process/protocol failure | inspect `data.execution` (stderr, command, cwd) and the diagnostics code |
 
 `fail` is a valid domain result, not a protocol error. `error` always carries at
 least one structured diagnostic.
@@ -59,6 +59,6 @@ Error (process failure):
 statuses are `pass`, `fail`, `error`, `partial`, and `unsupported`; the envelope
 maps `pass` to `pass`, `fail` to `fail`, and everything else to `error`. Each
 step embeds the complete adapter run record, `state_status` (`ok`,
-`not_compared`, `state_missing`, `state_shape_mismatch`, `state_dtype_mismatch`,
-`state_mismatch`), and input/output binding maps. Read `data.steps` to find the
-first non-pass step.
+`not_applicable`, `not_compared`, `state_missing`, `state_shape_mismatch`,
+`state_dtype_mismatch`, `state_mismatch`), and input/output binding maps. Read
+`data.steps` to find the first non-pass step.

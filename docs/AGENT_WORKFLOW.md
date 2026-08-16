@@ -286,12 +286,12 @@ Every response has `status`, `data`, `diagnostics`, and `next_actions`:
 | `ok` | discovery/inspection succeeded | read `data` and `next_actions` |
 | `pass` | validation/extraction/run succeeded | stop or move to the next case |
 | `fail` | domain found a mismatch or non-reproducible artifact | fix the first divergence and rerun |
-| `error` | adapter/process/protocol failure | inspect diagnostics, stderr, command, cwd |
+| `error` | adapter/process/protocol failure | inspect `data.execution` (stderr, command, cwd) and the diagnostics code |
 
 `diagnostics` is a list of `{severity, code, message}` entries; on `error` it
-contains the execution record details (`stderr`, `exit_code`, `command`,
-`cwd`). `next_actions` is the protocol's recommendation and is safe to follow
-verbatim.
+carries a stable structured summary, while the execution record details
+(`stderr`, `exit_code`, `command`, `cwd`) live in `data.execution`.
+`next_actions` is the protocol's recommendation and is safe to follow verbatim.
 
 ## 11. Common traps
 
