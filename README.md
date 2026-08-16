@@ -168,6 +168,27 @@ Adapter JSON is executable configuration: InferRef uses an argv array and
 wire contract and threat boundary are in
 [InferRef Agent Protocol v0.1](docs/spec/InferRef_Agent_Protocol_v0.1.md).
 
+### Use with a coding agent
+
+The [Agent workflow guide](docs/AGENT_WORKFLOW.md) is the practical loop for a
+coding agent (or an engine developer) asked to validate or fix an engine:
+discover the protocol, inspect a trace, extract the smallest testcase, run a
+trusted adapter or a stateful scenario, and iterate from the first divergence
+to a passing rerun. It is self-contained and assumes nothing beyond a clean
+checkout.
+
+The same loop ships as an installable Codex skill in
+[`skills/inferref/`](skills/inferref/). Install it into the local Codex skill
+directory with:
+
+```powershell
+Copy-Item -Recurse skills/inferref "$HOME\.codex\skills\inferref"
+```
+
+The skill is discovered through the normal Codex skill mechanism and links to
+the workflow guide plus the protocol, adapter, and CLI references instead of
+duplicating their content.
+
 ### Blind Agent repair evaluation
 
 Evaluation v0.2 runs real coding Agents in independent disposable workspaces. A

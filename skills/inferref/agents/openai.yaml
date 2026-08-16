@@ -1,0 +1,4 @@
+interface:
+  display_name: "InferRef Engine Validation"
+  short_description: "Validate, extract, run, and debug inference engine kernels"
+  default_prompt: "Use $inferref to validate an engine, isolate a failing kernel, or run a stateful scenario."
