@@ -270,7 +270,7 @@ Manual release smoke (not CI):
 
 ```powershell
 python -m inferref.cli.main agent capabilities --json
-python -m inferref.cli.main scenario validate tests/fixtures/scenarios/kv-chain/scenario.json --json
+python -m inferref.cli.main scenario validate tests/fixtures/scenarios/kv-chain --json
 ```
 
 ### 4.5 Dev status

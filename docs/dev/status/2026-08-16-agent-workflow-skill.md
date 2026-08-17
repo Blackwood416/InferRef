@@ -25,11 +25,11 @@
 
 ## Acceptance evidence
 
-- Full Python suite on current `main` (`683334f`) with the untracked
-  milestone files present: `666 passed, 6 skipped, 1 deselected`
-  (the +8 count over the v0.6.0 baseline is exactly the new `tests/docs`
+- Full Python suite on current `main` after the 0.7.0 release commits:
+  `667 passed, 6 skipped, 1 deselected`
+  (the +9 count over the v0.6.0 baseline is exactly the new `tests/docs`
   tests).
-- `python -m pytest tests/docs/test_agent_workflow_skill.py -q`: 8 passed.
+- `python -m pytest tests/docs/test_agent_workflow_skill.py -q`: 9 passed.
 - `python scripts/check_agent_workflow_skill.py`: `OK` (6 files scanned,
   28 command mentions, 6 MCP tool mentions).
 - `skills/inferref` passes the `skill-creator` `quick_validate.py`, and an
@@ -62,14 +62,6 @@
 
 ## Known gaps
 
-- The 0.7 spec's manual smoke section still shows
-  `inferref scenario validate tests/fixtures/scenarios/kv-chain/scenario.json`,
-  which fails because the CLI expects the scenario root directory. The
-  milestone artifacts use the correct directory form; the spec line should be
-  corrected.
-- The milestone files (`docs/AGENT_WORKFLOW.md`, `skills/inferref/`, the
-  harness, tests, and this report) are not yet committed at snapshot time;
-  review and commit are pending.
 - The skill has been structurally validated and install-smoked but not yet
   forward-tested in a real coding-agent session; that remains a manual
   release smoke.
