@@ -298,7 +298,7 @@ def _cli_choices(repo: Path, *args: str) -> set[str]:
         return set()
     choices: set[str] = set()
     for line in result.stdout.splitlines():
-        match = re.match(r"^ {4}([a-z_]+) {2,}\S", line)
+        match = re.match(r"^ {4}([a-z_]+)(?: {2,}.*)?$", line)
         if match is not None:
             choices.add(match.group(1))
     return choices
