@@ -823,6 +823,3 @@ def test_cli_strict_layout_false_overrides_testcase_true() -> None:
     )
     assert resolved.config["strict_layout"] is False
     assert resolved.sources["config.strict_layout"] == "cli"
-
-
-

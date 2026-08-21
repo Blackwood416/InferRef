@@ -550,7 +550,3 @@ def test_case_a_all_roles_present_semantic_failure_reports_fail(tmp_path: Path) 
     assert rep_dict["summary"]["failed"] >= 1
     assert rep_dict["first_failure"] is not None
     assert rep_dict["first_failure"]["status"] == "fail"
-
-
-
-

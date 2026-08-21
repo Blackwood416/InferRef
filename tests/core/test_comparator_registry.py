@@ -585,4 +585,3 @@ def test_comparator_list_cli_with_real_distribution(
     show_payload = json.loads(capsys.readouterr().out)
     assert show_payload["status"] == "ok"
     assert show_payload["comparator"]["id"] == "vision/object-detection/v1"
-

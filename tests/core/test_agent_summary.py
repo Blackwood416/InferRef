@@ -113,4 +113,3 @@ def test_summarize_report_comparison_report_format():
     assert summary["metrics"]["mismatched_elements"] == 4
     assert summary["metrics"]["max_observed_atol"] == 0.08
     assert summary["metrics"]["max_observed_rtol"] == 0.05
-

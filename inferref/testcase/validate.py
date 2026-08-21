@@ -802,4 +802,3 @@ def _validate_comparison(
                     f"invalid comparison config for output role {role!r}: {exc}",
                     f"comparison.outputs.{role}.config",
                 )
-
