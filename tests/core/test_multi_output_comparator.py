@@ -488,6 +488,12 @@ def test_case_a_missing_output_reporting_matches_numeric_shape(tmp_path: Path) -
     boxes_comp = next(c for c in report.comparisons if c.name == "boxes")
     assert boxes_comp.status == STATUS_PASS
 
+    rep_dict = report.to_dict()
+    missing_dict = next(c for c in rep_dict["comparisons"] if c["name"] == "classes")
+    assert "tolerance" in missing_dict
+    assert missing_dict["tolerance"] == {"atol": 0.0, "rtol": 0.0}
+    assert "role" not in missing_dict
+
 
 def test_case_a_all_roles_present_semantic_failure_reports_fail(tmp_path: Path) -> None:
     """N1 regression test: all output roles exist, but comparator detects semantic failure (IoU=0)."""

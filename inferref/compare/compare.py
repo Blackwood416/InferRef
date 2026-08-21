@@ -43,22 +43,21 @@ class TensorComparison:
 
     name: str
     status: str
-    message: str = ""
     layout: LayoutDiff | None = None
     metrics: Metrics | None = None
-    value_id: Any = None
-    storage_id: Any = None
+    message: str = ""
+
+    #: Provenance, when the comparison came from a trace (SPEC Appendix B).
+    value_id: int | None = None
     producer_op_id: int | None = None
     execution_index: int | None = None
     operator: str | None = None
     module_path: str | None = None
     source: str | None = None
     region: str | None = None
-    atol: float | None = None
-    rtol: float | None = None
-    role: str = "output"
-    shape: list[int] | None = None
-    dtype: str | None = None
+
+    atol: float = 0.0
+    rtol: float = 0.0
 
     @property
     def passed(self) -> bool:
@@ -68,14 +67,12 @@ class TensorComparison:
         out: dict[str, Any] = {
             "name": self.name,
             "status": self.status,
-            "role": self.role,
+            "tolerance": {"atol": self.atol, "rtol": self.rtol},
         }
         if self.message:
             out["message"] = self.message
         if self.value_id is not None:
             out["value_id"] = self.value_id
-        if self.storage_id is not None:
-            out["storage_id"] = self.storage_id
         if self.producer_op_id is not None:
             out["producer_op_id"] = self.producer_op_id
         if self.execution_index is not None:
@@ -88,12 +85,6 @@ class TensorComparison:
             out["source"] = self.source
         if self.region is not None:
             out["region"] = self.region
-        if self.atol is not None or self.rtol is not None:
-            out["tolerance"] = {"atol": self.atol or 0.0, "rtol": self.rtol or 0.0}
-        if self.shape is not None:
-            out["shape"] = self.shape
-        if self.dtype is not None:
-            out["dtype"] = self.dtype
         if self.layout is not None:
             out["layout"] = self.layout.to_dict()
         if self.metrics is not None:

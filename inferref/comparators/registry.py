@@ -11,9 +11,8 @@ from dataclasses import dataclass
 from importlib import metadata
 from typing import Any
 
-from inferref.comparators.protocol import ComparatorPlugin
+from inferref.comparators.protocol import ComparatorPlugin, NUMERIC_COMPARATOR_ID
 
-NUMERIC_COMPARATOR_ID = "tensor/numeric/v1"
 ENTRY_POINT_GROUP = "inferref.comparators"
 BUILTIN_PACK_NAME = "builtin"
 

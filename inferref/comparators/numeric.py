@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
-NUMERIC_COMPARATOR_ID = "tensor/numeric/v1"
-
+from inferref.comparators.protocol import ArtifactSet, ComparatorResult, NUMERIC_COMPARATOR_ID
 from inferref.compare.tolerance import DEFAULT_TOLERANCES, TolerancePolicy
-from inferref.comparators.protocol import ArtifactSet, ComparatorResult
 from inferref.tensor import codec
+
+__all__ = ["NUMERIC_COMPARATOR_ID", "NumericComparator"]
 
 _ALLOWED_CONFIG_KEYS = {"atol", "rtol", "strict_layout", "ignore_stride", "per_dtype"}
 

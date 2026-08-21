@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+NUMERIC_COMPARATOR_ID: str = "tensor/numeric/v1"
+
 
 @dataclass(frozen=True)
 class Artifact:
