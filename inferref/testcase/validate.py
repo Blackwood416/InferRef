@@ -82,6 +82,15 @@ class TestcaseValidationError(ValueError):
         super().__init__(f"invalid testcase {result.root}: {details}")
 
 
+def _parse_version_tuple(v: Any) -> tuple[int, ...]:
+    if not isinstance(v, str) or not v.strip():
+        return (0, 0)
+    try:
+        return tuple(int(p) for p in v.strip().split("."))
+    except ValueError:
+        return (0, 0)
+
+
 def validate_testcase(root: str | Path) -> TestcaseValidationResult:
     """Validate structure, containment, payload metadata, and internal references."""
 
@@ -111,41 +120,9 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
         return result
     result.manifest = manifest
 
-    if manifest.get("format") != TESTCASE_FORMAT:
-        _error(
-            result,
-            "format_invalid",
-            f"format must be {TESTCASE_FORMAT!r}, got {manifest.get('format')!r}",
-            "format",
-        )
-    if manifest.get("format_version") not in TESTCASE_READ_VERSIONS:
-        _error(
-            result,
-            "format_version_unsupported",
-            "unsupported testcase format_version "
-            f"{manifest.get('format_version')!r}; expected one of {TESTCASE_READ_VERSIONS!r}",
-            "format_version",
-        )
-    if "comparison" in manifest:
-        version_val = str(manifest.get("format_version", ""))
-        if version_val < "0.3":
-            _error(
-                result,
-                "comparison_requires_0_3",
-                "comparison requires format_version 0.3 or higher",
-                "comparison",
-            )
-        _validate_comparison(result, manifest)
-    elif str(manifest.get("format_version", "")) == "0.3":
-        _issue(
-            result,
-            "warning",
-            "format_version_0_3_without_comparison",
-            "testcase declares format_version 0.3 without comparison section",
-            "format_version",
-            blocks_reproduction=False,
-        )
-    _validate_requirements(result, manifest)
+    _validate_manifest(result, manifest)
+    if result.errors:
+        return result
 
     values = _records(result, manifest, "values")
     nodes = _records(result, manifest, "nodes")
@@ -205,6 +182,46 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
                 field_name,
             )
     return result
+
+
+def _validate_manifest(
+    result: TestcaseValidationResult, manifest: dict[str, Any]
+) -> None:
+    if manifest.get("format") != TESTCASE_FORMAT:
+        _error(
+            result,
+            "format_invalid",
+            f"invalid testcase format {manifest.get('format')!r}; expected {TESTCASE_FORMAT!r}",
+            "format",
+        )
+    if manifest.get("format_version") not in TESTCASE_READ_VERSIONS:
+        _error(
+            result,
+            "format_version_unsupported",
+            "unsupported testcase format_version "
+            f"{manifest.get('format_version')!r}; expected one of {TESTCASE_READ_VERSIONS!r}",
+            "format_version",
+        )
+    if "comparison" in manifest:
+        version_tuple = _parse_version_tuple(manifest.get("format_version"))
+        if version_tuple < (0, 3):
+            _error(
+                result,
+                "comparison_requires_0_3",
+                "comparison requires format_version 0.3 or higher",
+                "comparison",
+            )
+        _validate_comparison(result, manifest)
+    elif manifest.get("format_version") == "0.3":
+        _issue(
+            result,
+            "warning",
+            "format_version_0_3_without_comparison",
+            "testcase declares format_version 0.3 without comparison section",
+            "format_version",
+            blocks_reproduction=False,
+        )
+    _validate_requirements(result, manifest)
 
 
 def require_valid_testcase(root: str | Path) -> TestcaseValidationResult:

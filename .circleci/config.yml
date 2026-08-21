@@ -246,6 +246,11 @@ jobs:
           name: Assert PyTorch really is absent
           command: python .circleci/check_ci.py no-torch --message "torch is installed; this job must run without it"
       - run:
+          name: Run lint checks
+          command: |
+            pip install ruff
+            ruff check inferref tests
+      - run:
           name: Run core suite
           command: python -m pytest tests/core -q
       - run:

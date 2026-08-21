@@ -54,13 +54,20 @@ class OutputComparisonSpec:
         )
 
 
+def _clean_custom_config(raw_cfg: dict[str, Any] | None) -> dict[str, Any]:
+    if not raw_cfg:
+        return {}
+    numeric_defaults = {"per_dtype", "strict_layout", "ignore_stride", "atol", "rtol"}
+    return {k: v for k, v in raw_cfg.items() if k not in numeric_defaults}
+
+
 @dataclass
 class ComparisonSpec:
     """Comparison Spec v0.1 model and wire format (SPEC §6.1)."""
 
     format: str = COMPARISON_SPEC_FORMAT
     format_version: str = COMPARISON_SPEC_VERSION
-    comparator: str = NUMERIC_COMPARATOR_ID
+    comparator: str | None = None
     config: dict[str, Any] = field(default_factory=dict)
     outputs: dict[str, OutputComparisonSpec] = field(default_factory=dict)
 
@@ -69,7 +76,7 @@ class ComparisonSpec:
         *,
         format: str = COMPARISON_SPEC_FORMAT,
         format_version: str = COMPARISON_SPEC_VERSION,
-        comparator: str = NUMERIC_COMPARATOR_ID,
+        comparator: str | None = None,
         config: dict[str, Any] | None = None,
         outputs: dict[str, OutputComparisonSpec | dict[str, Any]] | None = None,
         tolerances: dict[str, Any] | None = None,
@@ -78,7 +85,7 @@ class ComparisonSpec:
     ) -> None:
         self.format = format
         self.format_version = format_version
-        self.comparator = comparator or NUMERIC_COMPARATOR_ID
+        self.comparator = comparator.strip() if comparator else None
         cfg = dict(config or {})
         if tolerances is not None and "per_dtype" not in cfg:
             cfg["per_dtype"] = tolerances
@@ -123,7 +130,7 @@ class ComparisonSpec:
         result: dict[str, Any] = {
             "format": self.format,
             "format_version": self.format_version,
-            "comparator": self.comparator,
+            "comparator": self.comparator or NUMERIC_COMPARATOR_ID,
         }
         if self.config:
             result["config"] = dict(self.config)
@@ -149,9 +156,9 @@ class ComparisonSpec:
             raise ComparisonSpecValidationError(
                 f"unsupported comparison format_version {ver!r}, expected one of {COMPARISON_SPEC_READ_VERSIONS!r}"
             )
-        comparator = data.get("comparator", NUMERIC_COMPARATOR_ID)
-        if not isinstance(comparator, str) or not comparator.strip():
-            raise ComparisonSpecValidationError("comparator must be a non-empty string")
+        comparator = data.get("comparator")
+        if comparator is not None and (not isinstance(comparator, str) or not comparator.strip()):
+            raise ComparisonSpecValidationError("comparator must be a non-empty string or null")
 
         raw_config = data.get("config", {})
         if raw_config is not None and not isinstance(raw_config, dict):
@@ -171,7 +178,7 @@ class ComparisonSpec:
         return cls(
             format=fmt,
             format_version=ver,
-            comparator=comparator.strip(),
+            comparator=comparator.strip() if comparator else None,
             config=dict(raw_config or {}),
             outputs=parsed_outputs,
         )
@@ -191,29 +198,33 @@ class ComparisonSpec:
                 f"unsupported comparison format_version {self.format_version!r}, "
                 f"expected one of {COMPARISON_SPEC_READ_VERSIONS!r}"
             )
-        if not self.comparator or not isinstance(self.comparator, str):
+
+        comp_id = self.comparator or NUMERIC_COMPARATOR_ID
+        if not comp_id or not isinstance(comp_id, str):
             raise ComparisonSpecValidationError("comparator must be a non-empty string")
 
         if check_registry:
-            plugin = get_comparator(self.comparator)
+            plugin = get_comparator(comp_id)
             if plugin is None:
-                raise ComparisonSpecValidationError(f"unknown comparator {self.comparator!r}")
+                raise ComparisonSpecValidationError(f"unknown comparator {comp_id!r}")
             try:
-                plugin.validate_config(self.config)
+                cfg = self.config if comp_id == NUMERIC_COMPARATOR_ID else _clean_custom_config(self.config)
+                plugin.validate_config(cfg)
             except Exception as exc:
                 raise ComparisonSpecValidationError(
                     f"invalid_comparison_config: {exc}"
                 ) from exc
 
             for role, out_spec in self.outputs.items():
-                target_comp_id = out_spec.comparator or self.comparator
+                target_comp_id = out_spec.comparator or comp_id
                 out_plugin = get_comparator(target_comp_id)
                 if out_plugin is None:
                     raise ComparisonSpecValidationError(
                         f"unknown comparator {target_comp_id!r} for output role {role!r}"
                     )
                 try:
-                    out_plugin.validate_config(out_spec.config)
+                    out_cfg = out_spec.config if target_comp_id == NUMERIC_COMPARATOR_ID else _clean_custom_config(out_spec.config)
+                    out_plugin.validate_config(out_cfg)
                 except Exception as exc:
                     raise ComparisonSpecValidationError(
                         f"invalid_comparison_config for output role {role!r}: {exc}"

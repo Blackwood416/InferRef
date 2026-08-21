@@ -67,14 +67,43 @@ def summarize_report(
     else:
         # Numeric run metrics
         summary = data.get("summary") or (comparison_info.get("summary") if isinstance(comparison_info, dict) else None)
+        comparisons_list = data.get("comparisons") or (comparison_info.get("comparisons") if isinstance(comparison_info, dict) else [])
         if isinstance(summary, dict):
+            total_tensors = summary.get("compared") if "compared" in summary else summary.get("total_tensors", 0)
+            matched_tensors = summary.get("passed") if "passed" in summary else summary.get("passed_tensors", 0)
+            total_elements = int(summary.get("total_elements", 0))
+            mismatched_elements = int(summary.get("mismatched_elements", 0))
+            max_observed_atol = float(summary.get("max_observed_atol", 0.0))
+            max_observed_rtol = float(summary.get("max_observed_rtol", 0.0))
+
+            if isinstance(comparisons_list, list) and comparisons_list:
+                comp_total = 0
+                comp_mismatched = 0
+                comp_max_atol = 0.0
+                comp_max_rtol = 0.0
+                has_comp_metrics = False
+                for comp in comparisons_list:
+                    if isinstance(comp, dict):
+                        comp_metrics = comp.get("metrics")
+                        if isinstance(comp_metrics, dict):
+                            has_comp_metrics = True
+                            comp_total += int(comp_metrics.get("element_count", 0))
+                            comp_mismatched += int(comp_metrics.get("mismatch_count", 0))
+                            comp_max_atol = max(comp_max_atol, float(comp_metrics.get("max_abs_diff", 0.0)))
+                            comp_max_rtol = max(comp_max_rtol, float(comp_metrics.get("max_rel_diff", 0.0)))
+                if has_comp_metrics:
+                    total_elements = comp_total
+                    mismatched_elements = comp_mismatched
+                    max_observed_atol = comp_max_atol
+                    max_observed_rtol = comp_max_rtol
+
             metrics = {
-                "total_tensors": summary.get("total_tensors", 0),
-                "matched_tensors": summary.get("passed_tensors", 0),
-                "total_elements": summary.get("total_elements", 0),
-                "mismatched_elements": summary.get("mismatched_elements", 0),
-                "max_observed_atol": summary.get("max_observed_atol", 0.0),
-                "max_observed_rtol": summary.get("max_observed_rtol", 0.0),
+                "total_tensors": total_tensors,
+                "matched_tensors": matched_tensors,
+                "total_elements": total_elements,
+                "mismatched_elements": mismatched_elements,
+                "max_observed_atol": max_observed_atol,
+                "max_observed_rtol": max_observed_rtol,
             }
         # First failure in numeric comparison
         ff = data.get("first_divergence") or data.get("first_failure") or (comparison_info.get("first_divergence") if isinstance(comparison_info, dict) else None)

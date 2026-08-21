@@ -435,3 +435,58 @@ def test_e2e_comparator_exception_maps_to_error_status(tmp_path: Path) -> None:
     assert "unexpected computational failure inside comparator" in report.comparisons[0].message
 
 
+def test_case_a_missing_output_reporting_matches_numeric_shape(tmp_path: Path) -> None:
+    import json
+    from inferref.compare.compare import STATUS_MISSING, STATUS_PASS, compare_testcase
+    from inferref.testcase.requirements import derive_requirements
+
+    comp = ObjectDetectionComparator()
+    register_builtin_comparator(comp)
+
+    tc_dir = tmp_path / "tc_missing_role"
+    eng_dir = tmp_path / "eng_missing_role"
+    boxes = [[10.0, 20.0, 100.0, 200.0]]
+    ref_set = _create_detection_artifacts(tc_dir, boxes, [0.9], [1])
+
+    # Engine produces boxes and scores, but misses classes
+    _write_irtensor(eng_dir / "boxes.irtensor", np.array(boxes, dtype=np.float32))
+    _write_irtensor(eng_dir / "scores.irtensor", np.array([0.9], dtype=np.float32))
+
+    manifest = {
+        "format": "inferref-testcase",
+        "format_version": "0.3",
+        "inferref_version": "0.9.0",
+        "name": "missing_role_tc",
+        "region_name": "det_region",
+        "inputs": [],
+        "outputs": [
+            {"name": "boxes", "value_id": None, "payload": "boxes.irtensor", **codec.read(ref_set["boxes"].path).to_metadata()},
+            {"name": "scores", "value_id": None, "payload": "scores.irtensor", **codec.read(ref_set["scores"].path).to_metadata()},
+            {"name": "classes", "value_id": None, "payload": "classes.irtensor", **codec.read(ref_set["classes"].path).to_metadata()},
+        ],
+        "nodes": [],
+        "values": [],
+        "comparison": {
+            "format": "inferref-comparison",
+            "format_version": "0.1",
+            "comparator": OBJECT_DETECTION_COMPARATOR_ID,
+        },
+    }
+    manifest["requirements"] = derive_requirements(manifest)
+    (tc_dir / "testcase.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    report = compare_testcase(tc_dir, eng_dir)
+    assert report.status == "fail"
+    assert report.missing_count == 1
+    assert report.passed_count == 2
+    assert report.failed_count == 0
+
+    classes_comp = next(c for c in report.comparisons if c.name == "classes")
+    assert classes_comp.status == STATUS_MISSING
+    assert "not found" in classes_comp.message
+
+    boxes_comp = next(c for c in report.comparisons if c.name == "boxes")
+    assert boxes_comp.status == STATUS_PASS
+
+
+

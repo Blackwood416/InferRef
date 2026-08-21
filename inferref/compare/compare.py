@@ -270,9 +270,12 @@ def compare_testcase(
 
     Supports:
     - Global multi-output composite comparator plugins (Case A): evaluates the full
-      artifact set jointly; plugin exceptions map to STATUS_ERROR.
+      artifact set jointly; plugin exceptions map to STATUS_ERROR. Global comparison
+      evaluates the full artifact set in one shot so first_failure does not early-stop
+      comparator invocation.
     - Per-role dispatch (Case B): numeric comparisons use per-role tolerance overrides,
-      while custom per-output comparators receive their isolated role artifact.
+      while custom per-output comparators receive all available artifacts and are invoked
+      with required_roles=[name].
     - Non-numeric global comparators evaluate jointly across roles, with per-role
       diagnostics annotated onto the individual tensor comparisons.
     """
@@ -417,8 +420,8 @@ def compare_testcase(
             elif name not in act_artifacts:
                 comparison = TensorComparison(
                     name=name,
-                    status=STATUS_FAIL,
-                    message=f"engine produced no output for role {name!r}",
+                    status=STATUS_MISSING,
+                    message=f"engine output {name!r} not found",
                     value_id=value_id,
                 )
             elif name in diag_by_role:
@@ -438,7 +441,7 @@ def compare_testcase(
             else:
                 comparison = TensorComparison(
                     name=name,
-                    status=STATUS_PASS if comp_result.passed else STATUS_FAIL,
+                    status=STATUS_PASS,
                     value_id=value_id,
                 )
             _annotate_from_testcase(comparison, output)

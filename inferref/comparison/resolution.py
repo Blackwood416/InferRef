@@ -25,6 +25,13 @@ from inferref.comparison.schema import (
 )
 
 
+def _clean_custom_config(raw_cfg: dict[str, Any] | None) -> dict[str, Any]:
+    if not raw_cfg:
+        return {}
+    numeric_defaults = {"per_dtype", "strict_layout", "ignore_stride", "atol", "rtol"}
+    return {k: v for k, v in raw_cfg.items() if k not in numeric_defaults}
+
+
 @dataclass
 class EffectiveComparison:
     """Resolved comparison policy with fine-grained per-field sources tracking."""
@@ -52,7 +59,8 @@ class EffectiveComparison:
         if plugin is None:
             raise ComparisonSpecValidationError(f"unknown comparator {self.comparator!r}")
         try:
-            plugin.validate_config(self.config)
+            cfg = self.config if self.comparator == NUMERIC_COMPARATOR_ID else _clean_custom_config(self.config)
+            plugin.validate_config(cfg)
         except Exception as exc:
             raise ComparisonSpecValidationError(
                 f"invalid_comparison_config: {exc}"
@@ -67,7 +75,8 @@ class EffectiveComparison:
                 )
             out_cfg = out_data.get("config", {})
             try:
-                out_plugin.validate_config(out_cfg)
+                target_out_cfg = out_cfg if comp_id == NUMERIC_COMPARATOR_ID else _clean_custom_config(out_cfg)
+                out_plugin.validate_config(target_out_cfg)
             except Exception as exc:
                 raise ComparisonSpecValidationError(
                     f"invalid_comparison_config for output {role!r}: {exc}"
@@ -169,21 +178,15 @@ def resolve_comparison_policy(
     sources: dict[str, str] = {}
     config: dict[str, Any] = {}
 
-    # 1. Resolve Top-Level Comparator
+    # 1. Resolve Top-Level Comparator (Strict priority: CLI > Suite > Testcase > Default)
     if cli_comparator is not None and cli_comparator.strip():
         comparator = cli_comparator.strip()
         sources["comparator"] = "cli"
-    elif sc is not None and sc.comparator and sc.comparator != NUMERIC_COMPARATOR_ID:
-        comparator = sc.comparator
+    elif sc is not None and sc.comparator is not None and sc.comparator.strip():
+        comparator = sc.comparator.strip()
         sources["comparator"] = "suite"
-    elif tc is not None and tc.comparator and tc.comparator != NUMERIC_COMPARATOR_ID:
-        comparator = tc.comparator
-        sources["comparator"] = "testcase"
-    elif sc is not None and sc.comparator:
-        comparator = sc.comparator
-        sources["comparator"] = "suite"
-    elif tc is not None and tc.comparator:
-        comparator = tc.comparator
+    elif tc is not None and tc.comparator is not None and tc.comparator.strip():
+        comparator = tc.comparator.strip()
         sources["comparator"] = "testcase"
     else:
         comparator = NUMERIC_COMPARATOR_ID

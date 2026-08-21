@@ -64,3 +64,53 @@ def test_cli_json_and_json_summary_mutually_exclusive():
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["compare", "ref", "act", "--json", "--json-summary"])
+
+
+def test_summarize_report_comparison_report_format():
+    report_dict = {
+        "status": "fail",
+        "summary": {
+            "compared": 2,
+            "passed": 1,
+            "failed": 1,
+            "missing": 0,
+            "stopped_early": False,
+        },
+        "first_failure": {
+            "name": "y",
+            "message": "tolerance exceeded",
+        },
+        "comparisons": [
+            {
+                "name": "x",
+                "status": "pass",
+                "metrics": {
+                    "element_count": 50,
+                    "mismatch_count": 0,
+                    "max_abs_diff": 0.001,
+                    "max_rel_diff": 0.002,
+                },
+            },
+            {
+                "name": "y",
+                "status": "fail",
+                "metrics": {
+                    "element_count": 50,
+                    "mismatch_count": 4,
+                    "max_abs_diff": 0.08,
+                    "max_rel_diff": 0.05,
+                },
+            },
+        ],
+    }
+    summary = summarize_report("compare", report_dict)
+    assert summary["format"] == AGENT_SUMMARY_FORMAT
+    assert summary["status"] == "fail"
+    assert summary["first_failure"]["output"] == "y"
+    assert summary["metrics"]["total_tensors"] == 2
+    assert summary["metrics"]["matched_tensors"] == 1
+    assert summary["metrics"]["total_elements"] == 100
+    assert summary["metrics"]["mismatched_elements"] == 4
+    assert summary["metrics"]["max_observed_atol"] == 0.08
+    assert summary["metrics"]["max_observed_rtol"] == 0.05
+

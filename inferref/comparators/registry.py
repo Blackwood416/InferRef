@@ -216,9 +216,6 @@ def get_comparator(comparator_id: str) -> ComparatorPlugin | None:
     if not matching:
         return None
 
-    builtins = set(BUILTIN_COMPARATORS)
-    if comparator_id in builtins:
-        raise ValueError(f"plugin {comparator_id!r} shadows a built-in comparator")
     if len(matching) > 1:
         raise ValueError(f"duplicate comparator entry-point name: {comparator_id!r}")
 

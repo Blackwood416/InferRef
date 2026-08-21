@@ -167,7 +167,8 @@ def test_comparison_spec_defaults() -> None:
     spec = ComparisonSpec()
     assert spec.format == COMPARISON_SPEC_FORMAT
     assert spec.format_version == COMPARISON_SPEC_VERSION
-    assert spec.comparator == NUMERIC_COMPARATOR_ID
+    assert spec.comparator is None
+    assert spec.to_dict()["comparator"] == NUMERIC_COMPARATOR_ID
     assert spec.config == {}
     assert spec.outputs == {}
     assert spec.tolerances is None
@@ -726,5 +727,102 @@ def test_deduplicate_comparator_unknown_error(tmp_path: Path) -> None:
     # Should only report top-level comparator unknown once, not for output role 'y'
     assert len(comp_errors) == 1
     assert comp_errors[0].where == "comparison.comparator"
+
+
+def test_strict_comparator_in_execute_adapter_preflight(tmp_path: Path) -> None:
+    class StrictDetectorComparator:
+        id = "vision/strict-detection/v1"
+        version = "1.0.0"
+        description = "Strict Detector"
+
+        def validate_config(self, config: dict[str, Any] | None = None) -> None:
+            allowed = {"min_iou", "score_threshold"}
+            if config:
+                unknown = set(config.keys()) - allowed
+                if unknown:
+                    raise ValueError(f"unknown object detection comparator config key(s): {sorted(unknown)}")
+                if "min_iou" in config and not (0.0 <= config["min_iou"] <= 1.0):
+                    raise ValueError("min_iou must be between 0.0 and 1.0")
+
+        def compare(
+            self,
+            reference: ArtifactSet,
+            actual: ArtifactSet,
+            config: dict[str, Any] | None = None,
+        ) -> ComparatorResult:
+            return ComparatorResult(
+                comparator=self.id,
+                status="pass",
+                metrics={"mean_iou": 0.95},
+            )
+
+    register_builtin_comparator(StrictDetectorComparator())
+
+    tc_dir = tmp_path / "tc_strict"
+    _create_minimal_testcase(
+        tc_dir,
+        format_version="0.3",
+        comparison={
+            "format": "inferref-comparison",
+            "format_version": "0.1",
+            "comparator": "vision/strict-detection/v1",
+            "config": {"min_iou": 0.8},
+        },
+    )
+
+    adapter_script = tmp_path / "engine_strict.py"
+    adapter_script.write_text(
+        """
+import shutil, sys
+from pathlib import Path
+tc = Path(sys.argv[1])
+out = Path(sys.argv[2])
+out.mkdir(parents=True, exist_ok=True)
+shutil.copyfile(tc / "reference" / "y.irtensor", out / "y.irtensor")
+""",
+        encoding="utf-8",
+    )
+    adapter_file = _make_adapter(tmp_path, adapter_script)
+    adapter = EngineAdapter.load(adapter_file)
+
+    runs_dir = tmp_path / "strict_runs"
+    # execute_adapter must succeed pre-flight validation and execution
+    result = execute_adapter(tc_dir, adapter, runs_dir)
+    assert result["status"] == "pass"
+    assert result["effective_comparison"]["comparator"] == "vision/strict-detection/v1"
+
+
+def test_suite_comparator_overrides_testcase_comparator_to_numeric() -> None:
+    tc_spec = ComparisonSpec(
+        format_version="0.1",
+        comparator="vision/object-detection/v1",
+        config={"min_iou": 0.5},
+    )
+    suite_spec = ComparisonSpec(
+        format_version="0.1",
+        comparator="tensor/numeric/v1",
+        config={"atol": 1e-4},
+    )
+
+    resolved = resolve_comparison_policy(
+        testcase_spec=tc_spec,
+        suite_spec=suite_spec,
+    )
+    assert resolved.comparator == "tensor/numeric/v1"
+    assert resolved.sources["comparator"] == "suite"
+
+
+def test_cli_strict_layout_false_overrides_testcase_true() -> None:
+    tc_spec = ComparisonSpec(
+        format_version="0.1",
+        config={"strict_layout": True},
+    )
+    resolved = resolve_comparison_policy(
+        testcase_spec=tc_spec,
+        cli_strict_layout=False,
+    )
+    assert resolved.config["strict_layout"] is False
+    assert resolved.sources["config.strict_layout"] == "cli"
+
 
 

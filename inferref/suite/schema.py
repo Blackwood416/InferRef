@@ -126,7 +126,13 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
         comp_spec: ComparisonSpec | None = None
         raw_comparison = record.get("comparison")
         if raw_comparison is not None:
-            if format_version < "0.3":
+            def _parse_v(v: str) -> tuple[int, ...]:
+                try:
+                    return tuple(int(p) for p in v.strip().split("."))
+                except ValueError:
+                    return (0, 0)
+
+            if _parse_v(format_version) < (0, 3):
                 raise SuiteError(
                     "comparison_requires_0_3: suite case has comparison but format_version is < 0.3"
                 )

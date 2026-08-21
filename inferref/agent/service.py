@@ -77,12 +77,14 @@ def capabilities() -> AgentResponse:
                 "trace": {"format": FORMAT, "version": FORMAT_VERSION},
                 "testcase": {
                     "format": TESTCASE_FORMAT,
+                    "version": TESTCASE_FORMAT_VERSION,
                     "writes": ["0.2", "0.3"],
                     "reads": ["0.1", "0.2", "0.3"],
                 },
                 "suite": {
                     "format": "inferref-suite",
                     "version": "0.2",
+                    "writes": ["0.2", "0.3"],
                     "reads": ["0.1", "0.2", "0.3"],
                 },
                 "scenario": {"format": "inferref-scenario", "version": "0.1"},
@@ -219,7 +221,7 @@ def compare_outputs(
 
     operation = "compare_outputs"
     try:
-        policy = _policy(atol=atol, rtol=rtol)
+        policy = _policy(atol=atol, rtol=rtol, tolerance=tolerance)
         report = compare_testcase(
             testcase,
             engine_output,
@@ -516,8 +518,23 @@ def _testcase_context(root: Path) -> AgentResponse:
     )
 
 
-def _policy(*, atol: float | None, rtol: float | None) -> TolerancePolicy:
-    policy = TolerancePolicy()
-    policy.override_atol = atol
-    policy.override_rtol = rtol
+def _policy(
+    *,
+    atol: float | None = None,
+    rtol: float | None = None,
+    tolerance: str | Path | dict[str, Any] | None = None,
+) -> TolerancePolicy:
+    if tolerance is not None:
+        if isinstance(tolerance, (str, Path)):
+            policy = TolerancePolicy.load(tolerance)
+        elif isinstance(tolerance, dict):
+            policy = TolerancePolicy.from_dict(tolerance)
+        else:
+            policy = TolerancePolicy()
+    else:
+        policy = TolerancePolicy()
+    if atol is not None:
+        policy.override_atol = atol
+    if rtol is not None:
+        policy.override_rtol = rtol
     return policy
