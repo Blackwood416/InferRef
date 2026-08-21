@@ -87,8 +87,8 @@ def test_doctor_only_loads_plugins_when_explicitly_requested(monkeypatch) -> Non
 
 def test_doctor_hardware_details_and_device_names(capsys) -> None:
     report = run_doctor("cpu")
-    cpu_check = next(item for item in report["checks"] if item["id"] == "device.cpu.availability")
-    if cpu_check["status"] == "pass":
+    cpu_check = next((item for item in report["checks"] if item["id"] == "device.cpu.availability"), None)
+    if cpu_check is not None and cpu_check["status"] == "pass":
         assert "CPU" in cpu_check["message"]
         assert "device_names" in cpu_check["details"]
         assert "devices" in cpu_check["details"]

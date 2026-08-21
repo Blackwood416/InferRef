@@ -77,7 +77,6 @@ def capabilities() -> AgentResponse:
                 "trace": {"format": FORMAT, "version": FORMAT_VERSION},
                 "testcase": {
                     "format": TESTCASE_FORMAT,
-                    "version": TESTCASE_FORMAT_VERSION,
                     "writes": ["0.2", "0.3"],
                     "reads": ["0.1", "0.2", "0.3"],
                 },

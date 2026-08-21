@@ -136,6 +136,15 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
                 "comparison",
             )
         _validate_comparison(result, manifest)
+    elif str(manifest.get("format_version", "")) == "0.3":
+        _issue(
+            result,
+            "warning",
+            "format_version_0_3_without_comparison",
+            "testcase declares format_version 0.3 without comparison section",
+            "format_version",
+            blocks_reproduction=False,
+        )
     _validate_requirements(result, manifest)
 
     values = _records(result, manifest, "values")
@@ -748,18 +757,29 @@ def _validate_comparison(
             )
 
     for role, out_spec in spec.outputs.items():
-        role_comp_id = out_spec.comparator or spec.comparator
-        role_plugin = get_comparator(role_comp_id)
-        if role_plugin is None:
-            _error(
-                result,
-                "comparator_unknown",
-                f"unknown comparator {role_comp_id!r} for output role {role!r}",
-                f"comparison.outputs.{role}.comparator",
-            )
-        else:
+        if out_spec.comparator is not None:
+            role_comp_id = out_spec.comparator
+            role_plugin = get_comparator(role_comp_id)
+            if role_plugin is None:
+                _error(
+                    result,
+                    "comparator_unknown",
+                    f"unknown comparator {role_comp_id!r} for output role {role!r}",
+                    f"comparison.outputs.{role}.comparator",
+                )
+            else:
+                try:
+                    role_plugin.validate_config(out_spec.config)
+                except (ValueError, TypeError) as exc:
+                    _error(
+                        result,
+                        "invalid_comparison_config",
+                        f"invalid comparison config for output role {role!r}: {exc}",
+                        f"comparison.outputs.{role}.config",
+                    )
+        elif plugin is not None and out_spec.config:
             try:
-                role_plugin.validate_config(out_spec.config)
+                plugin.validate_config(out_spec.config)
             except (ValueError, TypeError) as exc:
                 _error(
                     result,

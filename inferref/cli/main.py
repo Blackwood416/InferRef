@@ -203,6 +203,22 @@ def cmd_validate(args: argparse.Namespace) -> int:
 # -- compare ---------------------------------------------------------------
 
 
+def _parse_comparison_config(val: str | None) -> dict[str, Any] | None:
+    if val is None:
+        return None
+    val_str = str(val).strip()
+    if not val_str:
+        return None
+    cand_path = Path(val_str)
+    if cand_path.is_file():
+        parsed = json.loads(cand_path.read_text(encoding="utf-8"))
+    else:
+        parsed = json.loads(val_str)
+    if not isinstance(parsed, dict):
+        raise ValueError("comparison configuration must be a JSON object")
+    return parsed
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from inferref.compare.compare import compare_testcase, compare_traces
     from inferref.compare.report import render_report
@@ -218,6 +234,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
     reference = Path(args.reference)
     actual = Path(args.actual)
 
+    comp_cfg = None
+    if getattr(args, "comparison_config", None) is not None:
+        try:
+            comp_cfg = _parse_comparison_config(args.comparison_config)
+        except Exception as exc:
+            print(f"error: invalid comparison config: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+
     if is_trace_package(reference) and is_trace_package(actual):
         report = compare_traces(
             reference,
@@ -226,6 +250,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             ignore_stride=args.ignore_stride,
             strict_layout=args.strict_layout,
             first_failure=args.first_failure,
+            comparison_config=comp_cfg,
         )
     elif (reference / "testcase.json").is_file():
         report = compare_testcase(
@@ -236,6 +261,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             strict_layout=args.strict_layout,
             first_failure=args.first_failure,
             comparator=getattr(args, "comparator", None),
+            comparison_config=comp_cfg,
         )
     else:
         print(
@@ -837,10 +863,12 @@ def cmd_agent_extract(args: argparse.Namespace) -> int:
 def cmd_agent_compare(args: argparse.Namespace) -> int:
     from inferref.agent import compare_outputs
 
+    comp_cfg = _parse_comparison_config(getattr(args, "comparison_config", None))
     response = compare_outputs(
         args.testcase,
         args.engine_output,
         comparator=getattr(args, "comparator", None),
+        comparison_config=comp_cfg,
         atol=args.atol,
         rtol=args.rtol,
         ignore_stride=args.ignore_stride,
@@ -853,11 +881,13 @@ def cmd_agent_compare(args: argparse.Namespace) -> int:
 def cmd_agent_run(args: argparse.Namespace) -> int:
     from inferref.agent import run_engine
 
+    comp_cfg = _parse_comparison_config(getattr(args, "comparison_config", None))
     response = run_engine(
         args.testcase,
         args.adapter,
         args.runs_dir,
         comparator=getattr(args, "comparator", None),
+        comparison_config=comp_cfg,
         atol=args.atol,
         rtol=args.rtol,
         ignore_stride=args.ignore_stride,
@@ -870,6 +900,7 @@ def cmd_agent_run(args: argparse.Namespace) -> int:
 def cmd_agent_run_scenario(args: argparse.Namespace) -> int:
     from inferref.agent import run_scenario
 
+    comp_cfg = _parse_comparison_config(getattr(args, "comparison_config", None))
     response = run_scenario(
         args.scenario,
         args.adapter,
@@ -877,6 +908,7 @@ def cmd_agent_run_scenario(args: argparse.Namespace) -> int:
         state_mode=args.state_mode,
         compare_state=args.compare_state,
         comparator=getattr(args, "comparator", None),
+        comparison_config=comp_cfg,
         atol=args.atol,
         rtol=args.rtol,
         ignore_stride=args.ignore_stride,
@@ -932,6 +964,7 @@ def cmd_suite_validate(args: argparse.Namespace) -> int:
 def cmd_suite_run(args: argparse.Namespace) -> int:
     from inferref.suite import run_suite
 
+    comp_cfg = _parse_comparison_config(getattr(args, "comparison_config", None))
     report = run_suite(
         args.suite,
         args.adapter,
@@ -939,6 +972,7 @@ def cmd_suite_run(args: argparse.Namespace) -> int:
         allow_unsupported=args.allow_unsupported,
         fail_fast=args.fail_fast,
         comparator=getattr(args, "comparator", None),
+        comparison_config=comp_cfg,
         tolerance=getattr(args, "tolerance", None),
         atol=getattr(args, "atol", None),
         rtol=getattr(args, "rtol", None),
@@ -999,6 +1033,7 @@ def cmd_scenario_validate(args: argparse.Namespace) -> int:
 def cmd_scenario_run(args: argparse.Namespace) -> int:
     from inferref.scenario import run_scenario
 
+    comp_cfg = _parse_comparison_config(getattr(args, "comparison_config", None))
     report = run_scenario(
         args.scenario,
         args.adapter,
@@ -1008,6 +1043,7 @@ def cmd_scenario_run(args: argparse.Namespace) -> int:
         allow_unsupported=args.allow_unsupported,
         fail_fast=args.fail_fast,
         comparator=getattr(args, "comparator", None),
+        comparison_config=comp_cfg,
         tolerance=getattr(args, "tolerance", None),
         atol=args.atol,
         rtol=args.rtol,
@@ -1222,6 +1258,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop at the earliest divergence (SPEC §30)",
     )
     p.add_argument("--comparator", help="comparator ID (default: tensor/numeric/v1)")
+    p.add_argument(
+        "--comparison-config",
+        help="JSON string or file path for comparator configuration (SPEC §8.3)",
+    )
     p.add_argument("--atol", type=float, help="absolute tolerance override")
     p.add_argument("--rtol", type=float, help="relative tolerance override")
     p.add_argument("--tolerance", help="JSON file with per-dtype tolerances (SPEC §27)")
@@ -1596,6 +1636,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop on the first cell configuration/infrastructure exception",
     )
     q.add_argument("--comparator", help="comparator plugin ID override")
+    q.add_argument(
+        "--comparison-config",
+        help="JSON string or file path for comparator configuration (SPEC §8.3)",
+    )
     q.add_argument("--tolerance", help="JSON file with per-dtype tolerances")
     q.add_argument("--atol", type=float, help="absolute tolerance override")
     q.add_argument("--rtol", type=float, help="relative tolerance override")
@@ -1666,6 +1710,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="raise on the first unexpected infrastructure exception",
     )
     q.add_argument("--comparator", help="comparator plugin ID override")
+    q.add_argument(
+        "--comparison-config",
+        help="JSON string or file path for comparator configuration (SPEC §8.3)",
+    )
     q.add_argument("--tolerance", help="JSON file with per-dtype tolerances")
     q.add_argument("--atol", type=float, help="absolute tolerance override")
     q.add_argument("--rtol", type=float, help="relative tolerance override")
@@ -1706,6 +1754,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _add_agent_compare_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--comparator", help="comparator plugin ID override")
+    parser.add_argument(
+        "--comparison-config",
+        help="JSON string or file path for comparator configuration (SPEC §8.3)",
+    )
     parser.add_argument("--atol", type=float, help="absolute tolerance override")
     parser.add_argument("--rtol", type=float, help="relative tolerance override")
     parser.add_argument(

@@ -254,3 +254,128 @@ def test_object_detection_registered_and_run_by_id(tmp_path: Path) -> None:
     assert result.passed is True
     assert result.status == "pass"
     assert result.comparator == OBJECT_DETECTION_COMPARATOR_ID
+
+
+def test_e2e_compare_testcase_with_custom_comparator(tmp_path: Path) -> None:
+    import json
+    from inferref.cli.main import EXIT_OK, main
+    from inferref.compare import compare_testcase
+    from inferref.testcase.requirements import derive_requirements
+
+    comp = ObjectDetectionComparator()
+    register_builtin_comparator(comp)
+
+    tc_dir = tmp_path / "tc"
+    eng_dir = tmp_path / "eng"
+    boxes = [[10.0, 20.0, 100.0, 200.0]]
+    ref_set = _create_detection_artifacts(tc_dir, boxes, [0.9], [1])
+    _create_detection_artifacts(eng_dir, boxes, [0.9], [1])
+
+    manifest = {
+        "format": "inferref-testcase",
+        "format_version": "0.3",
+        "inferref_version": "0.9.0",
+        "name": "detection_tc",
+        "region_name": "detection_region",
+        "inputs": [],
+        "outputs": [
+            {"name": "boxes", "value_id": None, "payload": "boxes.irtensor", **codec.read(ref_set["boxes"].path).to_metadata()},
+            {"name": "scores", "value_id": None, "payload": "scores.irtensor", **codec.read(ref_set["scores"].path).to_metadata()},
+            {"name": "classes", "value_id": None, "payload": "classes.irtensor", **codec.read(ref_set["classes"].path).to_metadata()},
+        ],
+        "nodes": [],
+        "values": [],
+        "comparison": {
+            "format": "inferref-comparison",
+            "format_version": "0.1",
+            "comparator": OBJECT_DETECTION_COMPARATOR_ID,
+            "config": {"min_iou": 0.9},
+        },
+    }
+    manifest["requirements"] = derive_requirements(manifest)
+    (tc_dir / "testcase.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    # 1. compare_testcase direct
+    report = compare_testcase(tc_dir, eng_dir)
+    assert report.status == "pass"
+    assert report.comparator is not None
+    assert report.comparator["comparator"] == OBJECT_DETECTION_COMPARATOR_ID
+    assert report.comparator["metrics"]["matched"] == 1
+
+    # 2. CLI compare
+    assert main(["compare", str(tc_dir), str(eng_dir), "--json"]) == EXIT_OK
+
+    # 3. CLI agent compare
+    assert main(["agent", "compare", str(tc_dir), str(eng_dir), "--json"]) == EXIT_OK
+
+
+def test_e2e_per_output_comparator_and_tolerance_dispatch(tmp_path: Path) -> None:
+    import json
+    from inferref.compare import compare_testcase
+    from inferref.testcase.requirements import derive_requirements
+
+    comp = ObjectDetectionComparator()
+    register_builtin_comparator(comp)
+
+    tc_dir = tmp_path / "tc_per_output"
+    eng_dir = tmp_path / "eng_per_output"
+    tc_dir.mkdir(parents=True, exist_ok=True)
+    eng_dir.mkdir(parents=True, exist_ok=True)
+
+    # Output 1: boxes (vision comparator)
+    boxes = [[10.0, 20.0, 100.0, 200.0]]
+    ref_set = _create_detection_artifacts(tc_dir, boxes, [0.9], [1])
+    _create_detection_artifacts(eng_dir, boxes, [0.9], [1])
+
+    # Output 2: y (numeric with tight tolerance 1e-5 override vs actual diff 1e-3)
+    y_ref = np.array([1.0, 2.0], dtype=np.float32)
+    y_act_mismatch = np.array([1.001, 2.001], dtype=np.float32)
+    y_path = _write_irtensor(tc_dir / "y.irtensor", y_ref)
+    _write_irtensor(eng_dir / "y.irtensor", y_act_mismatch)
+
+    manifest = {
+        "format": "inferref-testcase",
+        "format_version": "0.3",
+        "inferref_version": "0.9.0",
+        "name": "mixed_tc",
+        "region_name": "mixed_region",
+        "inputs": [],
+        "outputs": [
+            {"name": "boxes", "value_id": None, "payload": "boxes.irtensor", **codec.read(ref_set["boxes"].path).to_metadata()},
+            {"name": "scores", "value_id": None, "payload": "scores.irtensor", **codec.read(ref_set["scores"].path).to_metadata()},
+            {"name": "classes", "value_id": None, "payload": "classes.irtensor", **codec.read(ref_set["classes"].path).to_metadata()},
+            {"name": "y", "value_id": None, "payload": "y.irtensor", **codec.read(y_path).to_metadata()},
+        ],
+        "nodes": [],
+        "values": [],
+        "comparison": {
+            "format": "inferref-comparison",
+            "format_version": "0.1",
+            "comparator": "tensor/numeric/v1",
+            "outputs": {
+                "boxes": {
+                    "comparator": OBJECT_DETECTION_COMPARATOR_ID,
+                    "config": {"min_iou": 0.9},
+                },
+                "y": {
+                    "config": {"atol": 1e-5, "rtol": 1e-5},
+                },
+            },
+        },
+    }
+    manifest["requirements"] = derive_requirements(manifest)
+    (tc_dir / "testcase.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    # Tight tolerance on y fails while boxes passes via custom comparator
+    report = compare_testcase(tc_dir, eng_dir)
+    assert report.status == "fail"
+    y_comp = next(c for c in report.comparisons if c.name == "y")
+    assert y_comp.status == "fail"
+    boxes_comp = next(c for c in report.comparisons if c.name == "boxes")
+    assert boxes_comp.status == "pass"
+
+    # Now make y within tolerance -> all pass
+    _write_irtensor(eng_dir / "y.irtensor", np.array([1.000001, 2.000001], dtype=np.float32))
+    report_pass = compare_testcase(tc_dir, eng_dir)
+    assert report_pass.status == "pass"
+

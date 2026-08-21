@@ -137,11 +137,24 @@ def _factory(*descriptors: object) -> object:
     return build
 
 
+_real_entry_points = contract_registry.metadata.entry_points
+
+
 def _install_entry_points(
     monkeypatch: pytest.MonkeyPatch, entries: list[Entry]
 ) -> None:
+    def fake_entry_points(group: str | None = None, **kwargs: object) -> object:
+        if group == contract_registry.ENTRY_POINT_GROUP:
+            return Entries(entries)
+        if group is not None:
+            try:
+                return _real_entry_points(group=group, **kwargs)
+            except Exception:
+                return Entries()
+        return Entries(entries)
+
     monkeypatch.setattr(
-        contract_registry.metadata, "entry_points", lambda: Entries(entries)
+        contract_registry.metadata, "entry_points", fake_entry_points
     )
 
 

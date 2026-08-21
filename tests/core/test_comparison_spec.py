@@ -632,9 +632,9 @@ shutil.copyfile(tc / "reference" / "y.irtensor", out / "y.irtensor")
     result = execute_adapter(tc_dir, adapter, runs_dir)
     assert result["status"] == "pass"
     assert "comparison" in result
-    assert result["comparison"]["comparator"] == "vision/object-detection/v1"
-    assert result["comparison"]["metrics"]["mean_iou"] == 0.85
-    assert result["comparison"]["metrics"]["min_iou_threshold"] == 0.6
+    assert result["comparison"]["comparator"]["comparator"] == "vision/object-detection/v1"
+    assert result["comparison"]["comparator"]["metrics"]["mean_iou"] == 0.85
+    assert result["comparison"]["comparator"]["metrics"]["min_iou_threshold"] == 0.6
     assert result["effective_comparison"]["comparator"] == "vision/object-detection/v1"
 
 
@@ -670,4 +670,61 @@ def test_mcp_server_tools_support_comparator(tmp_path: Path) -> None:
     assert resp.status == "pass"
     assert "effective_comparison" in resp.data
     assert resp.data["effective_comparison"]["config"]["atol"] == 0.001
+
+
+def test_cli_comparison_config_flag(tmp_path: Path) -> None:
+    from inferref.cli.main import main
+
+    tc_dir = tmp_path / "tc_cli_cfg"
+    _create_minimal_testcase(tc_dir, format_version="0.3")
+
+    engine_out = tmp_path / "engine_out_cfg"
+    engine_out.mkdir(parents=True, exist_ok=True)
+    _write_irtensor(engine_out / "y.irtensor", np.array([2.0, 4.0], dtype=np.float32))
+
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({"atol": 0.005, "rtol": 0.005}), encoding="utf-8")
+
+    # 1. Via config file path
+    rc = main(["compare", str(tc_dir), str(engine_out), "--comparison-config", str(cfg_file), "--json"])
+    assert rc == 0
+
+    # 2. Via inline JSON string
+    rc_inline = main(["compare", str(tc_dir), str(engine_out), "--comparison-config", '{"atol": 0.005}', "--json"])
+    assert rc_inline == 0
+
+
+def test_format_version_0_3_without_comparison_warning(tmp_path: Path) -> None:
+    tc_dir = tmp_path / "tc_warn"
+    _create_minimal_testcase(tc_dir, format_version="0.3", comparison=None)
+
+    result = validate_testcase(tc_dir)
+    assert not result.errors
+    warn = next((i for i in result.issues if i.code == "format_version_0_3_without_comparison"), None)
+    assert warn is not None
+    assert warn.severity == "warning"
+
+
+def test_deduplicate_comparator_unknown_error(tmp_path: Path) -> None:
+    tc_dir = tmp_path / "tc_dedup"
+    _create_minimal_testcase(
+        tc_dir,
+        format_version="0.3",
+        comparison={
+            "format": "inferref-comparison",
+            "format_version": "0.1",
+            "comparator": "nonexistent/comparator/v999",
+            "outputs": {
+                "y": {"config": {"foo": "bar"}}
+            }
+        }
+    )
+
+    result = validate_testcase(tc_dir)
+    assert result.errors
+    comp_errors = [e for e in result.errors if e.code == "comparator_unknown"]
+    # Should only report top-level comparator unknown once, not for output role 'y'
+    assert len(comp_errors) == 1
+    assert comp_errors[0].where == "comparison.comparator"
+
 

@@ -102,6 +102,7 @@ class ComparisonReport:
     stopped_early: bool = False
     tolerance: dict[str, Any] = field(default_factory=dict)
     effective_comparison: dict[str, Any] | None = None
+    comparator: dict[str, Any] | None = None
 
     @property
     def passed_count(self) -> int:
@@ -125,6 +126,8 @@ class ComparisonReport:
     @property
     def status(self) -> str:
         if not self.comparisons:
+            if self.comparator is not None:
+                return str(self.comparator.get("status", STATUS_ERROR))
             return STATUS_ERROR
         return STATUS_PASS if self.first_failure is None else STATUS_FAIL
 
@@ -147,6 +150,8 @@ class ComparisonReport:
         }
         if self.effective_comparison is not None:
             out["effective_comparison"] = self.effective_comparison
+        if self.comparator is not None:
+            out["comparator"] = self.comparator
         return out
 
 
@@ -317,11 +322,124 @@ def compare_testcase(
                     )
                 engine_map[entry["name"]] = entry["payload"]
 
-    for output in manifest.get("outputs", ()):
+    from inferref.comparators.numeric import NUMERIC_COMPARATOR_ID
+    from inferref.comparators.protocol import Artifact
+    from inferref.comparators.runner import run_comparator
+
+    manifest_outputs = manifest.get("outputs", [])
+    ref_artifacts: dict[str, Artifact] = {}
+    act_artifacts: dict[str, Artifact] = {}
+
+    for output in manifest_outputs:
         name = output.get("name", "output")
         value_id = output.get("value_id")
         reference_payload = output.get("payload")
-        if not reference_payload:
+        if reference_payload:
+            ref_path = resolve_contained_path(
+                testcase_dir,
+                reference_payload,
+                kind=f"testcase output {name!r} payload path",
+            )
+            ref_artifacts[name] = Artifact(name=name, path=ref_path)
+
+        actual_path: Path | None = None
+        if name in engine_map:
+            actual_path = resolve_contained_path(
+                engine_dir,
+                engine_map[name],
+                kind=f"engine output {name!r} payload path",
+            )
+        else:
+            for candidate in _engine_candidates(engine_dir, name, value_id):
+                if candidate.is_file():
+                    actual_path = candidate
+                    break
+        if actual_path and actual_path.is_file():
+            act_artifacts[name] = Artifact(name=name, path=actual_path)
+
+    top_comparator = getattr(effective_comparison, "comparator", NUMERIC_COMPARATOR_ID) or NUMERIC_COMPARATOR_ID
+    per_output_specs = getattr(effective_comparison, "per_output", {}) or {}
+
+    def _clean_custom_config(raw_cfg: dict[str, Any] | None) -> dict[str, Any]:
+        if not raw_cfg:
+            return {}
+        numeric_defaults = {"per_dtype", "strict_layout", "ignore_stride", "atol", "rtol"}
+        return {k: v for k, v in raw_cfg.items() if k not in numeric_defaults}
+
+    # Case A: Global multi-output comparator (top-level comparator is non-numeric)
+    if top_comparator != NUMERIC_COMPARATOR_ID:
+        required_roles = [e.get("name", "output") for e in manifest_outputs if e.get("payload")]
+        raw_top_cfg = effective_comparison.config if hasattr(effective_comparison, "config") else comparison_config
+        comp_result = run_comparator(
+            top_comparator,
+            ref_artifacts,
+            act_artifacts,
+            config=_clean_custom_config(raw_top_cfg),
+            required_roles=required_roles,
+        )
+        report.comparator = comp_result.to_dict()
+        diag_by_role = {}
+        for diag in comp_result.diagnostics:
+            role = diag.get("output")
+            if role:
+                diag_by_role[role] = diag
+
+        for output in manifest_outputs:
+            name = output.get("name", "output")
+            value_id = output.get("value_id")
+            if name not in ref_artifacts:
+                capture = output.get("capture") or {}
+                comparison = TensorComparison(
+                    name=name,
+                    status=STATUS_MISSING,
+                    message=f"reference payload is unavailable (capture mode {capture.get('mode', 'unknown')})",
+                    value_id=value_id,
+                )
+            elif name not in act_artifacts:
+                comparison = TensorComparison(
+                    name=name,
+                    status=STATUS_FAIL,
+                    message=f"engine produced no output for role {name!r}",
+                    value_id=value_id,
+                )
+            elif name in diag_by_role:
+                comparison = TensorComparison(
+                    name=name,
+                    status=STATUS_FAIL if comp_result.status != "error" else STATUS_ERROR,
+                    message=diag_by_role[name].get("message", "comparator mismatch"),
+                    value_id=value_id,
+                )
+            else:
+                comparison = TensorComparison(
+                    name=name,
+                    status=STATUS_PASS if comp_result.passed else STATUS_FAIL,
+                    value_id=value_id,
+                )
+            _annotate_from_testcase(comparison, output)
+            report.comparisons.append(comparison)
+
+        if not manifest_outputs and not comp_result.passed:
+            first_msg = comp_result.first_failure.get("message", "comparator failure") if comp_result.first_failure else "comparator failure"
+            report.comparisons.append(TensorComparison(name="comparator", status=STATUS_ERROR if comp_result.status == "error" else STATUS_FAIL, message=first_msg))
+
+        return report
+
+    # Case B: Per-role execution
+    for output in manifest_outputs:
+        name = output.get("name", "output")
+        value_id = output.get("value_id")
+        role_spec = per_output_specs.get(name)
+        if isinstance(role_spec, dict):
+            role_comp_id = role_spec.get("comparator") or NUMERIC_COMPARATOR_ID
+            role_cfg = role_spec.get("config") or {}
+        elif role_spec is not None:
+            role_comp_id = getattr(role_spec, "comparator", None) or NUMERIC_COMPARATOR_ID
+            role_cfg = getattr(role_spec, "config", None) or {}
+        else:
+            role_comp_id = NUMERIC_COMPARATOR_ID
+            role_cfg = {}
+
+        if name not in ref_artifacts:
             capture = output.get("capture") or {}
             comparison = TensorComparison(
                 name=name,
@@ -338,34 +456,70 @@ def compare_testcase(
                 report.stopped_early = True
                 break
             continue
-        reference_path = resolve_contained_path(
-            testcase_dir,
-            reference_payload,
-            kind=f"testcase output {name!r} payload path",
-        )
 
-        actual_path: Path | None = None
-        if name in engine_map:
-            actual_path = resolve_contained_path(
-                engine_dir,
-                engine_map[name],
-                kind=f"engine output {name!r} payload path",
+        if name not in act_artifacts:
+            comparison = TensorComparison(
+                name=name,
+                status=STATUS_MISSING,
+                message=f"engine output {name!r} not found",
+                value_id=value_id,
+            )
+            _annotate_from_testcase(comparison, output)
+            report.comparisons.append(comparison)
+            if first_failure:
+                report.stopped_early = True
+                break
+            continue
+
+        reference_path = ref_artifacts[name].path
+        actual_path = act_artifacts[name].path
+
+        if role_comp_id != NUMERIC_COMPARATOR_ID:
+            role_config = dict(effective_comparison.config or {}) if hasattr(effective_comparison, "config") else {}
+            if role_cfg:
+                role_config.update(role_cfg)
+            role_config = _clean_custom_config(role_config)
+            role_res = run_comparator(
+                role_comp_id,
+                ref_artifacts,
+                act_artifacts,
+                config=role_config,
+                required_roles=[name],
+            )
+            role_status = STATUS_PASS if role_res.passed else (STATUS_ERROR if role_res.status == "error" else STATUS_FAIL)
+            role_msg = role_res.first_failure.get("message", "") if role_res.first_failure else ""
+            comparison = TensorComparison(
+                name=name,
+                status=role_status,
+                message=role_msg,
+                value_id=value_id,
             )
         else:
-            for candidate in _engine_candidates(engine_dir, name, value_id):
-                if candidate.is_file():
-                    actual_path = candidate
-                    break
+            role_strict_layout = resolved_strict_layout
+            role_ignore_stride = resolved_ignore_stride
+            if role_cfg:
+                role_policy = TolerancePolicy(
+                    per_dtype=dict(role_cfg.get("per_dtype") or resolved_policy.per_dtype),
+                    override_atol=role_cfg.get("atol") if "atol" in role_cfg else resolved_policy.override_atol,
+                    override_rtol=role_cfg.get("rtol") if "rtol" in role_cfg else resolved_policy.override_rtol,
+                )
+                if "strict_layout" in role_cfg:
+                    role_strict_layout = bool(role_cfg["strict_layout"])
+                if "ignore_stride" in role_cfg:
+                    role_ignore_stride = bool(role_cfg["ignore_stride"])
+            else:
+                role_policy = resolved_policy
 
-        comparison = _compare_one_file(
-            name,
-            reference_path,
-            actual_path,
-            policy=resolved_policy,
-            ignore_stride=resolved_ignore_stride,
-            strict_layout=resolved_strict_layout,
-            value_id=value_id,
-        )
+            comparison = _compare_one_file(
+                name,
+                reference_path,
+                actual_path,
+                policy=role_policy,
+                ignore_stride=role_ignore_stride,
+                strict_layout=role_strict_layout,
+                value_id=value_id,
+            )
+
         _annotate_from_testcase(comparison, output)
         report.comparisons.append(comparison)
         if first_failure and not comparison.passed:

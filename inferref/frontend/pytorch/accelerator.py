@@ -45,6 +45,7 @@ class AcceleratorInfo:
     devices: tuple[DeviceDetails, ...] = ()
     runtime_version: str | None = None
     onednn_version: str | None = None
+    sycl_version: str | None = None
     reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +61,8 @@ class AcceleratorInfo:
             out["runtime_version"] = self.runtime_version
         if self.onednn_version is not None:
             out["onednn_version"] = self.onednn_version
+        if self.sycl_version is not None:
+            out["sycl_version"] = self.sycl_version
         if self.reason:
             out["reason"] = self.reason
         return out
@@ -82,8 +85,24 @@ def _get_onednn_version() -> str | None:
     return None
 
 
+def _get_sycl_or_oneapi_version() -> str | None:
+    try:
+        sycl_ver = getattr(torch.version, "sycl", None) or getattr(torch.version, "xpu", None)
+        if sycl_ver:
+            return str(sycl_ver)
+        import os
+
+        oneapi_root = os.environ.get("ONEAPI_ROOT") or os.environ.get("ONEAPI_DIR")
+        if oneapi_root:
+            return f"installed at {oneapi_root}"
+    except Exception:
+        pass
+    return None
+
+
 def accelerator_info(device_type: str) -> AcceleratorInfo:
     onednn = _get_onednn_version()
+    sycl_ver = _get_sycl_or_oneapi_version() if device_type == "xpu" else None
     if device_type == "cpu":
         cpu_device = DeviceDetails(id=0, name="CPU")
         return AcceleratorInfo(
@@ -93,6 +112,7 @@ def accelerator_info(device_type: str) -> AcceleratorInfo:
             ("CPU",),
             devices=(cpu_device,),
             onednn_version=onednn,
+            sycl_version=sycl_ver,
         )
     module = accelerator_module(device_type)
     if module is None or not callable(getattr(module, "is_available", None)):
@@ -102,6 +122,7 @@ def accelerator_info(device_type: str) -> AcceleratorInfo:
             0,
             reason="backend unavailable",
             onednn_version=onednn,
+            sycl_version=sycl_ver,
         )
     try:
         available = bool(module.is_available())

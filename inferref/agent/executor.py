@@ -215,51 +215,17 @@ def execute_adapter(
         result["status"] = "execution_error"
     else:
         try:
-            if effective_comp.comparator != NUMERIC_COMPARATOR_ID:
-                manifest_outputs = validation.manifest.get("outputs", [])
-                ref_artifacts: dict[str, Artifact] = {}
-                for out_entry in manifest_outputs:
-                    role = out_entry.get("name", "output")
-                    payload = out_entry.get("payload")
-                    if payload:
-                        ref_artifacts[role] = Artifact(name=role, path=testcase_path / payload)
-
-                act_artifacts: dict[str, Artifact] = {}
-                for role in ref_artifacts:
-                    cand = output_path / f"{role}.irtensor"
-                    if cand.is_file():
-                        act_artifacts[role] = Artifact(name=role, path=cand)
-                    else:
-                        cand_outputs = output_path / "outputs" / f"{role}.irtensor"
-                        if cand_outputs.is_file():
-                            act_artifacts[role] = Artifact(name=role, path=cand_outputs)
-                        else:
-                            cand_any = list(output_path.glob(f"{role}.*"))
-                            if cand_any:
-                                act_artifacts[role] = Artifact(name=role, path=cand_any[0])
-
-                required_roles = [
-                    e.get("name", "output") for e in manifest_outputs if e.get("payload")
-                ]
-                comp_result = run_comparator(
-                    effective_comp.comparator,
-                    ref_artifacts,
-                    act_artifacts,
-                    config=effective_comp.config,
-                    required_roles=required_roles,
-                )
-                result["comparison"] = comp_result.to_dict()
-                result["comparator"] = comp_result.to_dict()
-                result["status"] = "pass" if comp_result.passed else ("error" if comp_result.status == "error" else "mismatch")
-            else:
-                report = compare_testcase(
-                    testcase_path,
-                    output_path,
-                    effective_comparison=effective_comp,
-                    first_failure=first_failure,
-                )
-                result["comparison"] = report.to_dict()
-                result["status"] = "pass" if report.status == "pass" else "mismatch"
+            report = compare_testcase(
+                testcase_path,
+                output_path,
+                effective_comparison=effective_comp,
+                first_failure=first_failure,
+            )
+            rep_dict = report.to_dict()
+            result["comparison"] = rep_dict
+            if "comparator" in rep_dict and rep_dict["comparator"]:
+                result["comparator"] = rep_dict["comparator"]
+            result["status"] = "pass" if report.status == "pass" else ("error" if report.status == "error" else "mismatch")
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             result.update(
                 status="comparison_error",
