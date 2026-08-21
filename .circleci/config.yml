@@ -469,14 +469,25 @@ jobs:
             & "C:\Program Files\CMake\bin\ctest.exe" --version
       - run:
           name: Configure, build, and self-test
-          shell: bash.exe
+          shell: powershell.exe
           command: |
-            set -euo pipefail
-            CMAKE="/c/Program Files/CMake/bin/cmake.exe"
-            CTEST="/c/Program Files/CMake/bin/ctest.exe"
-            "$CMAKE" -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
-            "$CMAKE" --build cpp/build --config Release
-            "$CTEST" --test-dir cpp/build --output-on-failure -C Release
+            $ErrorActionPreference = "Stop"
+            $CMake = "C:\Program Files\CMake\bin\cmake.exe"
+            $CTest = "C:\Program Files\CMake\bin\ctest.exe"
+            $Vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+            if (-not (Test-Path -LiteralPath $Vswhere)) {
+                $Vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+            }
+            $VsPath = & $Vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if (-not $VsPath) {
+                throw "Visual Studio C++ tools were not found by vswhere"
+            }
+            $VsDevCmd = Join-Path $VsPath "Common7\Tools\VsDevCmd.bat"
+            $Build = "`"$CMake`" -S cpp -B cpp/build -G `"NMake Makefiles`" -DCMAKE_BUILD_TYPE=Release && `"$CMake`" --build cpp/build && `"$CTest`" --test-dir cpp/build --output-on-failure"
+            cmd /c "call `"$VsDevCmd`" -arch=x64 -host_arch=x64 >nul && $Build"
+            if ($LASTEXITCODE -ne 0) {
+                throw "C++ configure/build/self-test failed"
+            }
       - run:
           name: Cross-language wire agreement without PyTorch
           shell: bash.exe
