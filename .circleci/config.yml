@@ -22,17 +22,28 @@ commands:
             $package = "python" + $version.Replace(".", "")
             $wingetId = "Python.Python." + $version
             $env:PYLAUNCHER_ALLOW_INSTALL = "1"
-            cmd /c "py -$version --version >nul 2>&1"
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "Python $version missing; trying winget..."
-                winget install -e --id $wingetId --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+            function Test-Python {
+                cmd /c "py -$version --version >nul 2>&1"
+                return $LASTEXITCODE -eq 0
+            }
+            if (-not (Test-Python)) {
+                Write-Host "Python $version missing; allowing py launcher to install..."
+                cmd /c "py -$version --version >nul 2>&1"
+            }
+            if (-not (Test-Python)) {
+                $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+                if ($null -ne $winget) {
+                    Write-Host "py launcher install failed; trying winget..."
+                    & winget.exe install -e --id $wingetId --silent --accept-package-agreements --accept-source-agreements
+                } else {
+                    Write-Host "winget is unavailable"
+                }
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Host "winget install failed; falling back to Chocolatey..."
+                    Write-Host "install attempt failed; falling back to Chocolatey..."
                     choco install $package --yes --no-progress
                 }
             }
-            cmd /c "py -$version --version >nul 2>&1"
-            if ($LASTEXITCODE -ne 0) {
+            if (-not (Test-Python)) {
                 throw "Python $version is still unavailable after install attempts"
             }
             py -$version -m venv .venv
