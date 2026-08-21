@@ -438,7 +438,10 @@ def cmd_adapter_scaffold(args: argparse.Namespace) -> int:
 
     try:
         result = scaffold_adapter(
-            args.testcase, args.output, language=args.language
+            args.testcase,
+            args.output,
+            language=args.language,
+            runtime_bridge=args.runtime_bridge,
         )
     except ScaffoldError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1127,6 +1130,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         default="adapter/",
         help="output directory (default: adapter/)",
+    )
+    q.add_argument(
+        "--runtime-bridge",
+        action="store_true",
+        help=(
+            "generate a runtime bridge that delegates to a DebugInvoke "
+            "callback instead of a RunYourEngine function"
+        ),
     )
     _add_json(q)
     q.set_defaults(func=cmd_adapter_scaffold)

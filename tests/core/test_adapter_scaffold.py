@@ -121,6 +121,54 @@ def test_scaffold_cli_json(tmp_path: Path, capsys) -> None:
     assert (out / "adapter.json").is_file()
 
 
+def test_scaffold_bridge_mode_generates_bridge_project(tmp_path: Path) -> None:
+    case = _case(tmp_path / "case")
+    out = tmp_path / "bridge"
+    result = scaffold_adapter(case, out, runtime_bridge=True)
+    assert result.files == ("CMakeLists.txt", "adapter.json", "main.cpp", "README.md")
+
+    main_cpp = (out / "main.cpp").read_text(encoding="utf-8")
+    assert "DebugInvoke" in main_cpp
+    assert "RunBridge" in main_cpp
+    assert "inferref_bridge" in main_cpp
+    assert "RunYourEngine" not in main_cpp
+
+    cmake = (out / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert "add_executable(inferref_bridge main.cpp)" in cmake
+
+    adapter = EngineAdapter.load(out / "adapter.json")
+    assert adapter.command[0] == "{adapter_dir}/inferref_bridge"
+    assert adapter.capabilities is not None
+    assert adapter.capabilities.dtypes == ("float16", "float32")
+
+    readme = (out / "README.md").read_text(encoding="utf-8")
+    assert "runtime bridge" in readme
+    assert "DebugInvoke" in readme
+
+
+def test_scaffold_bridge_mode_cli(tmp_path: Path, capsys) -> None:
+    case = _case(tmp_path / "case")
+    out = tmp_path / "bridge"
+    assert (
+        main(
+            [
+                "adapter",
+                "scaffold",
+                str(case),
+                "-o",
+                str(out),
+                "--runtime-bridge",
+                "--json",
+            ]
+        )
+        == EXIT_OK
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "pass"
+    assert (out / "adapter.json").is_file()
+    assert "DebugInvoke" in (out / "main.cpp").read_text(encoding="utf-8")
+
+
 def test_scaffold_refuses_existing_output(tmp_path: Path) -> None:
     case = _case(tmp_path / "case")
     out = tmp_path / "adapter"

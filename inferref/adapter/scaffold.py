@@ -118,8 +118,115 @@ add_executable(inferref_adapter main.cpp)
 target_include_directories(inferref_adapter PRIVATE ${INFERREF_CPP_INCLUDE})
 """
 
+_MAIN_CPP_BRIDGE = """\
+#include <inferref/bridge.hpp>
 
-def _generate_readme(testcase_name: str) -> str:
+#include <iostream>
+#include <map>
+#include <stdexcept>
+#include <string>
+
+int main(int argc, char **argv)
+{
+    std::string testcase_dir;
+    std::string output_dir;
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string arg = argv[i];
+        if (arg == "--testcase" && i + 1 < argc)
+            testcase_dir = argv[++i];
+        else if (arg == "--output" && i + 1 < argc)
+            output_dir = argv[++i];
+    }
+    if (testcase_dir.empty() || output_dir.empty())
+    {
+        std::cerr << "usage: inferref_bridge --testcase DIR --output DIR\\n";
+        return inferref::kBridgeUsage;
+    }
+
+    // The only user edit: implement engine dispatch in this callback.
+    // The bridge resolves the region key and handles output writing.
+    inferref::DebugInvoke invoke =
+        [](const std::string &region_name,
+           const std::map<std::string, inferref::IRTensor> &inputs)
+            -> std::map<std::string, inferref::IRTensor>
+    {
+        // TODO: implement engine dispatch.
+        (void)region_name;
+        (void)inputs;
+        throw std::runtime_error("DebugInvoke is not implemented");
+    };
+
+    return inferref::RunBridge(testcase_dir, output_dir, invoke);
+}
+"""
+
+_CMAKE_BRIDGE = """\
+cmake_minimum_required(VERSION 3.16)
+project(inferref_bridge LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+if(MSVC)
+    add_compile_options(/W4 /utf-8)
+else()
+    add_compile_options(-Wall -Wextra)
+endif()
+
+# Point INFERREF_CPP_INCLUDE at the InferRef checkout (cpp/include), or copy
+# cpp/include/inferref into this tree and set it to the parent directory.
+set(INFERREF_CPP_INCLUDE "" CACHE PATH "Path to InferRef cpp/include")
+
+add_executable(inferref_bridge main.cpp)
+target_include_directories(inferref_bridge PRIVATE ${INFERREF_CPP_INCLUDE})
+"""
+
+
+def _generate_readme(testcase_name: str, *, bridge_mode: bool) -> str:
+    if bridge_mode:
+        return f"""\
+# Scaffolded InferRef runtime bridge
+
+Generated from the standalone testcase `{testcase_name}` in bridge mode. The
+output handling is already wired through `inferref::RunBridge`: it loads the
+testcase, resolves the region dispatch key, calls your `DebugInvoke` callback
+with named inputs, writes every declared output by role name, and publishes
+`manifest.json`.
+
+## What to edit
+
+1. `main.cpp` - implement engine dispatch inside the `DebugInvoke` callback.
+   It receives the region key (`origin.region`, `origin.contract`, or
+   `contracts[0]`) and a role-name -> tensor map, and must return a
+   role-name -> tensor map with every declared output.  The bridge handles
+   loading, output writing, and manifest publication.
+2. `adapter.json` - the generated file is a valid Engine Adapter v0.2
+   declaration. Edit `name`, `target_device`, `capabilities.device_types`, and
+   the command executable as needed; the rest (dtypes, max_rank, features,
+   contracts) was derived from the testcase.
+
+## Build
+
+Point `INFERREF_CPP_INCLUDE` at the InferRef checkout and build:
+
+```bash
+cmake -S . -B build -DINFERREF_CPP_INCLUDE=/path/to/inferref/cpp/include
+cmake --build build
+```
+
+Or copy `cpp/include/inferref` from the InferRef checkout into this tree and
+set `INFERREF_CPP_INCLUDE` to the directory that contains the `inferref`
+subdirectory. The generated code needs only those header-only files.
+
+## Run
+
+```bash
+./build/inferref_bridge --testcase /path/to/testcase --output /path/to/output
+```
+
+Then compare with `inferref agent compare /path/to/testcase /path/to/output`.
+"""
     return f"""\
 # Scaffolded InferRef adapter
 
@@ -162,7 +269,9 @@ Then compare with `inferref agent compare /path/to/testcase /path/to/output`.
 """
 
 
-def _adapter_payload(manifest: dict[str, Any]) -> dict[str, Any]:
+def _adapter_payload(
+    manifest: dict[str, Any], *, bridge_mode: bool
+) -> dict[str, Any]:
     requirements = derive_requirements(manifest)
     dtypes = requirements.get("dtypes", [])
     if not dtypes:
@@ -192,7 +301,9 @@ def _adapter_payload(manifest: dict[str, Any]) -> dict[str, Any]:
         "target_device": "cpu",
         "capabilities": capabilities,
         "command": [
-            "{adapter_dir}/inferref_adapter",
+            "{adapter_dir}/inferref_bridge"
+            if bridge_mode
+            else "{adapter_dir}/inferref_adapter",
             "--testcase",
             "{testcase}",
             "--output",
@@ -208,8 +319,14 @@ def scaffold_adapter(
     output: str | Path,
     *,
     language: str = "cpp",
+    runtime_bridge: bool = False,
 ) -> ScaffoldResult:
-    """Generate a compilable adapter project from one standalone testcase."""
+    """Generate a compilable adapter project from one standalone testcase.
+
+    With ``runtime_bridge=True`` the generated project is a bridge that
+    delegates to a ``DebugInvoke`` callback (section 7.4) instead of a
+    ``RunYourEngine`` function.
+    """
 
     if language not in SUPPORTED_LANGUAGES:
         raise ScaffoldError(
@@ -222,7 +339,7 @@ def scaffold_adapter(
     validation = require_valid_testcase(testcase_path)
     manifest = validation.manifest
 
-    adapter = _adapter_payload(manifest)
+    adapter = _adapter_payload(manifest, bridge_mode=runtime_bridge)
     output_path = Path(output)
     if output_path.exists():
         raise ScaffoldError(
@@ -230,10 +347,13 @@ def scaffold_adapter(
         )
     output_path.mkdir(parents=True, exist_ok=False)
     files = {
-        "CMakeLists.txt": _CMAKE,
+        "CMakeLists.txt": _CMAKE_BRIDGE if runtime_bridge else _CMAKE,
         "adapter.json": json.dumps(adapter, indent=2, ensure_ascii=False) + "\n",
-        "main.cpp": _MAIN_CPP,
-        "README.md": _generate_readme(str(manifest.get("name") or testcase_path.name)),
+        "main.cpp": _MAIN_CPP_BRIDGE if runtime_bridge else _MAIN_CPP,
+        "README.md": _generate_readme(
+            str(manifest.get("name") or testcase_path.name),
+            bridge_mode=runtime_bridge,
+        ),
     }
     for name, content in files.items():
         (output_path / name).write_text(content, encoding="utf-8")
