@@ -19,34 +19,34 @@ commands:
           command: |
             $ErrorActionPreference = "Stop"
             $version = "<< parameters.version >>"
-            $package = "python" + $version.Replace(".", "")
-            $wingetId = "Python.Python." + $version
             $env:PYLAUNCHER_ALLOW_INSTALL = "1"
-            function Test-Python {
-                cmd /c "py -$version --version >nul 2>&1"
-                return $LASTEXITCODE -eq 0
+            cmd /c "py -$version --version >nul 2>&1"
+            $pyReady = $LASTEXITCODE -eq 0
+            if ($pyReady) {
+                py -$version -m venv .venv
             }
-            if (-not (Test-Python)) {
-                Write-Host "Python $version missing; allowing py launcher to install..."
-                cmd /c "py -$version --version >nul 2>&1"
-            }
-            if (-not (Test-Python)) {
-                $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-                if ($null -ne $winget) {
-                    Write-Host "py launcher install failed; trying winget..."
-                    & winget.exe install -e --id $wingetId --silent --accept-package-agreements --accept-source-agreements
-                } else {
-                    Write-Host "winget is unavailable"
+            if (-not (Test-Path -LiteralPath ".\.venv\Scripts\python.exe")) {
+                Write-Host "Python $version missing or venv creation failed; using uv..."
+                $uvRoot = Join-Path $env:TEMP "inferref-uv"
+                $uvZip = Join-Path $env:TEMP "inferref-uv.zip"
+                $uvExe = Join-Path $uvRoot "uv.exe"
+                if (-not (Test-Path -LiteralPath $uvExe)) {
+                    New-Item -ItemType Directory -Force -Path $uvRoot | Out-Null
+                    Invoke-WebRequest -Uri "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip" -OutFile $uvZip
+                    Expand-Archive -LiteralPath $uvZip -DestinationPath $uvRoot -Force
                 }
+                & $uvExe python install $version
                 if ($LASTEXITCODE -ne 0) {
-                    Write-Host "install attempt failed; falling back to Chocolatey..."
-                    choco install $package --yes --no-progress
+                    throw "uv python install failed for Python $version"
+                }
+                & $uvExe venv --seed --python $version .venv
+                if ($LASTEXITCODE -ne 0) {
+                    throw "uv venv creation failed for Python $version"
                 }
             }
-            if (-not (Test-Python)) {
-                throw "Python $version is still unavailable after install attempts"
+            if (-not (Test-Path -LiteralPath ".\.venv\Scripts\python.exe")) {
+                throw ".venv\Scripts\python.exe was not created"
             }
-            py -$version -m venv .venv
             .\.venv\Scripts\python.exe --version
 
   install-frontend-linux:
