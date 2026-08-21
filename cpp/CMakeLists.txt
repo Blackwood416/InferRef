@@ -28,6 +28,12 @@ target_link_libraries(inferref_selftest PRIVATE inferref_headers)
 add_executable(inferref_testcase_selftest examples/testcase_selftest/main.cpp)
 target_link_libraries(inferref_testcase_selftest PRIVATE inferref_headers)
 
+add_executable(inferref_bridge examples/runtime_bridge/main.cpp)
+target_link_libraries(inferref_bridge PRIVATE inferref_headers)
+
+add_executable(inferref_bridge_selftest examples/bridge_selftest/main.cpp)
+target_link_libraries(inferref_bridge_selftest PRIVATE inferref_headers)
+
 option(INFERREF_BUILD_SYCL "Build the native Intel XPU testcase engine" OFF)
 if(INFERREF_BUILD_SYCL)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "IntelLLVM")
@@ -49,3 +55,4 @@ endif()
 enable_testing()
 add_test(NAME irtensor_selftest COMMAND inferref_selftest)
 add_test(NAME testcase_selftest COMMAND inferref_testcase_selftest)
+add_test(NAME bridge_selftest COMMAND inferref_bridge_selftest)

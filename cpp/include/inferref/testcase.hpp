@@ -24,6 +24,7 @@
 #include <inferref/json.hpp>
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <stdexcept>
@@ -89,9 +90,19 @@ public:
         return result;
     }
 
-    // Write one output file as "<name>.irtensor" in the testcase/output
-    // directory.  Does not touch manifest.json; Finish() publishes the output
-    // manifest once.
+    // Redirect output tensors and manifest.json to an explicit output
+    // directory (Engine Adapter v0.2's {output} directory), creating it if
+    // needed.  Defaults to the testcase directory; adapters and the runtime
+    // bridge always set it.
+    void SetOutputDir(const std::string &output_dir)
+    {
+        std::filesystem::create_directories(output_dir);
+        output_dir_ = output_dir;
+    }
+
+    // Write one output file as "<name>.irtensor" in the output directory.
+    // Does not touch manifest.json; Finish() publishes the output manifest
+    // once.
     void WriteOutput(const std::string &name, const IRTensor &tensor)
     {
         if (finished_)
@@ -102,7 +113,7 @@ public:
             throw TestcaseError("unknown output role '" + name + "'");
         }
         const std::string relative = name + ".irtensor";
-        WriteIRTensor(dir_ + "/" + relative, tensor);
+        WriteIRTensor(OutputDir() + "/" + relative, tensor);
         written_outputs_[name] = relative;
     }
 
@@ -131,12 +142,18 @@ public:
             manifest += "}";
         }
         manifest += "]}";
-        WriteFile(dir_ + "/manifest.json", manifest);
+        WriteFile(OutputDir() + "/manifest.json", manifest);
         finished_ = true;
+    }
+
+    const std::string &OutputDir() const
+    {
+        return output_dir_.empty() ? dir_ : output_dir_;
     }
 
 private:
     std::string dir_;
+    std::string output_dir_;
     std::string region_name_;
     std::vector<std::string> input_names_;
     std::vector<std::string> output_names_;

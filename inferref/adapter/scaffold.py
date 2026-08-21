@@ -86,6 +86,7 @@ int main(int argc, char **argv)
     }
 
     auto testcase = inferref::Testcase::Load(testcase_dir);
+    testcase.SetOutputDir(output_dir);
     auto inputs = testcase.Inputs();
     auto outputs = RunYourEngine(testcase.RegionName(), inputs);
 
