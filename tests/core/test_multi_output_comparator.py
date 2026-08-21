@@ -379,3 +379,59 @@ def test_e2e_per_output_comparator_and_tolerance_dispatch(tmp_path: Path) -> Non
     report_pass = compare_testcase(tc_dir, eng_dir)
     assert report_pass.status == "pass"
 
+
+def test_e2e_comparator_exception_maps_to_error_status(tmp_path: Path) -> None:
+    import json
+    from inferref.comparators.protocol import ComparatorPlugin, ComparatorResult
+    from inferref.compare.compare import STATUS_ERROR, compare_testcase
+    from inferref.testcase.requirements import derive_requirements
+
+    class CrashingComparator:
+        @property
+        def id(self) -> str:
+            return "testing/crasher/v1"
+
+        def validate_config(self, config: dict[str, Any] | None) -> None:
+            pass
+
+        def compare(self, reference: ArtifactSet, actual: ArtifactSet, config: dict[str, Any] | None = None) -> ComparatorResult:
+            raise RuntimeError("unexpected computational failure inside comparator")
+
+    register_builtin_comparator(CrashingComparator())
+
+    tc_dir = tmp_path / "tc_crash"
+    eng_dir = tmp_path / "eng_crash"
+    boxes = [[10.0, 20.0, 100.0, 200.0]]
+    ref_set = _create_detection_artifacts(tc_dir, boxes, [0.9], [1])
+    _create_detection_artifacts(eng_dir, boxes, [0.9], [1])
+
+    manifest = {
+        "format": "inferref-testcase",
+        "format_version": "0.3",
+        "inferref_version": "0.9.0",
+        "name": "crash_tc",
+        "region_name": "crash_region",
+        "inputs": [],
+        "outputs": [
+            {"name": "boxes", "value_id": None, "payload": "boxes.irtensor", **codec.read(ref_set["boxes"].path).to_metadata()},
+        ],
+        "nodes": [],
+        "values": [],
+        "comparison": {
+            "format": "inferref-comparison",
+            "format_version": "0.1",
+            "comparator": "testing/crasher/v1",
+        },
+    }
+    manifest["requirements"] = derive_requirements(manifest)
+    (tc_dir / "testcase.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    report = compare_testcase(tc_dir, eng_dir)
+    assert report.status == STATUS_ERROR
+    assert report.comparator is not None
+    assert report.comparator["status"] == STATUS_ERROR
+    assert len(report.comparisons) == 1
+    assert report.comparisons[0].status == STATUS_ERROR
+    assert "unexpected computational failure inside comparator" in report.comparisons[0].message
+
+

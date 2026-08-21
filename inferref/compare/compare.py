@@ -129,6 +129,10 @@ class ComparisonReport:
             if self.comparator is not None:
                 return str(self.comparator.get("status", STATUS_ERROR))
             return STATUS_ERROR
+        if self.comparator is not None and self.comparator.get("status") == STATUS_ERROR:
+            return STATUS_ERROR
+        if any(c.status == STATUS_ERROR for c in self.comparisons):
+            return STATUS_ERROR
         return STATUS_PASS if self.first_failure is None else STATUS_FAIL
 
     def to_dict(self) -> dict[str, Any]:
@@ -262,7 +266,16 @@ def compare_testcase(
     comparator: str | None = None,
     comparison_config: dict[str, Any] | None = None,
 ) -> ComparisonReport:
-    """Compare a testcase's reference outputs against an engine output directory."""
+    """Compare a testcase's reference outputs against an engine output directory.
+
+    Supports:
+    - Global multi-output composite comparator plugins (Case A): evaluates the full
+      artifact set jointly; plugin exceptions map to STATUS_ERROR.
+    - Per-role dispatch (Case B): numeric comparisons use per-role tolerance overrides,
+      while custom per-output comparators receive their isolated role artifact.
+    - Non-numeric global comparators evaluate jointly across roles, with per-role
+      diagnostics annotated onto the individual tensor comparisons.
+    """
     testcase_dir = Path(testcase_dir)
     engine_dir = Path(engine_dir)
 
@@ -384,6 +397,12 @@ def compare_testcase(
             if role:
                 diag_by_role[role] = diag
 
+        is_comp_error = comp_result.status == "error"
+        err_default_msg = (
+            comp_result.first_failure.get("message", "comparator error")
+            if comp_result.first_failure
+            else "comparator error"
+        )
         for output in manifest_outputs:
             name = output.get("name", "output")
             value_id = output.get("value_id")
@@ -405,8 +424,15 @@ def compare_testcase(
             elif name in diag_by_role:
                 comparison = TensorComparison(
                     name=name,
-                    status=STATUS_FAIL if comp_result.status != "error" else STATUS_ERROR,
+                    status=STATUS_ERROR if is_comp_error else STATUS_FAIL,
                     message=diag_by_role[name].get("message", "comparator mismatch"),
+                    value_id=value_id,
+                )
+            elif is_comp_error:
+                comparison = TensorComparison(
+                    name=name,
+                    status=STATUS_ERROR,
+                    message=err_default_msg,
                     value_id=value_id,
                 )
             else:
