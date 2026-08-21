@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from inferref.comparators.protocol import ArtifactSet, ComparatorResult, NUMERIC_COMPARATOR_ID
+from inferref.comparators.protocol import (
+    NUMERIC_COMPARATOR_ID,
+    ArtifactSet,
+    ComparatorResult,
+)
 from inferref.compare.tolerance import DEFAULT_TOLERANCES, TolerancePolicy
 from inferref.tensor import codec
 

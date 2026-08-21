@@ -10,7 +10,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from inferref.ir._common import Record, drop_none
-from inferref.ir.version import FORMAT, FORMAT_VERSION, INFERREF_VERSION, check_format_version
+from inferref.ir.version import (
+    FORMAT,
+    FORMAT_VERSION,
+    INFERREF_VERSION,
+    check_format_version,
+)
 
 
 @dataclass(frozen=True)
@@ -24,7 +29,7 @@ class NamedVersion:
         return {"name": self.name, "version": self.version}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None, default_name: str = "") -> "NamedVersion":
+    def from_dict(cls, data: dict[str, Any] | None, default_name: str = "") -> NamedVersion:
         data = data or {}
         return cls(name=data.get("name", default_name), version=data.get("version", "unknown"))
 
@@ -40,7 +45,7 @@ class ModelInfo:
         return {"name": self.name, "revision": self.revision}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "ModelInfo":
+    def from_dict(cls, data: dict[str, Any] | None) -> ModelInfo:
         data = data or {}
         return cls(name=data.get("name", "unknown"), revision=data.get("revision"))
 
@@ -56,7 +61,7 @@ class Execution:
         return {"mode": self.mode, "device": self.device}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "Execution":
+    def from_dict(cls, data: dict[str, Any] | None) -> Execution:
         data = data or {}
         return cls(mode=data.get("mode", "inference"), device=data.get("device", "cpu"))
 
@@ -85,7 +90,7 @@ class Capture:
         )
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "Capture":
+    def from_dict(cls, data: dict[str, Any] | None) -> Capture:
         data = data or {}
         return cls(
             tensor_policy=data.get("tensor_policy", "metadata"),
@@ -111,7 +116,7 @@ class SourcePolicy:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "SourcePolicy":
+    def from_dict(cls, data: dict[str, Any] | None) -> SourcePolicy:
         data = data or {}
         return cls(
             path_mode=data.get("path_mode", "relative"),
@@ -143,7 +148,7 @@ class Environment:
         )
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "Environment":
+    def from_dict(cls, data: dict[str, Any] | None) -> Environment:
         data = data or {}
         return cls(
             python=data.get("python", ""),
@@ -175,7 +180,7 @@ class Determinism:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "Determinism":
+    def from_dict(cls, data: dict[str, Any] | None) -> Determinism:
         data = data or {}
         return cls(
             seed=data.get("seed"),

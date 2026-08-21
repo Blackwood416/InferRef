@@ -13,7 +13,7 @@ partitioning (SPEC §20).
 
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 from inferref.ir.graph import Graph
 from inferref.ir.values import walk_tensor_refs

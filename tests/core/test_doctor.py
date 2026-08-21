@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import builtins
+import json
 
 from inferref.cli.main import EXIT_OK, main
 from inferref.doctor import DOCTOR_FORMAT, DOCTOR_FORMAT_VERSION, run_doctor

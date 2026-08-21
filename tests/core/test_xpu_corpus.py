@@ -4,7 +4,6 @@ from pathlib import Path
 
 from inferref.suite import load_suite, validate_suite
 
-
 ROOT = Path(__file__).resolve().parents[2]
 CORPUS = ROOT / "corpus" / "xpu-v0.1" / "suite.json"
 

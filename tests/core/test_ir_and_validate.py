@@ -21,7 +21,6 @@ from inferref.ir.region import RegionRecord
 from inferref.ir.source import SourceFrame, SourceRecord
 from inferref.ir.tensor_value import CaptureInfo, Device, TensorValueRecord
 from inferref.ir.validate import validate_package
-from inferref.region.boundary import derive_boundary
 from inferref.ir.values import (
     DictValue,
     ListValue,
@@ -34,6 +33,7 @@ from inferref.ir.values import (
     value_from_dict,
 )
 from inferref.ir.version import check_format_version
+from inferref.region.boundary import derive_boundary
 
 
 def _tensor(value_id: int, shape=(2, 2), **kwargs) -> TensorValueRecord:

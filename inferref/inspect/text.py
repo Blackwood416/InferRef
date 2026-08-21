@@ -6,7 +6,7 @@ location, and producer/consumer links — the MVP viewer.
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any
 
 from inferref.ir.module import path_matches
 from inferref.ir.operator import OperatorRecord

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 from inferref.ir.module import path_matches
 from inferref.ir.operator import Annotation

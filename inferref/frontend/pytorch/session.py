@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import platform
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import torch
 
@@ -144,7 +145,7 @@ class TraceSession:
 
     # -- context management ----------------------------------------------
 
-    def __enter__(self) -> "TraceSession":
+    def __enter__(self) -> TraceSession:
         if self._entered:
             raise RuntimeError("TraceSession is not reentrant")
         self._entered = True

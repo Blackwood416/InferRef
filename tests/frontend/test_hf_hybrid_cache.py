@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path
 
 import pytest
 import torch
@@ -123,13 +122,16 @@ def test_qwen35_state_cache_versions_are_truthful(
     state_mutations = []
     for op in package.graph.ops_in_execution_order():
         functions = _source_functions(package, op.id)
-        if functions & {
-            "update_conv_state",
-            "update_recurrent_state",
-            "torch_causal_conv1d_update",
-        }:
-            if op.effects.mutated_storages:
-                state_mutations.append(op)
+        if (
+            functions
+            & {
+                "update_conv_state",
+                "update_recurrent_state",
+                "torch_causal_conv1d_update",
+            }
+            and op.effects.mutated_storages
+        ):
+            state_mutations.append(op)
 
     # Transformers 5.15 can avoid an explicit decode-time conv copy while the
     # recurrent state still advances through prefill and decode. Assert the

@@ -6,8 +6,9 @@ trace inputs/outputs.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 from inferref.ir.operator import OperatorRecord
 from inferref.ir.tensor_value import TensorValueRecord
@@ -25,7 +26,7 @@ class GraphIO:
         return {"name": self.name, "value": self.value.to_dict()}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "GraphIO":
+    def from_dict(cls, data: dict[str, Any]) -> GraphIO:
         return cls(name=data.get("name", ""), value=value_from_dict(data["value"]))
 
 
@@ -102,7 +103,7 @@ class Graph:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Graph":
+    def from_dict(cls, data: dict[str, Any]) -> Graph:
         return cls(
             operators=[OperatorRecord.from_dict(o) for o in data.get("operators", ())],
             values=[TensorValueRecord.from_dict(v) for v in data.get("values", ())],

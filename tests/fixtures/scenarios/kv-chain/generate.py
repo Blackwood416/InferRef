@@ -53,7 +53,7 @@ def _write_testcase(
     cache_path = codec.write_array(case / "inputs" / "cache.irtensor", cache)
     update_path = codec.write_array(case / "inputs" / "update.irtensor", update)
     out_path = codec.write_array(case / "reference" / "cache_out.irtensor", cache_out)
-    metadata = lambda path: codec.read(path).to_metadata()  # noqa: E731
+    metadata = lambda path: codec.read(path).to_metadata()
     inputs = [
         {
             "name": "cache",

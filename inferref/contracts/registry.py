@@ -252,7 +252,7 @@ def _discover(
                     )
                 for descriptor in descriptors:
                     loaded.append(_coerce_descriptor(descriptor, entry.name))
-            except Exception as exc:  # noqa: BLE001 - plugin failures are reported, never fatal
+            except Exception as exc:
                 # A plugin that fails part-way must not register the contracts
                 # it produced before the failure (section 2.4, 3.3.5).
                 loaded = []

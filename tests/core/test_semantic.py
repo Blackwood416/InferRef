@@ -37,7 +37,6 @@ from inferref.semantic import (
     split_invocations,
 )
 
-
 # -- fixtures --------------------------------------------------------------
 
 

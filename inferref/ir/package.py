@@ -168,7 +168,7 @@ class TracePackage:
         )
 
     @classmethod
-    def load(cls, root: str | Path) -> "TracePackage":
+    def load(cls, root: str | Path) -> TracePackage:
         """Load a trace package from ``root``.
 
         Only ``manifest.json`` and ``graph.json`` are required (IR §47); the

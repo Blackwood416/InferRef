@@ -11,7 +11,6 @@ Tests:
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -22,30 +21,34 @@ from inferref.agent.executor import execute_adapter
 from inferref.agent.protocol import (
     ENGINE_ADAPTER_FORMAT,
     ENGINE_ADAPTER_VERSION,
-    AdapterCapabilities,
     AgentProtocolError,
     EngineAdapter,
 )
-from inferref.agent.service import capabilities, compare_outputs, run_engine, run_scenario
+from inferref.agent.service import (
+    capabilities,
+    compare_outputs,
+    run_engine,
+)
 from inferref.comparators.numeric import NUMERIC_COMPARATOR_ID
-from inferref.comparators.protocol import Artifact, ArtifactSet, ComparatorPlugin, ComparatorResult
+from inferref.comparators.protocol import (
+    ArtifactSet,
+    ComparatorResult,
+)
 from inferref.comparators.registry import _reset_registry, register_builtin_comparator
-from inferref.compare.compare import compare_testcase
-from inferref.compare.tolerance import DEFAULT_TOLERANCES, TolerancePolicy
 from inferref.comparison import (
     COMPARISON_SPEC_FORMAT,
     COMPARISON_SPEC_VERSION,
     ComparisonSpec,
     ComparisonSpecValidationError,
-    EffectiveComparison,
     OutputComparisonSpec,
     resolve_comparison_policy,
-    validate_comparison_spec,
 )
 from inferref.scenario.run import run_scenario as run_scenario_func
-from inferref.scenario.schema import load_scenario
 from inferref.suite.run import run_suite
-from inferref.suite.schema import Suite, SuiteCase, SuiteError, load_suite, validate_suite
+from inferref.suite.schema import (
+    SuiteError,
+    load_suite,
+)
 from inferref.tensor import codec
 from inferref.testcase.requirements import derive_requirements
 from inferref.testcase.validate import validate_testcase

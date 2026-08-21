@@ -21,9 +21,6 @@ from inferref.agent.process_policy import (
 )
 from inferref.agent.protocol import AgentProtocolError, EngineAdapter
 from inferref.agent.run_record import write_run_record
-from inferref.comparators.numeric import NUMERIC_COMPARATOR_ID
-from inferref.comparators.protocol import Artifact
-from inferref.comparators.runner import run_comparator
 from inferref.compare.compare import compare_testcase
 from inferref.compare.tolerance import DEFAULT_TOLERANCES, TolerancePolicy
 from inferref.comparison.resolution import resolve_comparison_policy
@@ -223,7 +220,7 @@ def execute_adapter(
             )
             rep_dict = report.to_dict()
             result["comparison"] = rep_dict
-            if "comparator" in rep_dict and rep_dict["comparator"]:
+            if rep_dict.get("comparator"):
                 result["comparator"] = rep_dict["comparator"]
             result["status"] = "pass" if report.status == "pass" else ("error" if report.status == "error" else "mismatch")
         except (OSError, ValueError, json.JSONDecodeError) as exc:

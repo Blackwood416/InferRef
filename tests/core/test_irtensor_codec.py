@@ -11,7 +11,12 @@ import struct
 import numpy as np
 import pytest
 
-from inferref.ir.dtypes import DTYPE_CODES, dtype_code, dtype_itemsize, dtype_name_from_code
+from inferref.ir.dtypes import (
+    DTYPE_CODES,
+    dtype_code,
+    dtype_itemsize,
+    dtype_name_from_code,
+)
 from inferref.tensor import codec
 from inferref.tensor.dtype_numpy import (
     bfloat16_bytes_to_float32,

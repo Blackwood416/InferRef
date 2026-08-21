@@ -7,7 +7,7 @@ boundary contract, not PyTorch's operator partitioning (SPEC §20).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from inferref.ir._common import Record, drop_none

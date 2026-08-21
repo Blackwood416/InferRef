@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from importlib import metadata
 from typing import Any
 
-from inferref.comparators.protocol import ComparatorPlugin, NUMERIC_COMPARATOR_ID
+from inferref.comparators.protocol import NUMERIC_COMPARATOR_ID, ComparatorPlugin
 
 ENTRY_POINT_GROUP = "inferref.comparators"
 BUILTIN_PACK_NAME = "builtin"
@@ -74,7 +74,7 @@ def _ensure_builtins() -> None:
 
 def _reset_registry() -> None:
     """Reset loaded plugins cache and builtins to initial state (for testing)."""
-    global BUILTIN_COMPARATORS, _LOADED_PLUGINS
+    global BUILTIN_COMPARATORS
     from inferref.comparators.numeric import NumericComparator
     BUILTIN_COMPARATORS = {
         NUMERIC_COMPARATOR_ID: NumericComparator(),

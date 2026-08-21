@@ -10,7 +10,6 @@ from inferref.comparators.protocol import ArtifactSet, ComparatorResult
 
 class DetectionComparator(ObjectDetectionComparator):
     """Fixture alias for ObjectDetectionComparator."""
-    pass
 
 
 class BrokenComparator:

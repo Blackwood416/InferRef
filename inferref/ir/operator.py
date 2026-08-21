@@ -33,7 +33,7 @@ class StorageMutation:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StorageMutation":
+    def from_dict(cls, data: dict[str, Any]) -> StorageMutation:
         return cls(
             storage_id=int(data["storage_id"]),
             version_before=int(data["version_before"]),
@@ -57,7 +57,7 @@ class AliasEffect:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AliasEffect":
+    def from_dict(cls, data: dict[str, Any]) -> AliasEffect:
         return cls(
             output_value_id=int(data["output_value_id"]),
             input_value_id=int(data["input_value_id"]),
@@ -84,7 +84,7 @@ class Effects:
         return out
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "Effects":
+    def from_dict(cls, data: dict[str, Any] | None) -> Effects:
         if not data:
             return cls()
         return cls(
@@ -118,7 +118,7 @@ class Annotation:
         )
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Annotation":
+    def from_dict(cls, data: dict[str, Any]) -> Annotation:
         return cls(
             type=data.get("type", "semantic"),
             name=data.get("name", ""),

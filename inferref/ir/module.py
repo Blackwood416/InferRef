@@ -6,9 +6,8 @@ separately and referenced by id from ``OperatorRecord.module_stack``.
 
 from __future__ import annotations
 
-from typing import Any
-
 from dataclasses import dataclass
+from typing import Any
 
 from inferref.ir._common import Record, drop_none
 

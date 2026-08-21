@@ -32,6 +32,8 @@ __all__ = [
     "AGENT_PROTOCOL_VERSION",
     "AGENT_SUMMARY_FORMAT",
     "AGENT_SUMMARY_FORMAT_VERSION",
+    "ENGINE_ADAPTER_FORMAT",
+    "ENGINE_ADAPTER_VERSION",
     "AdapterCapabilities",
     "AgentResponse",
     "EngineAdapter",

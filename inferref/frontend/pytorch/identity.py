@@ -45,8 +45,7 @@ from inferref.ir.tensor_value import Device, TensorValueRecord
 def torch_dtype_name(dtype: torch.dtype) -> str:
     """Map a ``torch.dtype`` to its stable InferRef name (IR §2.6, §11)."""
     name = str(dtype)
-    if name.startswith("torch."):
-        name = name[len("torch.") :]
+    name = name.removeprefix("torch.")
     # Normalise PyTorch's aliases onto the stable IR names.
     return {"float": "float32", "double": "float64", "half": "float16", "long": "int64"}.get(
         name, name

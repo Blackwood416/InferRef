@@ -9,8 +9,7 @@ differences are reported separately by :mod:`inferref.compare.layout` so that
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -194,5 +193,4 @@ def _cosine(a: np.ndarray, b: np.ndarray) -> float:
 def _scalar(value: Any) -> float:
     if isinstance(value, complex) or np.iscomplexobj(value):
         return complex(value).real
-    result = float(value)
-    return result if math.isfinite(result) else result
+    return float(value)

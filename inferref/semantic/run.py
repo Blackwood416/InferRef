@@ -7,8 +7,9 @@ propose a region that is then derived and validated like any other.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from inferref.ir.operator import Annotation
 from inferref.ir.package import TracePackage

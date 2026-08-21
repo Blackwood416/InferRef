@@ -27,8 +27,8 @@ from inferref.tensor.dtype_numpy import (
 
 __all__ = [
     "FLAG_CANONICAL_CONTIGUOUS",
-    "IRTensorError",
     "MAGIC",
+    "IRTensorError",
     "TensorView",
     "bfloat16_bytes_to_float32",
     "contiguous_stride",

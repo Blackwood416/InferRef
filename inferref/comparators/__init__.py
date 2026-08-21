@@ -33,16 +33,16 @@ from inferref.comparators.registry import (
 from inferref.comparators.runner import run_comparator
 
 __all__ = [
-    "Artifact",
-    "ArtifactSet",
     "BUILTIN_COMPARATORS",
     "BUILTIN_PACK_NAME",
+    "ENTRY_POINT_GROUP",
+    "NUMERIC_COMPARATOR_ID",
+    "Artifact",
+    "ArtifactSet",
     "ComparatorEntry",
     "ComparatorPlugin",
     "ComparatorPluginStatus",
     "ComparatorResult",
-    "ENTRY_POINT_GROUP",
-    "NUMERIC_COMPARATOR_ID",
     "NumericComparator",
     "builtin_comparators",
     "comparator_list",

@@ -7,7 +7,7 @@ small and avoid embedding model source into artifacts (SPEC §58).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from inferref.ir._common import Record, drop_none
@@ -36,7 +36,7 @@ class SourceFrame:
         )
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SourceFrame":
+    def from_dict(cls, data: dict[str, Any]) -> SourceFrame:
         return cls(
             file=data.get("file", "<unknown>"),
             line=int(data.get("line", 0)),

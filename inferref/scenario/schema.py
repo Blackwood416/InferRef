@@ -534,7 +534,10 @@ def _steps(
                     )
                 )
             else:
-                from inferref.comparison.schema import ComparisonSpec, ComparisonSpecValidationError
+                from inferref.comparison.schema import (
+                    ComparisonSpec,
+                    ComparisonSpecValidationError,
+                )
 
                 try:
                     step_comparison = ComparisonSpec.from_dict(raw_comparison)

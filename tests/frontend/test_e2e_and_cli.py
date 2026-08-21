@@ -17,7 +17,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import numpy as np
 import pytest
 import torch
 
@@ -127,7 +126,9 @@ def _engine(testcase: Path, output: Path, *, inject_bug: bool = False) -> int:
     ]
     if inject_bug:
         args.append("--inject-bug")
-    result = subprocess.run(args, capture_output=True, text=True, cwd=str(REPO_ROOT))
+    result = subprocess.run(
+        args, capture_output=True, text=True, cwd=str(REPO_ROOT), check=False
+    )
     if result.returncode != 0:
         print(result.stdout, result.stderr)
     return result.returncode

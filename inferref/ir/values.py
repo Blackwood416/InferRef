@@ -13,8 +13,9 @@ the trace a dataflow graph rather than a flat operator log (IR §2.2).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import Any, Iterator, Union
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Any, Union
 
 from inferref.ir.dtypes import is_known_dtype
 
@@ -42,7 +43,7 @@ class ScalarValue:
     """A scalar argument, e.g. ``dim=1`` or ``alpha=0.5`` (IR §10, §11)."""
 
     dtype: str
-    value: Union[int, float, bool, complex, str]
+    value: int | float | bool | complex | str
     #: ``"special"`` when ``value`` is one of ``nan`` / ``+inf`` / ``-inf`` (IR §11).
     encoding: str | None = None
 
@@ -55,7 +56,7 @@ class ScalarValue:
         return out
 
     @staticmethod
-    def from_number(value: Any, dtype: str) -> "ScalarValue":
+    def from_number(value: Any, dtype: str) -> ScalarValue:
         """Build a scalar, JSON-encoding non-finite floats per IR §11."""
         if isinstance(value, float) and not math.isfinite(value):
             if math.isnan(value):
@@ -109,7 +110,7 @@ class StringValue:
 class ListValue:
     """An ordered list argument (IR §10)."""
 
-    items: tuple["Value", ...] = ()
+    items: tuple[Value, ...] = ()
 
     kind = "list"
 
@@ -121,7 +122,7 @@ class ListValue:
 class TupleValue:
     """An ordered tuple argument or multi-output result (IR §10)."""
 
-    items: tuple["Value", ...] = ()
+    items: tuple[Value, ...] = ()
 
     kind = "tuple"
 
@@ -133,7 +134,7 @@ class TupleValue:
 class DictValue:
     """A mapping argument, stored as ordered key/value pairs (IR §10)."""
 
-    items: tuple[tuple["Value", "Value"], ...] = ()
+    items: tuple[tuple[Value, Value], ...] = ()
 
     kind = "dict"
 

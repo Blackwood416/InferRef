@@ -9,13 +9,17 @@ import pytest
 import torch
 
 import inferref
-from examples.mini_llama.kv_cache import CachedAttention, StaticKVCache, copy_attention_weights
+from examples.mini_llama.kv_cache import (
+    CachedAttention,
+    StaticKVCache,
+    copy_attention_weights,
+)
 from examples.mini_llama.model import Attention, MiniLlamaConfig, RotaryEmbedding
 from inferref.ir.package import TracePackage
 from inferref.ir.validate import validate_package
 from inferref.semantic import apply_detections, detect
-from inferref.testcase.extract import ExtractionError, extract_region
 from inferref.tensor import codec
+from inferref.testcase.extract import ExtractionError, extract_region
 
 
 @pytest.fixture

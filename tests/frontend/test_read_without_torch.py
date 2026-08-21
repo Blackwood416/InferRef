@@ -64,6 +64,7 @@ def _run_without_torch(body: str, trace_dir: Path) -> str:
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parents[2]),
+        check=False,
     )
     assert result.returncode == 0, (
         f"subprocess failed ({result.returncode})\n"

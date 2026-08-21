@@ -15,25 +15,21 @@ import pytest
 
 from inferref.cli.main import EXIT_FAIL, EXIT_OK, main
 from inferref.comparators import (
-    BUILTIN_COMPARATORS,
     NUMERIC_COMPARATOR_ID,
     Artifact,
     ArtifactSet,
-    ComparatorEntry,
     ComparatorPlugin,
-    ComparatorPluginStatus,
     ComparatorResult,
     NumericComparator,
     builtin_comparators,
     comparator_list,
     comparator_plugin_statuses,
     get_comparator,
-    register_builtin_comparator,
     run_comparator,
     verify_comparators,
 )
 from inferref.comparators import registry as comparator_registry
-from inferref.doctor import DOCTOR_FORMAT, run_doctor
+from inferref.doctor import run_doctor
 from inferref.tensor import codec
 
 

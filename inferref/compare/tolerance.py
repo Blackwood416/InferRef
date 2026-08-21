@@ -64,7 +64,7 @@ class TolerancePolicy:
         return out
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TolerancePolicy":
+    def from_dict(cls, data: dict[str, Any]) -> TolerancePolicy:
         per_dtype = dict(DEFAULT_TOLERANCES)
         for name, entry in data.items():
             if name.startswith("_"):
@@ -76,5 +76,5 @@ class TolerancePolicy:
         return cls(per_dtype=per_dtype)
 
     @classmethod
-    def load(cls, path: str | Path) -> "TolerancePolicy":
+    def load(cls, path: str | Path) -> TolerancePolicy:
         return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))

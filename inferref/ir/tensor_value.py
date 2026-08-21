@@ -40,7 +40,7 @@ class Device:
         return {"type": self.type, "index": self.index}
 
     @classmethod
-    def from_dict(cls, data: Any) -> "Device":
+    def from_dict(cls, data: Any) -> Device:
         if data is None:
             return cls()
         if isinstance(data, str):
@@ -69,7 +69,7 @@ class TensorHash:
         return {"algorithm": self.algorithm, "domain": self.domain, "value": self.value}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TensorHash":
+    def from_dict(cls, data: dict[str, Any]) -> TensorHash:
         return cls(
             algorithm=data.get("algorithm", "unknown"),
             domain=data.get("domain", "unknown"),
@@ -113,7 +113,7 @@ class CaptureInfo:
         return out
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "CaptureInfo":
+    def from_dict(cls, data: dict[str, Any] | None) -> CaptureInfo:
         if not data:
             return cls(mode="none")
         return cls(

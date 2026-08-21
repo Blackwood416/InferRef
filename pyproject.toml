@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inferref"
-version = "0.9.1"
+version = "0.9.2"
 description = "Reference execution tracing, testcase extraction and numerical comparison for inference engine development"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -52,3 +52,18 @@ markers = [
     "slow: end-to-end tests that build and install a fixture distribution",
 ]
 addopts = ["-m", "not slow"]
+
+[tool.ruff.lint]
+# Plugin isolation and environment diagnostics intentionally catch broad
+# exceptions so a bad third-party comparator or optional runtime cannot crash
+# the surrounding harness.
+ignore = [
+    "BLE001",
+    "TRY004",
+    "S110",
+    "PYI034",
+    "PYI036",
+    "ISC004",
+    "RUF007",
+    "UP007",
+]

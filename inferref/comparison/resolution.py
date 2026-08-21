@@ -22,7 +22,6 @@ from inferref.comparison.keys import clean_custom_config
 from inferref.comparison.schema import (
     ComparisonSpec,
     ComparisonSpecValidationError,
-    OutputComparisonSpec,
 )
 
 

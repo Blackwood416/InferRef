@@ -15,7 +15,6 @@ from examples.comparators.object_detection import (
 from inferref.comparators import (
     Artifact,
     ArtifactSet,
-    get_comparator,
     register_builtin_comparator,
     run_comparator,
 )
@@ -258,6 +257,7 @@ def test_object_detection_registered_and_run_by_id(tmp_path: Path) -> None:
 
 def test_e2e_compare_testcase_with_custom_comparator(tmp_path: Path) -> None:
     import json
+
     from inferref.cli.main import EXIT_OK, main
     from inferref.compare import compare_testcase
     from inferref.testcase.requirements import derive_requirements
@@ -311,6 +311,7 @@ def test_e2e_compare_testcase_with_custom_comparator(tmp_path: Path) -> None:
 
 def test_e2e_per_output_comparator_and_tolerance_dispatch(tmp_path: Path) -> None:
     import json
+
     from inferref.compare import compare_testcase
     from inferref.testcase.requirements import derive_requirements
 
@@ -382,7 +383,8 @@ def test_e2e_per_output_comparator_and_tolerance_dispatch(tmp_path: Path) -> Non
 
 def test_e2e_comparator_exception_maps_to_error_status(tmp_path: Path) -> None:
     import json
-    from inferref.comparators.protocol import ComparatorPlugin, ComparatorResult
+
+    from inferref.comparators.protocol import ComparatorResult
     from inferref.compare.compare import STATUS_ERROR, compare_testcase
     from inferref.testcase.requirements import derive_requirements
 
@@ -437,6 +439,7 @@ def test_e2e_comparator_exception_maps_to_error_status(tmp_path: Path) -> None:
 
 def test_case_a_missing_output_reporting_matches_numeric_shape(tmp_path: Path) -> None:
     import json
+
     from inferref.compare.compare import STATUS_MISSING, STATUS_PASS, compare_testcase
     from inferref.testcase.requirements import derive_requirements
 
@@ -498,7 +501,8 @@ def test_case_a_missing_output_reporting_matches_numeric_shape(tmp_path: Path) -
 def test_case_a_all_roles_present_semantic_failure_reports_fail(tmp_path: Path) -> None:
     """N1 regression test: all output roles exist, but comparator detects semantic failure (IoU=0)."""
     import json
-    from inferref.compare.compare import STATUS_FAIL, STATUS_PASS, compare_testcase
+
+    from inferref.compare.compare import compare_testcase
     from inferref.testcase.requirements import derive_requirements
 
     comp = ObjectDetectionComparator()

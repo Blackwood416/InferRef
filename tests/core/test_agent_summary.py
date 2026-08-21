@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any
-
 import pytest
 
 from inferref.agent.summary import (
@@ -14,7 +10,7 @@ from inferref.agent.summary import (
     build_agent_summary,
     summarize_report,
 )
-from inferref.cli.main import build_parser, main
+from inferref.cli.main import build_parser
 
 
 def test_build_agent_summary_structure():

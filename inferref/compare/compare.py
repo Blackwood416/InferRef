@@ -212,9 +212,7 @@ def compare_tensors(
     values_ok = metrics.mismatch_count == 0
     layout_ok = not layout.any_mismatch
 
-    if not values_ok:
-        status = STATUS_FAIL
-    elif strict_layout and not layout_ok:
+    if not values_ok or strict_layout and not layout_ok:
         status = STATUS_FAIL
     else:
         status = STATUS_PASS

@@ -34,9 +34,10 @@ as metadata for layout debugging (SPEC §29) but do not describe the payload.
 from __future__ import annotations
 
 import struct
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, Sequence
+from typing import Any, BinaryIO
 
 import numpy as np
 
