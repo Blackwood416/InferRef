@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-08-21 | [v0.9.1 core-linux MCP test fix](2026-08-21-v091-semantic-validation-fix.md) | Skip optional-MCP comparator test on core-only installs; Linux core 504 passed |
 | 2026-08-21 | [v0.9.0 Semantic Validation](2026-08-21-v090-semantic-validation.md) | Comparison Spec v0.1, comparator plugins, multi-output comparator, agent summary, region recommend, doctor details; 749 tests |
 | 2026-08-21 | [v0.8.0 Adapter DX and v0.8.1 CI hardening](2026-08-21-v080-adapter-dx-and-v081-ci.md) | C++ testcase helper + adapter scaffold + runtime bridge; Windows Python via uv; NMake C++ CI; 22/22 green |
 | 2026-08-18 | [v0.7.0 CI retrigger and upstream compatibility fixes](2026-08-18-v070-ci-upstream-compat.md) | Re-triggered lost v0.7.0 CI; hardened Qwen3.5 latest test and Python 3.10 CLI parsing |

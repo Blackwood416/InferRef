@@ -654,6 +654,7 @@ def test_cli_compare_with_comparator_flag(tmp_path: Path) -> None:
 
 
 def test_mcp_server_tools_support_comparator(tmp_path: Path) -> None:
+    pytest.importorskip("mcp")
     from inferref.agent.mcp_server import create_server
 
     server = create_server(read_roots=[tmp_path], write_roots=[tmp_path])
