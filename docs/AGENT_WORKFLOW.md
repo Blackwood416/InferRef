@@ -78,6 +78,23 @@ Read `data.operations` to know what is available, `data.mcp_tools` for the
 MCP tool names, and `next_actions` for what the protocol recommends next.
 Every operation returns this same envelope shape.
 
+### Two facades, one execution model
+
+InferRef exposes two facades over the same core operations:
+
+```text
+Human / exploratory:
+  inspect analyze region testcase compare suite scenario
+
+Stable automation / agent facade:
+  agent context agent extract agent run agent compare agent run_scenario
+```
+
+`inferref agent ...` does not define a separate InferRef execution model. It is
+the stable, machine-readable protocol facade over the same core operations.
+The `inferref adapter scaffold` command sits on the human side: it generates
+the adapter or runtime-bridge project that the agent facade then executes.
+
 ## 4. Configure MCP (optional)
 
 The MCP transport is a stdio server that exposes the same five operations as

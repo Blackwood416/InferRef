@@ -146,6 +146,19 @@ is `error`, so an Agent cannot confuse a kernel bug with a broken test invocatio
 Each run receives a unique output directory and writes an `inferref-run.json`
 execution record.
 
+InferRef exposes two facades over the same core operations:
+
+```text
+Human / exploratory:
+  inspect analyze region testcase compare suite scenario
+
+Stable automation / agent facade:
+  agent context agent extract agent run agent compare agent run_scenario
+```
+
+`inferref agent ...` does not define a separate InferRef execution model. It is
+the stable, machine-readable protocol facade over the same core operations.
+
 Install and start the MCP transport with:
 
 ```bash
@@ -371,6 +384,7 @@ inferref trace run_model.py --scope model.layers.0 -o trace/ -- --batch 4
 | `inferref region detect` | Find semantic regions automatically (SPEC §17) |
 | `inferref region create/list/delete` | Reference regions (SPEC §37) |
 | `inferref contract list/show/validate` | Built-in and plugin executable contracts (Contract Schema v0.1) |
+| `inferref adapter scaffold` | Generate a compilable adapter or runtime-bridge project from a testcase |
 | `inferref agent capabilities/context` | Versioned discovery and artifact context |
 | `inferref agent extract/compare/run` | Structured Agent and engine-adapter loop |
 | `inferref scenario validate/run` | Ordered testcase chains with state binding (Scenario v0.1) |

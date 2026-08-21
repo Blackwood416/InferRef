@@ -140,6 +140,26 @@ shell, so the adapter JSON is trusted executable configuration. Per-contract
 capabilities must be subsets of the global declaration; a contradictory file is
 rejected at load time, and mismatches become `unsupported` before launch.
 
+For a C++ engine, generate the whole project instead of writing the JSON by
+hand:
+
+```bash
+# Standard mode: edit RunYourEngine, write output handling yourself.
+inferref adapter scaffold repro/swiglu --language cpp --output adapter/
+
+# Runtime-bridge mode: edit only the DebugInvoke callback; the bridge resolves
+# the region key and handles loading, output writing, and manifest.json.
+inferref adapter scaffold repro/swiglu --language cpp --runtime-bridge \
+  --output bridge/
+```
+
+The scaffold derives `capabilities` from `derive_requirements()`, validates the
+generated `adapter.json` with the same loader used by `inferref agent run`, and
+writes a compilable `main.cpp` against the header-only C++ testcase helper and
+runtime bridge. See
+[InferRef 0.8 Adapter DX](spec/InferRef_0.8_Adapter_DX.md) for the C++ API and
+the scaffold output layout.
+
 **Verify:**
 
 ```bash
