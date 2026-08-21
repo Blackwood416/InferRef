@@ -329,6 +329,7 @@ the plugin.
 - `inferref doctor --verify-plugins` reports comparator plugin status.
 - A plugin exception is caught and converted to `error`; the suite continues.
 - Comparators are trusted same-process Python, documented as such.
+- **Reserved numeric config keys**: Numeric defaults (`per_dtype`, `strict_layout`, `ignore_stride`, `atol`, `rtol`) are reserved for numerical policy resolution. Non-numeric custom comparators receive cleaned configs with these numeric keys stripped during static validation (`validate_config`) and runtime execution (`compare`).
 
 ### 7.4 Multi-output comparison
 

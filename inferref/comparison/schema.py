@@ -11,6 +11,7 @@ from typing import Any
 
 from inferref.comparators.numeric import NUMERIC_COMPARATOR_ID
 from inferref.comparators.registry import get_comparator
+from inferref.comparison.keys import clean_custom_config
 
 COMPARISON_SPEC_FORMAT = "inferref-comparison"
 COMPARISON_SPEC_VERSION = "0.1"
@@ -52,13 +53,6 @@ class OutputComparisonSpec:
             comparator=comparator.strip() if comparator else None,
             config=dict(config or {}),
         )
-
-
-def _clean_custom_config(raw_cfg: dict[str, Any] | None) -> dict[str, Any]:
-    if not raw_cfg:
-        return {}
-    numeric_defaults = {"per_dtype", "strict_layout", "ignore_stride", "atol", "rtol"}
-    return {k: v for k, v in raw_cfg.items() if k not in numeric_defaults}
 
 
 @dataclass
@@ -208,7 +202,7 @@ class ComparisonSpec:
             if plugin is None:
                 raise ComparisonSpecValidationError(f"unknown comparator {comp_id!r}")
             try:
-                cfg = self.config if comp_id == NUMERIC_COMPARATOR_ID else _clean_custom_config(self.config)
+                cfg = self.config if comp_id == NUMERIC_COMPARATOR_ID else clean_custom_config(self.config)
                 plugin.validate_config(cfg)
             except Exception as exc:
                 raise ComparisonSpecValidationError(
@@ -223,7 +217,7 @@ class ComparisonSpec:
                         f"unknown comparator {target_comp_id!r} for output role {role!r}"
                     )
                 try:
-                    out_cfg = out_spec.config if target_comp_id == NUMERIC_COMPARATOR_ID else _clean_custom_config(out_spec.config)
+                    out_cfg = out_spec.config if target_comp_id == NUMERIC_COMPARATOR_ID else clean_custom_config(out_spec.config)
                     out_plugin.validate_config(out_cfg)
                 except Exception as exc:
                     raise ComparisonSpecValidationError(

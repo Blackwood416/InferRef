@@ -489,4 +489,62 @@ def test_case_a_missing_output_reporting_matches_numeric_shape(tmp_path: Path) -
     assert boxes_comp.status == STATUS_PASS
 
 
+def test_case_a_all_roles_present_semantic_failure_reports_fail(tmp_path: Path) -> None:
+    """N1 regression test: all output roles exist, but comparator detects semantic failure (IoU=0)."""
+    import json
+    from inferref.compare.compare import STATUS_FAIL, STATUS_PASS, compare_testcase
+    from inferref.testcase.requirements import derive_requirements
+
+    comp = ObjectDetectionComparator()
+    register_builtin_comparator(comp)
+
+    tc_dir = tmp_path / "tc_semantic_fail"
+    eng_dir = tmp_path / "eng_semantic_fail"
+    ref_boxes = [[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 30.0, 30.0]]
+    ref_set = _create_detection_artifacts(tc_dir, ref_boxes, [0.9, 0.8], [1, 2])
+
+    # Engine produces completely disjoint boxes
+    eng_boxes = [[500.0, 500.0, 510.0, 510.0], [600.0, 600.0, 610.0, 610.0]]
+    _write_irtensor(eng_dir / "boxes.irtensor", np.array(eng_boxes, dtype=np.float32))
+    _write_irtensor(eng_dir / "scores.irtensor", np.array([0.9, 0.8], dtype=np.float32))
+    _write_irtensor(eng_dir / "classes.irtensor", np.array([1, 2], dtype=np.int64))
+
+    manifest = {
+        "format": "inferref-testcase",
+        "format_version": "0.3",
+        "inferref_version": "0.9.0",
+        "name": "semantic_fail_tc",
+        "region_name": "det_region",
+        "inputs": [],
+        "outputs": [
+            {"name": "boxes", "value_id": None, "payload": "boxes.irtensor", **codec.read(ref_set["boxes"].path).to_metadata()},
+            {"name": "scores", "value_id": None, "payload": "scores.irtensor", **codec.read(ref_set["scores"].path).to_metadata()},
+            {"name": "classes", "value_id": None, "payload": "classes.irtensor", **codec.read(ref_set["classes"].path).to_metadata()},
+        ],
+        "nodes": [],
+        "values": [],
+        "comparison": {
+            "format": "inferref-comparison",
+            "format_version": "0.1",
+            "comparator": OBJECT_DETECTION_COMPARATOR_ID,
+        },
+    }
+    manifest["requirements"] = derive_requirements(manifest)
+    (tc_dir / "testcase.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    report = compare_testcase(tc_dir, eng_dir)
+    assert report.status == "fail"
+    assert report.failed_count >= 1
+    assert report.first_failure is not None
+    assert report.first_failure.status == "fail"
+    assert report.first_failure.name == "boxes"
+
+    rep_dict = report.to_dict()
+    assert rep_dict["status"] == "fail"
+    assert rep_dict["summary"]["failed"] >= 1
+    assert rep_dict["first_failure"] is not None
+    assert rep_dict["first_failure"]["status"] == "fail"
+
+
+
 

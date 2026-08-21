@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from importlib import metadata
 from typing import Any
 
-from inferref.comparators.numeric import NUMERIC_COMPARATOR_ID, NumericComparator
 from inferref.comparators.protocol import ComparatorPlugin
 
+NUMERIC_COMPARATOR_ID = "tensor/numeric/v1"
 ENTRY_POINT_GROUP = "inferref.comparators"
 BUILTIN_PACK_NAME = "builtin"
 
@@ -62,16 +62,21 @@ class ComparatorPluginStatus:
         }
 
 
-BUILTIN_COMPARATORS: dict[str, ComparatorPlugin] = {
-    NUMERIC_COMPARATOR_ID: NumericComparator(),
-}
+BUILTIN_COMPARATORS: dict[str, ComparatorPlugin] = {}
 
 _LOADED_PLUGINS: dict[str, ComparatorPlugin] = {}
+
+
+def _ensure_builtins() -> None:
+    if NUMERIC_COMPARATOR_ID not in BUILTIN_COMPARATORS:
+        from inferref.comparators.numeric import NumericComparator
+        BUILTIN_COMPARATORS[NUMERIC_COMPARATOR_ID] = NumericComparator()
 
 
 def _reset_registry() -> None:
     """Reset loaded plugins cache and builtins to initial state (for testing)."""
     global BUILTIN_COMPARATORS, _LOADED_PLUGINS
+    from inferref.comparators.numeric import NumericComparator
     BUILTIN_COMPARATORS = {
         NUMERIC_COMPARATOR_ID: NumericComparator(),
     }
@@ -80,11 +85,13 @@ def _reset_registry() -> None:
 
 def register_builtin_comparator(comparator: ComparatorPlugin) -> None:
     """Register a built-in comparator."""
+    _ensure_builtins()
     BUILTIN_COMPARATORS[comparator.id] = comparator
 
 
 def builtin_comparators() -> dict[str, ComparatorPlugin]:
     """Return a mapping of all registered built-in comparators."""
+    _ensure_builtins()
     return dict(BUILTIN_COMPARATORS)
 
 
@@ -128,6 +135,7 @@ def _load_plugin(entry: Any) -> ComparatorPlugin:
 
 def comparator_plugin_statuses(*, load: bool = False) -> list[ComparatorPluginStatus]:
     """Inspect all discovered comparator plugins."""
+    _ensure_builtins()
     builtins = set(BUILTIN_COMPARATORS)
     counts: dict[str, int] = {}
     entries = _plugin_entry_points()
@@ -175,6 +183,7 @@ def comparator_plugin_statuses(*, load: bool = False) -> list[ComparatorPluginSt
 
 def comparator_list(*, load: bool = False) -> list[ComparatorEntry]:
     """Return all built-in and discovered comparators in deterministic order."""
+    _ensure_builtins()
     entries: list[ComparatorEntry] = []
     for comp_id, _comp in sorted(BUILTIN_COMPARATORS.items()):
         entries.append(
@@ -204,6 +213,7 @@ def comparator_list(*, load: bool = False) -> list[ComparatorEntry]:
 
 def get_comparator(comparator_id: str) -> ComparatorPlugin | None:
     """Retrieve a comparator instance by its unique identifier."""
+    _ensure_builtins()
     if comparator_id in BUILTIN_COMPARATORS:
         return BUILTIN_COMPARATORS[comparator_id]
 

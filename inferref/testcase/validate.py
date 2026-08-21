@@ -121,8 +121,6 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
     result.manifest = manifest
 
     _validate_manifest(result, manifest)
-    if result.errors:
-        return result
 
     values = _records(result, manifest, "values")
     nodes = _records(result, manifest, "nodes")

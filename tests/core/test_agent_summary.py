@@ -87,8 +87,8 @@ def test_summarize_report_comparison_report_format():
                 "metrics": {
                     "element_count": 50,
                     "mismatch_count": 0,
-                    "max_abs_diff": 0.001,
-                    "max_rel_diff": 0.002,
+                    "max_abs_error": 0.001,
+                    "max_rel_error": 0.002,
                 },
             },
             {
@@ -97,8 +97,8 @@ def test_summarize_report_comparison_report_format():
                 "metrics": {
                     "element_count": 50,
                     "mismatch_count": 4,
-                    "max_abs_diff": 0.08,
-                    "max_rel_diff": 0.05,
+                    "max_abs_error": 0.08,
+                    "max_rel_error": 0.05,
                 },
             },
         ],

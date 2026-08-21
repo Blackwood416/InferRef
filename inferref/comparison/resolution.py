@@ -18,18 +18,12 @@ from typing import Any
 from inferref.comparators.numeric import NUMERIC_COMPARATOR_ID
 from inferref.comparators.registry import get_comparator
 from inferref.compare.tolerance import DEFAULT_TOLERANCES, TolerancePolicy
+from inferref.comparison.keys import clean_custom_config
 from inferref.comparison.schema import (
     ComparisonSpec,
     ComparisonSpecValidationError,
     OutputComparisonSpec,
 )
-
-
-def _clean_custom_config(raw_cfg: dict[str, Any] | None) -> dict[str, Any]:
-    if not raw_cfg:
-        return {}
-    numeric_defaults = {"per_dtype", "strict_layout", "ignore_stride", "atol", "rtol"}
-    return {k: v for k, v in raw_cfg.items() if k not in numeric_defaults}
 
 
 @dataclass
@@ -59,7 +53,7 @@ class EffectiveComparison:
         if plugin is None:
             raise ComparisonSpecValidationError(f"unknown comparator {self.comparator!r}")
         try:
-            cfg = self.config if self.comparator == NUMERIC_COMPARATOR_ID else _clean_custom_config(self.config)
+            cfg = self.config if self.comparator == NUMERIC_COMPARATOR_ID else clean_custom_config(self.config)
             plugin.validate_config(cfg)
         except Exception as exc:
             raise ComparisonSpecValidationError(
@@ -75,7 +69,7 @@ class EffectiveComparison:
                 )
             out_cfg = out_data.get("config", {})
             try:
-                target_out_cfg = out_cfg if comp_id == NUMERIC_COMPARATOR_ID else _clean_custom_config(out_cfg)
+                target_out_cfg = out_cfg if comp_id == NUMERIC_COMPARATOR_ID else clean_custom_config(out_cfg)
                 out_plugin.validate_config(target_out_cfg)
             except Exception as exc:
                 raise ComparisonSpecValidationError(

@@ -89,8 +89,10 @@ def summarize_report(
                             has_comp_metrics = True
                             comp_total += int(comp_metrics.get("element_count", 0))
                             comp_mismatched += int(comp_metrics.get("mismatch_count", 0))
-                            comp_max_atol = max(comp_max_atol, float(comp_metrics.get("max_abs_diff", 0.0)))
-                            comp_max_rtol = max(comp_max_rtol, float(comp_metrics.get("max_rel_diff", 0.0)))
+                            abs_err = comp_metrics.get("max_abs_error") if "max_abs_error" in comp_metrics else comp_metrics.get("max_abs_diff", 0.0)
+                            rel_err = comp_metrics.get("max_rel_error") if "max_rel_error" in comp_metrics else comp_metrics.get("max_rel_diff", 0.0)
+                            comp_max_atol = max(comp_max_atol, float(abs_err or 0.0))
+                            comp_max_rtol = max(comp_max_rtol, float(rel_err or 0.0))
                 if has_comp_metrics:
                     total_elements = comp_total
                     mismatched_elements = comp_mismatched

@@ -8,12 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from inferref.compare.compare import compare_tensors
+NUMERIC_COMPARATOR_ID = "tensor/numeric/v1"
+
 from inferref.compare.tolerance import DEFAULT_TOLERANCES, TolerancePolicy
 from inferref.comparators.protocol import ArtifactSet, ComparatorResult
 from inferref.tensor import codec
-
-NUMERIC_COMPARATOR_ID = "tensor/numeric/v1"
 
 _ALLOWED_CONFIG_KEYS = {"atol", "rtol", "strict_layout", "ignore_stride", "per_dtype"}
 
@@ -164,6 +163,8 @@ class NumericComparator:
                 if first_failure is None:
                     first_failure = {"output": name, "message": diag["message"]}
                 continue
+
+            from inferref.compare.compare import compare_tensors
 
             comp = compare_tensors(
                 name,

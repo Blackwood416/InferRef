@@ -24,6 +24,7 @@ from typing import Any
 from inferref.compare.layout import LayoutDiff, diff_layout
 from inferref.compare.metrics import Metrics, compute_metrics
 from inferref.compare.tolerance import DEFAULT_TOLERANCES, TolerancePolicy
+from inferref.comparison.keys import clean_custom_config
 from inferref.ir.package import TracePackage
 from inferref.ir.paths import resolve_contained_path
 from inferref.tensor import codec
@@ -32,31 +33,32 @@ from inferref.testcase.validate import require_valid_testcase
 
 STATUS_PASS = "pass"
 STATUS_FAIL = "fail"
-STATUS_MISSING = "missing"
 STATUS_ERROR = "error"
+STATUS_MISSING = "missing"
 
 
 @dataclass
 class TensorComparison:
-    """Result of comparing one reference tensor with one engine tensor."""
+    """Outcome of comparing one tensor (or one testcase output) pair."""
 
     name: str
     status: str
+    message: str = ""
     layout: LayoutDiff | None = None
     metrics: Metrics | None = None
-    message: str = ""
-
-    #: Provenance, when the comparison came from a trace (SPEC Appendix B).
-    value_id: int | None = None
+    value_id: Any = None
+    storage_id: Any = None
     producer_op_id: int | None = None
     execution_index: int | None = None
     operator: str | None = None
     module_path: str | None = None
     source: str | None = None
     region: str | None = None
-
-    atol: float = 0.0
-    rtol: float = 0.0
+    atol: float | None = None
+    rtol: float | None = None
+    role: str = "output"
+    shape: list[int] | None = None
+    dtype: str | None = None
 
     @property
     def passed(self) -> bool:
@@ -66,24 +68,32 @@ class TensorComparison:
         out: dict[str, Any] = {
             "name": self.name,
             "status": self.status,
-            "tolerance": {"atol": self.atol, "rtol": self.rtol},
+            "role": self.role,
         }
         if self.message:
             out["message"] = self.message
         if self.value_id is not None:
             out["value_id"] = self.value_id
+        if self.storage_id is not None:
+            out["storage_id"] = self.storage_id
         if self.producer_op_id is not None:
             out["producer_op_id"] = self.producer_op_id
         if self.execution_index is not None:
             out["execution_index"] = self.execution_index
-        if self.operator:
+        if self.operator is not None:
             out["operator"] = self.operator
-        if self.module_path:
+        if self.module_path is not None:
             out["module_path"] = self.module_path
-        if self.source:
+        if self.source is not None:
             out["source"] = self.source
-        if self.region:
+        if self.region is not None:
             out["region"] = self.region
+        if self.atol is not None or self.rtol is not None:
+            out["tolerance"] = {"atol": self.atol or 0.0, "rtol": self.rtol or 0.0}
+        if self.shape is not None:
+            out["shape"] = self.shape
+        if self.dtype is not None:
+            out["dtype"] = self.dtype
         if self.layout is not None:
             out["layout"] = self.layout.to_dict()
         if self.metrics is not None:
@@ -93,10 +103,10 @@ class TensorComparison:
 
 @dataclass
 class ComparisonReport:
-    """Overall comparison result (SPEC §42, Appendix B)."""
+    """The complete result of comparing one testcase against an engine run."""
 
-    reference: str = ""
-    actual: str = ""
+    reference: str
+    actual: str
     comparisons: list[TensorComparison] = field(default_factory=list)
     #: Set when ``--first-failure`` stopped the run early.
     stopped_early: bool = False
@@ -121,6 +131,16 @@ class ComparisonReport:
         for comparison in self.comparisons:
             if not comparison.passed:
                 return comparison
+        if self.comparator is not None:
+            cs = self.comparator.get("status")
+            if cs in (STATUS_FAIL, STATUS_ERROR):
+                ff = self.comparator.get("first_failure") or {}
+                comp_id = self.comparator.get("comparator", "comparator")
+                return TensorComparison(
+                    name=ff.get("output") or comp_id,
+                    status=cs,
+                    message=ff.get("message") or "custom comparator check failed",
+                )
         return None
 
     @property
@@ -129,8 +149,12 @@ class ComparisonReport:
             if self.comparator is not None:
                 return str(self.comparator.get("status", STATUS_ERROR))
             return STATUS_ERROR
-        if self.comparator is not None and self.comparator.get("status") == STATUS_ERROR:
-            return STATUS_ERROR
+        if self.comparator is not None:
+            cs = self.comparator.get("status")
+            if cs == STATUS_ERROR:
+                return STATUS_ERROR
+            if cs == STATUS_FAIL and self.first_failure is None:
+                return STATUS_FAIL
         if any(c.status == STATUS_ERROR for c in self.comparisons):
             return STATUS_ERROR
         return STATUS_PASS if self.first_failure is None else STATUS_FAIL
@@ -376,12 +400,6 @@ def compare_testcase(
     top_comparator = getattr(effective_comparison, "comparator", NUMERIC_COMPARATOR_ID) or NUMERIC_COMPARATOR_ID
     per_output_specs = getattr(effective_comparison, "per_output", {}) or {}
 
-    def _clean_custom_config(raw_cfg: dict[str, Any] | None) -> dict[str, Any]:
-        if not raw_cfg:
-            return {}
-        numeric_defaults = {"per_dtype", "strict_layout", "ignore_stride", "atol", "rtol"}
-        return {k: v for k, v in raw_cfg.items() if k not in numeric_defaults}
-
     # Case A: Global multi-output comparator (top-level comparator is non-numeric)
     if top_comparator != NUMERIC_COMPARATOR_ID:
         required_roles = [e.get("name", "output") for e in manifest_outputs if e.get("payload")]
@@ -390,7 +408,7 @@ def compare_testcase(
             top_comparator,
             ref_artifacts,
             act_artifacts,
-            config=_clean_custom_config(raw_top_cfg),
+            config=clean_custom_config(raw_top_cfg),
             required_roles=required_roles,
         )
         report.comparator = comp_result.to_dict()
@@ -401,10 +419,13 @@ def compare_testcase(
                 diag_by_role[role] = diag
 
         is_comp_error = comp_result.status == "error"
+        is_comp_fail = comp_result.status == "fail" or not comp_result.passed
+        ff = comp_result.first_failure or {}
+        ff_role = ff.get("output")
         err_default_msg = (
-            comp_result.first_failure.get("message", "comparator error")
-            if comp_result.first_failure
-            else "comparator error"
+            ff.get("message", "comparator error")
+            if is_comp_error
+            else ff.get("message", "comparator mismatch")
         )
         for output in manifest_outputs:
             name = output.get("name", "output")
@@ -435,6 +456,13 @@ def compare_testcase(
                 comparison = TensorComparison(
                     name=name,
                     status=STATUS_ERROR,
+                    message=err_default_msg,
+                    value_id=value_id,
+                )
+            elif is_comp_fail and (ff_role == name or (not ff_role and not diag_by_role)):
+                comparison = TensorComparison(
+                    name=name,
+                    status=STATUS_FAIL,
                     message=err_default_msg,
                     value_id=value_id,
                 )
@@ -507,7 +535,7 @@ def compare_testcase(
             role_config = dict(effective_comparison.config or {}) if hasattr(effective_comparison, "config") else {}
             if role_cfg:
                 role_config.update(role_cfg)
-            role_config = _clean_custom_config(role_config)
+            role_config = clean_custom_config(role_config)
             role_res = run_comparator(
                 role_comp_id,
                 ref_artifacts,
