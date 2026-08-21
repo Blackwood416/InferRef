@@ -91,6 +91,7 @@ def test_scaffold_generates_four_files_and_a_valid_adapter(
     assert "RunYourEngine" in main_cpp
     assert "outputs.at(name)" in main_cpp
     assert "testcase.Finish()" in main_cpp
+    assert "catch (const std::exception" in main_cpp
     cmake = (out / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "INFERREF_CPP_INCLUDE" in cmake
     readme = (out / "README.md").read_text(encoding="utf-8")
@@ -131,6 +132,7 @@ def test_scaffold_bridge_mode_generates_bridge_project(tmp_path: Path) -> None:
     assert "DebugInvoke" in main_cpp
     assert "RunBridge" in main_cpp
     assert "inferref_bridge" in main_cpp
+    assert 'RunBridge(testcase_dir, output_dir, invoke,\n                               "inferref_bridge")' in main_cpp
     assert "RunYourEngine" not in main_cpp
 
     cmake = (out / "CMakeLists.txt").read_text(encoding="utf-8")

@@ -291,7 +291,9 @@ void TestMissingRegion(const std::string &base)
     inferref::WriteIRTensor(dir + "/inputs/x.irtensor",
                             MakeFloat32({1}, {1.0f}));
     WriteFile(dir + "/testcase.json",
-              "{\"inputs\": [{\"name\": \"x\", "
+              "{\"format\": \"inferref-testcase\","
+              " \"format_version\": \"0.2\","
+              " \"inputs\": [{\"name\": \"x\", "
               "\"payload\": \"inputs/x.irtensor\"}],"
               " \"outputs\": [{\"name\": \"y\"}]}");
     const int code =
@@ -321,6 +323,25 @@ void TestMissingOutputRole(const std::string &base)
     Check(code == inferref::kBridgeError, "missing output role is an error");
 }
 
+void TestExtraOutputRole(const std::string &base)
+{
+    std::printf("DebugInvoke returning an undeclared output\n");
+    const std::string dir = base + "/extra";
+    std::filesystem::create_directories(dir);
+    WriteKvTestcase(dir);
+    inferref::DebugInvoke extra =
+        [](const std::string &region_name,
+           const std::map<std::string, inferref::IRTensor> &inputs)
+    {
+        std::map<std::string, inferref::IRTensor> outputs =
+            KVInvoke(region_name, inputs);
+        outputs["surprise"] = outputs.begin()->second;
+        return outputs;
+    };
+    const int code = inferref::RunBridge(dir, base + "/extra-out", extra);
+    Check(code == inferref::kBridgeError, "undeclared output role is an error");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -343,6 +364,7 @@ int main(int argc, char **argv)
         TestEndToEnd(base);
         TestMissingRegion(base);
         TestMissingOutputRole(base);
+        TestExtraOutputRole(base);
     }
     catch (const std::exception &error)
     {

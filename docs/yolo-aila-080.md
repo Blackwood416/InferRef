@@ -66,7 +66,9 @@ dispatch implementation for step 5. The rest of the toolchain is model-agnostic.
 ## 2. First TFCM record
 
 - **Date:** 2026-08-21
-- **Revision:** `80a29485016c693532f0b92495c9a66e4f1609ce`
+- **Revision:** `80a29485016c693532f0b92495c9a66e4f1609ce` (the feature
+  revision under test; this record was written with the documentation commit
+  `11ab869` on top).
 - **Environment:** Windows 11, MSVC 19.50 + Ninja, Python 3.13, InferRef 0.8.0
   scope (C++ testcase helper, adapter scaffold, runtime bridge).
 - **Target:** MiniLlama RoPE region (extraction) and the kv-chain prefill

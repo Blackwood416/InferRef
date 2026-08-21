@@ -223,7 +223,9 @@ void TestErrors(const std::string &base)
     inferref::WriteIRTensor(missing_payload + "/inputs/x.irtensor",
                             MakeFloat32({1}, {1.0f}));
     WriteFile(missing_payload + "/testcase.json",
-              "{\"inputs\": [{\"name\": \"x\", \"payload\": \"inputs/x.irtensor\"},"
+              "{\"format\": \"inferref-testcase\","
+              " \"format_version\": \"0.2\","
+              " \"inputs\": [{\"name\": \"x\", \"payload\": \"inputs/x.irtensor\"},"
               " {\"name\": \"scale\", \"payload\": null}],"
               " \"outputs\": [{\"name\": \"y\"}]}");
     inferref::Testcase loaded = inferref::Testcase::Load(missing_payload);
@@ -232,16 +234,21 @@ void TestErrors(const std::string &base)
     {
         (void)loaded.Input("scale");
     }
-    catch (const inferref::TestcaseError &)
+    catch (const inferref::TestcaseError &error)
     {
-        missing_payload_rejected = true;
+        missing_payload_rejected =
+            std::string(error.what()).find("has no runnable payload") !=
+            std::string::npos;
     }
-    Check(missing_payload_rejected, "Input without payload throws");
+    Check(missing_payload_rejected,
+          "Input without payload says 'has no runnable payload'");
 
     const std::string unsafe = base + "/unsafe";
     std::filesystem::create_directories(unsafe);
     WriteFile(unsafe + "/testcase.json",
-              "{\"inputs\": [{\"name\": \"x\", \"payload\": \"../escape.irtensor\"}],"
+              "{\"format\": \"inferref-testcase\","
+              " \"format_version\": \"0.2\","
+              " \"inputs\": [{\"name\": \"x\", \"payload\": \"../escape.irtensor\"}],"
               " \"outputs\": [{\"name\": \"y\"}]}");
     bool unsafe_rejected = false;
     try

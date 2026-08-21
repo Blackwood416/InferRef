@@ -37,7 +37,8 @@ inline constexpr int kBridgeMissingRegion = 3;
 // by role name into `output_dir`, and publish manifest.json once.
 inline int RunBridge(const std::string &testcase_dir,
                      const std::string &output_dir,
-                     const DebugInvoke &invoke)
+                     const DebugInvoke &invoke,
+                     const std::string &program_name = "inferref-bridge")
 {
     try
     {
@@ -47,13 +48,14 @@ inline int RunBridge(const std::string &testcase_dir,
         if (region.empty())
         {
             std::cerr
-                << "inferref-bridge: missing_region: testcase has no "
+                << program_name << ": missing_region: testcase has no "
                    "origin.region, origin.contract, or contracts[0]\n";
             return kBridgeMissingRegion;
         }
         const std::map<std::string, IRTensor> outputs =
             invoke(region, testcase.Inputs());
-        for (const std::string &name : testcase.OutputNames())
+        const std::vector<std::string> output_names = testcase.OutputNames();
+        for (const std::string &name : output_names)
         {
             const auto found = outputs.find(name);
             if (found == outputs.end())
@@ -63,12 +65,21 @@ inline int RunBridge(const std::string &testcase_dir,
             }
             testcase.WriteOutput(name, found->second);
         }
+        for (const auto &entry : outputs)
+        {
+            if (std::find(output_names.begin(), output_names.end(),
+                          entry.first) == output_names.end())
+            {
+                throw TestcaseError("DebugInvoke returned undeclared output role '" +
+                                    entry.first + "'");
+            }
+        }
         testcase.Finish();
         return kBridgeOk;
     }
     catch (const std::exception &error)
     {
-        std::cerr << "inferref-bridge: " << error.what() << "\n";
+        std::cerr << program_name << ": " << error.what() << "\n";
         return kBridgeError;
     }
 }

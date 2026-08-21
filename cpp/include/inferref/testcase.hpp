@@ -54,6 +54,19 @@ public:
         const json::Value root = json::Parse(text);
         if (!root.IsObject())
             throw TestcaseError("testcase manifest root must be a JSON object");
+        if (!root.Has("format") || !root.At("format").IsString() ||
+            root.At("format").string != "inferref-testcase")
+        {
+            throw TestcaseError(
+                "not an InferRef testcase: format must be 'inferref-testcase'");
+        }
+        if (!root.Has("format_version") || !root.At("format_version").IsString() ||
+            (root.At("format_version").string != "0.1" &&
+             root.At("format_version").string != "0.2"))
+        {
+            throw TestcaseError(
+                "unsupported testcase format_version; this build reads 0.1 and 0.2");
+        }
 
         Testcase result;
         result.dir_ = testcase_dir;
@@ -75,7 +88,8 @@ public:
     // or a role without a runnable payload.
     IRTensor Input(const std::string &name) const
     {
-        const std::string payload = PayloadFor(input_payloads_, name, "input");
+        const std::string payload =
+            PayloadFor(input_payloads_, input_names_, name, "input");
         return ReadIRTensor(dir_ + "/" + payload);
     }
 
@@ -266,13 +280,20 @@ private:
         return payloads;
     }
 
-    static std::string PayloadFor(const std::map<std::string, std::string> &payloads,
-                                  const std::string &name,
-                                  const std::string &boundary)
+    static std::string PayloadFor(
+        const std::map<std::string, std::string> &payloads,
+        const std::vector<std::string> &names,
+        const std::string &name,
+        const std::string &boundary)
     {
         const auto found = payloads.find(name);
         if (found == payloads.end())
         {
+            if (std::find(names.begin(), names.end(), name) != names.end())
+            {
+                throw TestcaseError(boundary + " role '" + name +
+                                    "' has no runnable payload");
+            }
             throw TestcaseError("unknown " + boundary + " role '" + name + "'");
         }
         return found->second;

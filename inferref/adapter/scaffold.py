@@ -85,15 +85,23 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    auto testcase = inferref::Testcase::Load(testcase_dir);
-    testcase.SetOutputDir(output_dir);
-    auto inputs = testcase.Inputs();
-    auto outputs = RunYourEngine(testcase.RegionName(), inputs);
+    try
+    {
+        auto testcase = inferref::Testcase::Load(testcase_dir);
+        testcase.SetOutputDir(output_dir);
+        auto inputs = testcase.Inputs();
+        auto outputs = RunYourEngine(testcase.RegionName(), inputs);
 
-    for (const auto &name : testcase.OutputNames())
-        testcase.WriteOutput(name, outputs.at(name));
-    testcase.Finish();
-    return 0;
+        for (const auto &name : testcase.OutputNames())
+            testcase.WriteOutput(name, outputs.at(name));
+        testcase.Finish();
+        return 0;
+    }
+    catch (const std::exception &error)
+    {
+        std::cerr << "inferref_adapter: " << error.what() << "\\n";
+        return 1;
+    }
 }
 """
 
@@ -157,7 +165,8 @@ int main(int argc, char **argv)
         throw std::runtime_error("DebugInvoke is not implemented");
     };
 
-    return inferref::RunBridge(testcase_dir, output_dir, invoke);
+    return inferref::RunBridge(testcase_dir, output_dir, invoke,
+                               "inferref_bridge");
 }
 """
 
