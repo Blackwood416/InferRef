@@ -10,6 +10,7 @@
     ├── validate
     ├── testcase {extract, dedup}
     ├── contract {list, show, validate}
+    ├── adapter  {scaffold}
     ├── region   {list, create, detect, delete}
     ├── agent    {capabilities, context, extract, compare, run, evaluate}
     └── export
@@ -427,6 +428,30 @@ def cmd_contract_validate(args: argparse.Namespace) -> int:
         )
     _emit(payload, text, args.json)
     return EXIT_OK if payload["status"] == "pass" else EXIT_FAIL
+
+
+# -- adapter ----------------------------------------------------------------
+
+
+def cmd_adapter_scaffold(args: argparse.Namespace) -> int:
+    from inferref.adapter import ScaffoldError, scaffold_adapter
+
+    try:
+        result = scaffold_adapter(
+            args.testcase, args.output, language=args.language
+        )
+    except ScaffoldError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    payload = {
+        "format": "inferref-adapter-scaffold",
+        "status": "pass",
+        **result.to_dict(),
+    }
+    lines = [f"Wrote scaffolded adapter to {result.path}"]
+    lines.extend(f"  {name}" for name in result.files)
+    _emit(payload, "\n".join(lines), args.json)
+    return EXIT_OK
 
 
 # -- region ----------------------------------------------------------------
@@ -1079,6 +1104,32 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("path", help="contract JSON file")
     _add_json(q)
     q.set_defaults(func=cmd_contract_validate)
+
+    # adapter
+    p = sub.add_parser(
+        "adapter", help="scaffold engine adapter projects from testcases"
+    )
+    asub = p.add_subparsers(dest="adapter_command", metavar="<subcommand>")
+
+    q = asub.add_parser(
+        "scaffold",
+        help="generate a compilable adapter project from one testcase",
+    )
+    q.add_argument("testcase", help="standalone testcase directory")
+    q.add_argument(
+        "--language",
+        choices=["cpp"],
+        default="cpp",
+        help="generated language (default: cpp)",
+    )
+    q.add_argument(
+        "-o",
+        "--output",
+        default="adapter/",
+        help="output directory (default: adapter/)",
+    )
+    _add_json(q)
+    q.set_defaults(func=cmd_adapter_scaffold)
 
     # region
     p = sub.add_parser("region", help="create and list reference regions")
