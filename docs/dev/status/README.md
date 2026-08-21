@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-08-21 | [v0.8.0 Adapter DX and v0.8.1 CI hardening](2026-08-21-v080-adapter-dx-and-v081-ci.md) | C++ testcase helper + adapter scaffold + runtime bridge; Windows Python via uv; NMake C++ CI; 22/22 green |
 | 2026-08-18 | [v0.7.0 CI retrigger and upstream compatibility fixes](2026-08-18-v070-ci-upstream-compat.md) | Re-triggered lost v0.7.0 CI; hardened Qwen3.5 latest test and Python 3.10 CLI parsing |
 | 2026-08-16 | [Agent workflow guide and Codex skill](2026-08-16-agent-workflow-skill.md) | AGENT_WORKFLOW guide + inferref Codex skill; stdlib validation harness; README pointer; 667 tests; docs-only milestone |
 | 2026-08-08 | [v0.6.0 contract ecosystem and CI/XPU gate](2026-08-08-v060-contract-ecosystem.md) | Contract registry + Scenario v0.1; Suite/Agent/CLI integration; 658 tests; Windows/XPU gates green; tag pipelines deduplicated |
