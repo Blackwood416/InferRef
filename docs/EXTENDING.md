@@ -144,7 +144,8 @@ For a C++ engine, generate the whole project instead of writing the JSON by
 hand:
 
 ```bash
-# Standard mode: edit RunYourEngine, write output handling yourself.
+# Standard mode: edit the RunYourEngine body and return named outputs.
+# Output loading, writing, and manifest.json are already wired.
 inferref adapter scaffold repro/swiglu --language cpp --output adapter/
 
 # Runtime-bridge mode: edit only the DebugInvoke callback; the bridge resolves

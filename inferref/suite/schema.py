@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from inferref.comparison.schema import ComparisonSpec
 from inferref.ir.paths import PathBoundaryError, resolve_contained_path
 from inferref.scenario import ScenarioError, load_scenario, validate_scenario
 from inferref.suite.paths import portable_id_key, validate_case_id
@@ -12,7 +13,7 @@ from inferref.testcase.validate import validate_testcase
 
 SUITE_FORMAT = "inferref-suite"
 SUITE_FORMAT_VERSION = "0.2"
-SUITE_READ_VERSIONS = ("0.1", "0.2")
+SUITE_READ_VERSIONS = ("0.1", "0.2", "0.3")
 SUITE_KINDS = ("testcase", "scenario")
 
 
@@ -26,14 +27,22 @@ class SuiteCase:
     testcase: Path
     tags: tuple[str, ...] = ()
     kind: str = "testcase"
+    comparison: ComparisonSpec | dict[str, Any] | None = None
 
     def to_dict(self, root: Path) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "id": self.id,
             "kind": self.kind,
             "testcase": self.testcase.relative_to(root).as_posix(),
             "tags": list(self.tags),
         }
+        if self.comparison is not None:
+            result["comparison"] = (
+                self.comparison.to_dict()
+                if hasattr(self.comparison, "to_dict")
+                else dict(self.comparison)
+            )
+        return result
 
 
 @dataclass(frozen=True)
@@ -41,6 +50,7 @@ class Suite:
     name: str
     source: Path
     cases: tuple[SuiteCase, ...]
+    format_version: str = SUITE_FORMAT_VERSION
 
     @property
     def root(self) -> Path:
@@ -49,7 +59,7 @@ class Suite:
     def to_dict(self) -> dict[str, Any]:
         return {
             "format": SUITE_FORMAT,
-            "format_version": SUITE_FORMAT_VERSION,
+            "format_version": self.format_version,
             "name": self.name,
             "source": str(self.source),
             "cases": [case.to_dict(self.root) for case in self.cases],
@@ -63,9 +73,10 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
         raise SuiteError("suite root must be an object")
     if data.get("format") != SUITE_FORMAT:
         raise SuiteError(f"not an InferRef suite: {data.get('format')!r}")
-    if data.get("format_version") not in SUITE_READ_VERSIONS:
+    format_version = str(data.get("format_version", ""))
+    if format_version not in SUITE_READ_VERSIONS:
         raise SuiteError(
-            f"unsupported suite format_version {data.get('format_version')!r}"
+            f"unsupported suite format_version {format_version!r}"
         )
     name = data.get("name")
     if not isinstance(name, str) or not name:
@@ -88,7 +99,7 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
             raise SuiteError(
                 f"cases[{index}].kind must be 'testcase' or 'scenario', got {kind!r}"
             )
-        if data.get("format_version") == "0.1" and kind != "testcase":
+        if format_version == "0.1" and kind != "testcase":
             raise SuiteError(
                 f"cases[{index}].kind must be 'testcase' in suite format 0.1"
             )
@@ -111,6 +122,23 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
             isinstance(tag, str) and tag for tag in tags
         ):
             raise SuiteError(f"cases[{index}].tags must be a string array")
+
+        comp_spec: ComparisonSpec | None = None
+        raw_comparison = record.get("comparison")
+        if raw_comparison is not None:
+            if format_version < "0.3":
+                raise SuiteError(
+                    "comparison_requires_0_3: suite case has comparison but format_version is < 0.3"
+                )
+            if not isinstance(raw_comparison, dict):
+                raise SuiteError(f"cases[{index}].comparison must be an object")
+            try:
+                comp_spec = ComparisonSpec.from_dict(raw_comparison)
+                if validate_cases:
+                    comp_spec.validate(check_registry=True)
+            except Exception as exc:
+                raise SuiteError(f"case {case_id!r} comparison spec is invalid: {exc}") from exc
+
         if validate_cases:
             if kind == "scenario":
                 try:
@@ -132,8 +160,8 @@ def load_suite(path: str | Path, *, validate_cases: bool = True) -> Suite:
                     )
         ids.add(case_id)
         portable_ids.add(portable_key)
-        cases.append(SuiteCase(case_id, testcase_path, tuple(tags), kind))
-    return Suite(name, source, tuple(cases))
+        cases.append(SuiteCase(case_id, testcase_path, tuple(tags), kind, comp_spec))
+    return Suite(name, source, tuple(cases), format_version=format_version)
 
 
 def validate_suite(
@@ -149,6 +177,7 @@ def validate_suite(
 
     try:
         suite = load_suite(path)
+        format_version = suite.format_version
     except (SuiteError, OSError, json.JSONDecodeError) as exc:
         return {
             "format": SUITE_FORMAT,
@@ -175,7 +204,7 @@ def validate_suite(
     runnable = not non_runnable
     return {
         "format": SUITE_FORMAT,
-        "format_version": SUITE_FORMAT_VERSION,
+        "format_version": format_version,
         "status": "pass" if runnable else "fail",
         "schema_valid": True,
         "runnable": runnable,

@@ -1,0 +1,256 @@
+"""Tests for multi-output comparators and object detection fixture (SPEC §7.4, C4)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+
+from examples.comparators.object_detection import (
+    OBJECT_DETECTION_COMPARATOR_ID,
+    ObjectDetectionComparator,
+)
+from inferref.comparators import (
+    Artifact,
+    ArtifactSet,
+    get_comparator,
+    register_builtin_comparator,
+    run_comparator,
+)
+from inferref.comparators import registry as comparator_registry
+from inferref.tensor import codec
+
+
+@pytest.fixture(autouse=True)
+def _clean_registry() -> None:
+    comparator_registry._reset_registry()
+    yield
+    comparator_registry._reset_registry()
+
+
+def _write_irtensor(path: Path, array: np.ndarray) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    codec.write_array(path, array)
+    return path
+
+
+def _create_detection_artifacts(
+    root: Path,
+    boxes: list[list[float]],
+    scores: list[float],
+    classes: list[int],
+) -> ArtifactSet:
+    boxes_path = _write_irtensor(root / "boxes.irtensor", np.array(boxes, dtype=np.float32))
+    scores_path = _write_irtensor(root / "scores.irtensor", np.array(scores, dtype=np.float32))
+    classes_path = _write_irtensor(root / "classes.irtensor", np.array(classes, dtype=np.int32))
+    return {
+        "boxes": Artifact("boxes", boxes_path),
+        "scores": Artifact("scores", scores_path),
+        "classes": Artifact("classes", classes_path),
+    }
+
+
+# -- Config Validation ------------------------------------------------------
+
+
+def test_object_detection_config_validation() -> None:
+    comp = ObjectDetectionComparator()
+    # Valid configs
+    comp.validate_config(None)
+    comp.validate_config({})
+    comp.validate_config({
+        "box_format": "xyxy",
+        "matching": "iou",
+        "min_iou": 0.95,
+        "class_exact": True,
+        "score_atol": 0.005,
+        "ordering": "ignore",
+    })
+
+    # Invalid non-dict
+    with pytest.raises(ValueError, match="must be a dictionary"):
+        comp.validate_config("invalid")
+
+    # Unknown key
+    with pytest.raises(ValueError, match="unknown object detection comparator config key"):
+        comp.validate_config({"threshold": 0.5})
+
+    # Invalid box_format
+    with pytest.raises(ValueError, match="box_format must be 'xyxy' or 'xywh'"):
+        comp.validate_config({"box_format": "corners"})
+
+    # Invalid min_iou
+    with pytest.raises(ValueError, match="min_iou must be a float between 0.0 and 1.0"):
+        comp.validate_config({"min_iou": 1.5})
+    with pytest.raises(ValueError, match="min_iou must be a float between 0.0 and 1.0"):
+        comp.validate_config({"min_iou": -0.1})
+
+    # Invalid score_atol
+    with pytest.raises(ValueError, match="score_atol must be a non-negative float"):
+        comp.validate_config({"score_atol": -0.01})
+
+    # Invalid ordering
+    with pytest.raises(ValueError, match="ordering must be 'ignore' or 'exact'"):
+        comp.validate_config({"ordering": "strict"})
+
+
+# -- Comparison Evaluation --------------------------------------------------
+
+
+def test_object_detection_perfect_match(tmp_path: Path) -> None:
+    comp = ObjectDetectionComparator()
+    boxes = [[10.0, 20.0, 100.0, 200.0], [50.0, 50.0, 150.0, 150.0]]
+    scores = [0.95, 0.88]
+    classes = [1, 2]
+
+    ref_set = _create_detection_artifacts(tmp_path / "ref", boxes, scores, classes)
+    act_set = _create_detection_artifacts(tmp_path / "act", boxes, scores, classes)
+
+    result = comp.compare(ref_set, act_set, config={"min_iou": 0.99, "score_atol": 0.001})
+    assert result.passed is True
+    assert result.status == "pass"
+    assert result.comparator == OBJECT_DETECTION_COMPARATOR_ID
+    assert result.metrics["reference_count"] == 2
+    assert result.metrics["actual_count"] == 2
+    assert result.metrics["matched"] == 2
+    assert result.metrics["min_iou"] == 1.0
+    assert result.first_failure is None
+
+
+def test_object_detection_within_tolerance(tmp_path: Path) -> None:
+    comp = ObjectDetectionComparator()
+    ref_boxes = [[10.0, 20.0, 100.0, 200.0]]
+    act_boxes = [[10.5, 20.0, 100.0, 200.0]]  # Slight shift, IoU > 0.98
+
+    ref_set = _create_detection_artifacts(tmp_path / "ref", ref_boxes, [0.95], [1])
+    act_set = _create_detection_artifacts(tmp_path / "act", act_boxes, [0.951], [1])
+
+    result = comp.compare(ref_set, act_set, config={"min_iou": 0.95, "score_atol": 0.005})
+    assert result.passed is True
+    assert result.status == "pass"
+    assert result.metrics["matched"] == 1
+    assert result.metrics["min_iou"] >= 0.95
+
+
+def test_object_detection_iou_below_threshold(tmp_path: Path) -> None:
+    comp = ObjectDetectionComparator()
+    ref_boxes = [[10.0, 20.0, 100.0, 200.0]]
+    act_boxes = [[50.0, 80.0, 140.0, 260.0]]  # Significant shift, IoU < 0.5
+
+    ref_set = _create_detection_artifacts(tmp_path / "ref", ref_boxes, [0.95], [1])
+    act_set = _create_detection_artifacts(tmp_path / "act", act_boxes, [0.95], [1])
+
+    result = comp.compare(ref_set, act_set, config={"min_iou": 0.90})
+    assert result.passed is False
+    assert result.status == "fail"
+    assert result.metrics["matched"] == 0
+    assert result.first_failure is not None
+    assert result.first_failure["output"] == "boxes"
+
+
+def test_object_detection_class_mismatch(tmp_path: Path) -> None:
+    comp = ObjectDetectionComparator()
+    boxes = [[10.0, 20.0, 100.0, 200.0]]
+    scores = [0.95]
+
+    ref_set = _create_detection_artifacts(tmp_path / "ref", boxes, scores, [1])
+    act_set = _create_detection_artifacts(tmp_path / "act", boxes, scores, [2])  # class 2 instead of 1
+
+    # Exact class required: should fail
+    res_exact = comp.compare(ref_set, act_set, config={"class_exact": True})
+    assert res_exact.passed is False
+    assert res_exact.metrics["matched"] == 0
+
+    # Class exact disabled: should pass
+    res_inexact = comp.compare(ref_set, act_set, config={"class_exact": False})
+    assert res_inexact.passed is True
+    assert res_inexact.metrics["matched"] == 1
+
+
+def test_object_detection_score_tolerance(tmp_path: Path) -> None:
+    comp = ObjectDetectionComparator()
+    boxes = [[10.0, 20.0, 100.0, 200.0]]
+
+    ref_set = _create_detection_artifacts(tmp_path / "ref", boxes, [0.95], [1])
+    act_set = _create_detection_artifacts(tmp_path / "act", boxes, [0.85], [1])  # diff = 0.10
+
+    # Strict score atol: fails
+    res_strict = comp.compare(ref_set, act_set, config={"score_atol": 0.01})
+    assert res_strict.passed is False
+    assert res_strict.metrics["matched"] == 0
+
+    # Generous score atol: passes
+    res_loose = comp.compare(ref_set, act_set, config={"score_atol": 0.15})
+    assert res_loose.passed is True
+    assert res_loose.metrics["matched"] == 1
+
+
+def test_object_detection_ordering_ignore_vs_exact(tmp_path: Path) -> None:
+    comp = ObjectDetectionComparator()
+    box_a = [10.0, 20.0, 100.0, 200.0]
+    box_b = [300.0, 300.0, 400.0, 400.0]
+
+    # Reference order: A, B
+    ref_set = _create_detection_artifacts(tmp_path / "ref", [box_a, box_b], [0.9, 0.8], [1, 2])
+    # Actual order: B, A (permuted)
+    act_set = _create_detection_artifacts(tmp_path / "act", [box_b, box_a], [0.8, 0.9], [2, 1])
+
+    # ordering="ignore" (default) -> should match out-of-order pairs and pass
+    res_ignore = comp.compare(ref_set, act_set, config={"ordering": "ignore"})
+    assert res_ignore.passed is True
+    assert res_ignore.metrics["matched"] == 2
+
+    # ordering="exact" -> pairwise compare fails due to permutation
+    res_exact = comp.compare(ref_set, act_set, config={"ordering": "exact"})
+    assert res_exact.passed is False
+    assert res_exact.metrics["matched"] == 0
+
+
+def test_object_detection_count_mismatch(tmp_path: Path) -> None:
+    comp = ObjectDetectionComparator()
+    box_a = [10.0, 20.0, 100.0, 200.0]
+    box_b = [300.0, 300.0, 400.0, 400.0]
+
+    ref_set = _create_detection_artifacts(tmp_path / "ref", [box_a, box_b], [0.9, 0.8], [1, 2])
+    act_set = _create_detection_artifacts(tmp_path / "act", [box_a], [0.9], [1])  # Missing box B
+
+    result = comp.compare(ref_set, act_set)
+    assert result.passed is False
+    assert result.metrics["reference_count"] == 2
+    assert result.metrics["actual_count"] == 1
+    assert result.metrics["matched"] == 1
+    assert result.metrics["unmatched_reference"] == 1
+    assert result.metrics["unmatched_actual"] == 0
+
+
+def test_object_detection_missing_role_short_circuits(tmp_path: Path) -> None:
+    comp = ObjectDetectionComparator()
+    ref_set = _create_detection_artifacts(tmp_path / "ref", [[1.0, 2.0, 3.0, 4.0]], [0.9], [1])
+
+    # act_set only contains boxes and scores, classes is missing
+    act_set: ArtifactSet = {
+        "boxes": Artifact("boxes", tmp_path / "ref" / "boxes.irtensor"),
+        "scores": Artifact("scores", tmp_path / "ref" / "scores.irtensor"),
+    }
+
+    result = run_comparator(comp, ref_set, act_set, required_roles=["boxes", "scores", "classes"])
+    assert result.passed is False
+    assert result.status == "fail"
+    assert result.first_failure["output"] == "classes"
+    assert "engine produced no output for role 'classes'" in result.first_failure["message"]
+
+
+def test_object_detection_registered_and_run_by_id(tmp_path: Path) -> None:
+    comp = ObjectDetectionComparator()
+    register_builtin_comparator(comp)
+
+    boxes = [[10.0, 20.0, 100.0, 200.0]]
+    ref_set = _create_detection_artifacts(tmp_path / "ref", boxes, [0.9], [1])
+    act_set = _create_detection_artifacts(tmp_path / "act", boxes, [0.9], [1])
+
+    result = run_comparator(OBJECT_DETECTION_COMPARATOR_ID, ref_set, act_set)
+    assert result.passed is True
+    assert result.status == "pass"
+    assert result.comparator == OBJECT_DETECTION_COMPARATOR_ID

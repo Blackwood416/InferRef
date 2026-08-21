@@ -23,7 +23,7 @@ from typing import Any
 
 from inferref.compare.layout import LayoutDiff, diff_layout
 from inferref.compare.metrics import Metrics, compute_metrics
-from inferref.compare.tolerance import TolerancePolicy
+from inferref.compare.tolerance import DEFAULT_TOLERANCES, TolerancePolicy
 from inferref.ir.package import TracePackage
 from inferref.ir.paths import resolve_contained_path
 from inferref.tensor import codec
@@ -101,6 +101,7 @@ class ComparisonReport:
     #: Set when ``--first-failure`` stopped the run early.
     stopped_early: bool = False
     tolerance: dict[str, Any] = field(default_factory=dict)
+    effective_comparison: dict[str, Any] | None = None
 
     @property
     def passed_count(self) -> int:
@@ -129,7 +130,7 @@ class ComparisonReport:
 
     def to_dict(self) -> dict[str, Any]:
         first = self.first_failure
-        return {
+        out: dict[str, Any] = {
             "status": self.status,
             "reference": self.reference,
             "actual": self.actual,
@@ -144,6 +145,9 @@ class ComparisonReport:
             "first_failure": first.to_dict() if first else None,
             "comparisons": [c.to_dict() for c in self.comparisons],
         }
+        if self.effective_comparison is not None:
+            out["effective_comparison"] = self.effective_comparison
+        return out
 
 
 # -- tensor-level ----------------------------------------------------------
@@ -249,16 +253,41 @@ def compare_testcase(
     ignore_stride: bool = False,
     strict_layout: bool = False,
     first_failure: bool = False,
+    effective_comparison: Any | None = None,
+    comparator: str | None = None,
+    comparison_config: dict[str, Any] | None = None,
 ) -> ComparisonReport:
     """Compare a testcase's reference outputs against an engine output directory."""
     testcase_dir = Path(testcase_dir)
     engine_dir = Path(engine_dir)
-    policy = policy or TolerancePolicy()
 
     validation = require_valid_testcase(testcase_dir)
     manifest = validation.manifest
+
+    if effective_comparison is None:
+        from inferref.comparison.resolution import resolve_comparison_policy
+
+        tc_spec = manifest.get("comparison")
+        effective_comparison = resolve_comparison_policy(
+            testcase_spec=tc_spec,
+            cli_comparator=comparator,
+            cli_atol=policy.override_atol if policy and policy.override_atol is not None else None,
+            cli_rtol=policy.override_rtol if policy and policy.override_rtol is not None else None,
+            cli_strict_layout=strict_layout if strict_layout else None,
+            cli_ignore_stride=ignore_stride if ignore_stride else None,
+            cli_tolerance=policy.per_dtype if (policy and policy.per_dtype != DEFAULT_TOLERANCES) else None,
+            cli_config=comparison_config,
+        )
+
+    resolved_policy = effective_comparison.to_tolerance_policy() if hasattr(effective_comparison, "to_tolerance_policy") else (policy or TolerancePolicy())
+    resolved_strict_layout = bool(effective_comparison.config.get("strict_layout", strict_layout)) if hasattr(effective_comparison, "config") else strict_layout
+    resolved_ignore_stride = bool(effective_comparison.config.get("ignore_stride", ignore_stride)) if hasattr(effective_comparison, "config") else ignore_stride
+
     report = ComparisonReport(
-        reference=str(testcase_dir), actual=str(engine_dir), tolerance=policy.to_dict()
+        reference=str(testcase_dir),
+        actual=str(engine_dir),
+        tolerance=resolved_policy.to_dict(),
+        effective_comparison=effective_comparison.to_dict() if hasattr(effective_comparison, "to_dict") else effective_comparison,
     )
 
     # An engine may declare its outputs explicitly; otherwise we probe filenames.
@@ -332,9 +361,9 @@ def compare_testcase(
             name,
             reference_path,
             actual_path,
-            policy=policy,
-            ignore_stride=ignore_stride,
-            strict_layout=strict_layout,
+            policy=resolved_policy,
+            ignore_stride=resolved_ignore_stride,
+            strict_layout=resolved_strict_layout,
             value_id=value_id,
         )
         _annotate_from_testcase(comparison, output)

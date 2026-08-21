@@ -21,8 +21,13 @@ from inferref.agent.process_policy import (
 )
 from inferref.agent.protocol import AgentProtocolError, EngineAdapter
 from inferref.agent.run_record import write_run_record
+from inferref.comparators.numeric import NUMERIC_COMPARATOR_ID
+from inferref.comparators.protocol import Artifact
+from inferref.comparators.runner import run_comparator
 from inferref.compare.compare import compare_testcase
-from inferref.compare.tolerance import TolerancePolicy
+from inferref.compare.tolerance import DEFAULT_TOLERANCES, TolerancePolicy
+from inferref.comparison.resolution import resolve_comparison_policy
+from inferref.comparison.schema import ComparisonSpec
 from inferref.contracts import contract_requirements
 from inferref.testcase.requirements import testcase_requirements
 from inferref.testcase.validate import require_valid_testcase
@@ -33,6 +38,12 @@ def execute_adapter(
     adapter: EngineAdapter,
     runs_root: str | Path,
     *,
+    suite_spec: ComparisonSpec | dict[str, Any] | None = None,
+    comparator: str | None = None,
+    comparison_config: dict[str, Any] | None = None,
+    atol: float | None = None,
+    rtol: float | None = None,
+    tolerance: str | Path | dict[str, Any] | None = None,
     policy: TolerancePolicy | None = None,
     ignore_stride: bool = False,
     strict_layout: bool = False,
@@ -45,6 +56,30 @@ def execute_adapter(
         raise AgentProtocolError(
             f"testcase is not independently reproducible after validation (blockers: {blockers})"
         )
+
+    tc_spec = validation.manifest.get("comparison")
+    cli_atol = policy.override_atol if policy and policy.override_atol is not None else atol
+    cli_rtol = policy.override_rtol if policy and policy.override_rtol is not None else rtol
+    cli_tolerance = policy.per_dtype if (policy and policy.per_dtype != DEFAULT_TOLERANCES) else tolerance
+
+    effective_comp = resolve_comparison_policy(
+        testcase_spec=tc_spec,
+        suite_spec=suite_spec,
+        cli_comparator=comparator,
+        cli_atol=cli_atol,
+        cli_rtol=cli_rtol,
+        cli_strict_layout=strict_layout if strict_layout is not False else None,
+        cli_ignore_stride=ignore_stride if ignore_stride is not False else None,
+        cli_tolerance=cli_tolerance,
+        cli_config=comparison_config,
+    )
+
+    # Pre-flight check: validate comparator plugin exists and config is valid before launching engine process
+    try:
+        effective_comp.validate()
+    except Exception as exc:
+        raise AgentProtocolError(f"invalid comparison policy: {exc}") from exc
+
     requirements = testcase_requirements(validation.manifest)
     capability_status = "unchecked"
     if adapter.capabilities is not None:
@@ -65,6 +100,7 @@ def execute_adapter(
                 "status": "unsupported",
                 "execution": None,
                 "comparison": None,
+                "effective_comparison": effective_comp.to_dict(),
                 "unsupported": incompatible,
             }
 
@@ -169,6 +205,7 @@ def execute_adapter(
         "output": str(output_path),
         "execution": execution,
         "comparison": None,
+        "effective_comparison": effective_comp.to_dict(),
         "requirements": requirements,
         "capability_status": capability_status,
     }
@@ -178,21 +215,55 @@ def execute_adapter(
         result["status"] = "execution_error"
     else:
         try:
-            report = compare_testcase(
-                testcase_path,
-                output_path,
-                policy=policy or TolerancePolicy(),
-                ignore_stride=ignore_stride,
-                strict_layout=strict_layout,
-                first_failure=first_failure,
-            )
+            if effective_comp.comparator != NUMERIC_COMPARATOR_ID:
+                manifest_outputs = validation.manifest.get("outputs", [])
+                ref_artifacts: dict[str, Artifact] = {}
+                for out_entry in manifest_outputs:
+                    role = out_entry.get("name", "output")
+                    payload = out_entry.get("payload")
+                    if payload:
+                        ref_artifacts[role] = Artifact(name=role, path=testcase_path / payload)
+
+                act_artifacts: dict[str, Artifact] = {}
+                for role in ref_artifacts:
+                    cand = output_path / f"{role}.irtensor"
+                    if cand.is_file():
+                        act_artifacts[role] = Artifact(name=role, path=cand)
+                    else:
+                        cand_outputs = output_path / "outputs" / f"{role}.irtensor"
+                        if cand_outputs.is_file():
+                            act_artifacts[role] = Artifact(name=role, path=cand_outputs)
+                        else:
+                            cand_any = list(output_path.glob(f"{role}.*"))
+                            if cand_any:
+                                act_artifacts[role] = Artifact(name=role, path=cand_any[0])
+
+                required_roles = [
+                    e.get("name", "output") for e in manifest_outputs if e.get("payload")
+                ]
+                comp_result = run_comparator(
+                    effective_comp.comparator,
+                    ref_artifacts,
+                    act_artifacts,
+                    config=effective_comp.config,
+                    required_roles=required_roles,
+                )
+                result["comparison"] = comp_result.to_dict()
+                result["comparator"] = comp_result.to_dict()
+                result["status"] = "pass" if comp_result.passed else ("error" if comp_result.status == "error" else "mismatch")
+            else:
+                report = compare_testcase(
+                    testcase_path,
+                    output_path,
+                    effective_comparison=effective_comp,
+                    first_failure=first_failure,
+                )
+                result["comparison"] = report.to_dict()
+                result["status"] = "pass" if report.status == "pass" else "mismatch"
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             result.update(
                 status="comparison_error",
                 comparison={"status": "error", "message": str(exc)},
             )
-        else:
-            result["comparison"] = report.to_dict()
-            result["status"] = "pass" if report.status == "pass" else "mismatch"
     write_run_record(output_path, result)
     return result

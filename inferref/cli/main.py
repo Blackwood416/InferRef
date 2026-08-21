@@ -10,6 +10,7 @@
     ├── validate
     ├── testcase {extract, dedup}
     ├── contract {list, show, validate}
+    ├── comparator {list, show}
     ├── adapter  {scaffold}
     ├── region   {list, create, detect, delete}
     ├── agent    {capabilities, context, extract, compare, run, evaluate}
@@ -234,6 +235,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             ignore_stride=args.ignore_stride,
             strict_layout=args.strict_layout,
             first_failure=args.first_failure,
+            comparator=getattr(args, "comparator", None),
         )
     else:
         print(
@@ -241,6 +243,13 @@ def cmd_compare(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_USAGE
+
+    if getattr(args, "json_summary", False):
+        from inferref.agent.summary import summarize_report
+
+        summary = summarize_report("compare", report)
+        print(json.dumps(summary, indent=2, ensure_ascii=False, default=str))
+        return EXIT_OK if report.status == "pass" else EXIT_FAIL
 
     _emit(report.to_dict(), render_report(report, verbose=args.verbose), args.json)
     return EXIT_OK if report.status == "pass" else EXIT_FAIL
@@ -430,6 +439,94 @@ def cmd_contract_validate(args: argparse.Namespace) -> int:
     return EXIT_OK if payload["status"] == "pass" else EXIT_FAIL
 
 
+# -- comparator -------------------------------------------------------------
+
+
+def cmd_comparator_list(args: argparse.Namespace) -> int:
+    from inferref.comparators import comparator_list, verify_comparators
+
+    statuses = verify_comparators()
+    entries = comparator_list()
+    errors = [
+        {
+            "entry_point": status.entry_point,
+            "distribution": status.distribution,
+            "message": status.error or f"{status.entry_point}: {status.status}",
+        }
+        for status in statuses
+        if status.status == "error"
+    ]
+    payload = {
+        "format": "inferref-comparator-list",
+        "comparators": [entry.to_dict() for entry in entries],
+        "errors": errors,
+    }
+    lines = [
+        f"{'Comparator':<40} {'Source':<15} Status",
+        f"{'-' * 40} {'-' * 15} -------",
+    ]
+    for entry in entries:
+        source = entry.distribution or entry.source
+        lines.append(f"{entry.id:<40} {source:<15} {entry.status}")
+    if errors:
+        lines.append("")
+        for error in errors:
+            distribution = error["distribution"] or "unknown distribution"
+            lines.append(
+                f"  {error['entry_point']} ({distribution}): {error['message']}"
+            )
+    _emit(payload, "\n".join(lines), args.json)
+    return EXIT_OK
+
+
+def cmd_comparator_show(args: argparse.Namespace) -> int:
+    from inferref.comparators import get_comparator
+
+    try:
+        comparator = get_comparator(args.id)
+    except Exception as exc:
+        payload = {
+            "format": "inferref-comparator-show",
+            "status": "error",
+            "error": {
+                "code": "comparator_error",
+                "message": str(exc),
+            },
+        }
+        _emit(payload, f"error: {exc}", args.json)
+        return EXIT_FAIL
+
+    if comparator is None:
+        payload = {
+            "format": "inferref-comparator-show",
+            "status": "error",
+            "error": {
+                "code": "comparator_unknown",
+                "message": f"unknown comparator {args.id!r}",
+            },
+        }
+        _emit(payload, f"error: unknown comparator {args.id!r}", args.json)
+        return EXIT_FAIL
+
+    comp_dict = {
+        "id": comparator.id,
+        "type": type(comparator).__name__,
+        "module": type(comparator).__module__,
+        "doc": getattr(comparator, "__doc__", None) or getattr(type(comparator), "__doc__", None) or "",
+    }
+    payload = {
+        "format": "inferref-comparator-show",
+        "status": "ok",
+        "comparator": comp_dict,
+    }
+    _emit(
+        payload,
+        json.dumps(comp_dict, indent=2, ensure_ascii=False),
+        args.json,
+    )
+    return EXIT_OK
+
+
 # -- adapter ----------------------------------------------------------------
 
 
@@ -461,9 +558,33 @@ def cmd_adapter_scaffold(args: argparse.Namespace) -> int:
 
 
 def cmd_region_list(args: argparse.Namespace) -> int:
+    from inferref.region.analysis import analyze_region
+
     package = _load(args.trace)
     if not package.regions:
         _emit({"regions": []}, "No regions defined.", args.json)
+        return EXIT_OK
+
+    if getattr(args, "details", False):
+        region_details = [analyze_region(package, r) for r in package.regions]
+        if args.json:
+            _emit({"regions": [d.to_dict() for d in region_details]}, "", True)
+            return EXIT_OK
+        lines = []
+        for d in region_details:
+            lines.append(f"{d.id}: {d.name}")
+            lines.append(f"  operators:           {d.operators}")
+            lines.append(f"  inputs:              {d.inputs}")
+            lines.append(f"  outputs:             {d.outputs}")
+            lines.append(f"  activation_bytes:    {d.activation_bytes}")
+            lines.append(f"  parameter_bytes:     {d.parameter_bytes} (estimated)")
+            lines.append(f"  largest_tensor:      {d.largest_tensor}")
+            lines.append(f"  payload_coverage:    {d.payload_coverage:.2%}")
+            lines.append(f"  reproducible:        {d.reproducible}")
+            lines.append(f"  mutation:            {d.mutation}")
+            if d.semantic_confidence is not None:
+                lines.append(f"  semantic_confidence: {d.semantic_confidence:.2f}")
+        _emit({"regions": [d.to_dict() for d in region_details]}, "\n".join(lines), False)
         return EXIT_OK
 
     lines = []
@@ -477,6 +598,42 @@ def cmd_region_list(args: argparse.Namespace) -> int:
     _emit(
         {"regions": [r.to_dict() for r in package.regions]}, "\n".join(lines), args.json
     )
+    return EXIT_OK
+
+
+def cmd_region_recommend(args: argparse.Namespace) -> int:
+    from inferref.region.recommend import recommend_regions
+
+    package = _load(args.trace)
+    recommendations = recommend_regions(
+        package, min_score=args.min_score, top=args.top
+    )
+    payload = {
+        "format": "inferref-region-recommendations",
+        "recommendations": [r.to_dict() for r in recommendations],
+    }
+    if args.json:
+        _emit(payload, "", True)
+        return EXIT_OK
+
+    if not recommendations:
+        print("No recommended regions found.")
+        return EXIT_OK
+
+    lines = ["Recommended regions:"]
+    for rec in recommendations:
+        d = rec.details
+        total_boundary = (d.activation_bytes + d.parameter_bytes) / (1024 * 1024)
+        lines.append(f"  [{rec.score:+3d} pts]  {rec.region_id}: {rec.region_name}")
+        lines.append(
+            f"          ops: {d.operators}, in: {d.inputs}, out: {d.outputs}, "
+            f"boundary: {total_boundary:.2f} MB"
+        )
+        for reason in rec.reasons:
+            lines.append(f"            {reason}")
+        for warning in rec.warnings:
+            lines.append(f"            WARNING: {warning}")
+    _emit(payload, "\n".join(lines), False)
     return EXIT_OK
 
 
@@ -631,6 +788,13 @@ def _agent_exit(status: str) -> int:
 
 
 def _agent_emit(response: Any, args: argparse.Namespace) -> int:
+    if getattr(args, "json_summary", False):
+        from inferref.agent.summary import summarize_report
+
+        summary = summarize_report(response.operation, response)
+        print(json.dumps(summary, indent=2, ensure_ascii=False, default=str))
+        return _agent_exit(response.status)
+
     payload = response.to_dict()
     text = f"{response.operation}: {response.status}"
     if response.diagnostics:
@@ -676,6 +840,7 @@ def cmd_agent_compare(args: argparse.Namespace) -> int:
     response = compare_outputs(
         args.testcase,
         args.engine_output,
+        comparator=getattr(args, "comparator", None),
         atol=args.atol,
         rtol=args.rtol,
         ignore_stride=args.ignore_stride,
@@ -692,6 +857,7 @@ def cmd_agent_run(args: argparse.Namespace) -> int:
         args.testcase,
         args.adapter,
         args.runs_dir,
+        comparator=getattr(args, "comparator", None),
         atol=args.atol,
         rtol=args.rtol,
         ignore_stride=args.ignore_stride,
@@ -710,6 +876,7 @@ def cmd_agent_run_scenario(args: argparse.Namespace) -> int:
         args.runs_dir,
         state_mode=args.state_mode,
         compare_state=args.compare_state,
+        comparator=getattr(args, "comparator", None),
         atol=args.atol,
         rtol=args.rtol,
         ignore_stride=args.ignore_stride,
@@ -771,7 +938,20 @@ def cmd_suite_run(args: argparse.Namespace) -> int:
         args.runs_dir,
         allow_unsupported=args.allow_unsupported,
         fail_fast=args.fail_fast,
+        comparator=getattr(args, "comparator", None),
+        tolerance=getattr(args, "tolerance", None),
+        atol=getattr(args, "atol", None),
+        rtol=getattr(args, "rtol", None),
+        ignore_stride=getattr(args, "ignore_stride", False),
+        strict_layout=getattr(args, "strict_layout", False),
     )
+    if getattr(args, "json_summary", False):
+        from inferref.agent.summary import summarize_report
+
+        summary = summarize_report("suite_run", report)
+        print(json.dumps(summary, indent=2, ensure_ascii=False, default=str))
+        return EXIT_OK if report["exit_code_policy_satisfied"] else EXIT_FAIL
+
     _emit(
         report,
         f"Suite run: {report['status'].upper()} ({report['counts']['pass']}/{report['counts']['total']} passed)",
@@ -827,12 +1007,21 @@ def cmd_scenario_run(args: argparse.Namespace) -> int:
         compare_state=args.compare_state,
         allow_unsupported=args.allow_unsupported,
         fail_fast=args.fail_fast,
+        comparator=getattr(args, "comparator", None),
+        tolerance=getattr(args, "tolerance", None),
         atol=args.atol,
         rtol=args.rtol,
         ignore_stride=args.ignore_stride,
         strict_layout=args.strict_layout,
         first_failure=args.first_failure,
     )
+    if getattr(args, "json_summary", False):
+        from inferref.agent.summary import summarize_report
+
+        summary = summarize_report("scenario_run", report)
+        print(json.dumps(summary, indent=2, ensure_ascii=False, default=str))
+        return EXIT_OK if report["accepted"] else EXIT_FAIL
+
     _emit(
         report,
         f"Scenario run: {report['status'].upper()} "
@@ -868,10 +1057,23 @@ def cmd_export(args: argparse.Namespace) -> int:
 # -- parser ----------------------------------------------------------------
 
 
-def _add_json(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--json", action="store_true", help="emit machine-readable JSON (SPEC §42)"
-    )
+def _add_json(
+    parser: argparse.ArgumentParser, *, allow_summary: bool = False
+) -> None:
+    if allow_summary:
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument(
+            "--json", action="store_true", help="emit machine-readable JSON (SPEC §42)"
+        )
+        group.add_argument(
+            "--json-summary",
+            action="store_true",
+            help="emit compact agent summary JSON (SPEC §9)",
+        )
+    else:
+        parser.add_argument(
+            "--json", action="store_true", help="emit machine-readable JSON (SPEC §42)"
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1019,6 +1221,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="stop at the earliest divergence (SPEC §30)",
     )
+    p.add_argument("--comparator", help="comparator ID (default: tensor/numeric/v1)")
     p.add_argument("--atol", type=float, help="absolute tolerance override")
     p.add_argument("--rtol", type=float, help="relative tolerance override")
     p.add_argument("--tolerance", help="JSON file with per-dtype tolerances (SPEC §27)")
@@ -1038,7 +1241,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "-v", "--verbose", action="store_true", help="list every compared tensor"
     )
-    _add_json(p)
+    _add_json(p, allow_summary=True)
     p.set_defaults(func=cmd_compare)
 
     # testcase
@@ -1108,6 +1311,24 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json(q)
     q.set_defaults(func=cmd_contract_validate)
 
+    # comparator
+    p = sub.add_parser(
+        "comparator",
+        help="inspect comparison plugins and registry",
+    )
+    csub = p.add_subparsers(dest="comparator_command", metavar="<subcommand>")
+
+    q = csub.add_parser(
+        "list", help="list built-in and discovered comparator plugins"
+    )
+    _add_json(q)
+    q.set_defaults(func=cmd_comparator_list)
+
+    q = csub.add_parser("show", help="show one resolved comparator plugin")
+    q.add_argument("id", help="versioned comparator ID, e.g. tensor/numeric/v1")
+    _add_json(q)
+    q.set_defaults(func=cmd_comparator_show)
+
     # adapter
     p = sub.add_parser(
         "adapter", help="scaffold engine adapter projects from testcases"
@@ -1148,8 +1369,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     q = rsub.add_parser("list", help="list regions")
     q.add_argument("trace", help="trace package directory")
+    q.add_argument(
+        "--details",
+        action="store_true",
+        help="show detailed boundary and reproducibility metrics (SPEC §10.1)",
+    )
     _add_json(q)
     q.set_defaults(func=cmd_region_list)
+
+    q = rsub.add_parser(
+        "recommend",
+        help="score and rank regions deterministically for engine extraction (SPEC §10.3)",
+    )
+    q.add_argument("trace", help="trace package directory")
+    q.add_argument("--top", type=int, help="show at most this many recommendations")
+    q.add_argument(
+        "--min-score", type=int, help="only show regions with score >= min-score"
+    )
+    _add_json(q)
+    q.set_defaults(func=cmd_region_recommend)
 
     q = rsub.add_parser("create", help="create a region")
     q.add_argument("trace", help="trace package directory")
@@ -1244,7 +1482,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("testcase", help="standalone testcase directory")
     q.add_argument("engine_output", help="engine output directory")
     _add_agent_compare_options(q)
-    _add_json(q)
+    _add_json(q, allow_summary=True)
     q.set_defaults(func=cmd_agent_compare)
 
     q = asub.add_parser(
@@ -1259,7 +1497,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="parent directory for fresh per-run outputs",
     )
     _add_agent_compare_options(q)
-    _add_json(q)
+    _add_json(q, allow_summary=True)
     q.set_defaults(func=cmd_agent_run)
 
     q = asub.add_parser(
@@ -1285,7 +1523,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="compare engine-produced state against reference state in engine mode",
     )
     _add_agent_compare_options(q)
-    _add_json(q)
+    _add_json(q, allow_summary=True)
     q.set_defaults(func=cmd_agent_run_scenario)
 
     q = asub.add_parser(
@@ -1357,7 +1595,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="stop on the first cell configuration/infrastructure exception",
     )
-    _add_json(q)
+    q.add_argument("--comparator", help="comparator plugin ID override")
+    q.add_argument("--tolerance", help="JSON file with per-dtype tolerances")
+    q.add_argument("--atol", type=float, help="absolute tolerance override")
+    q.add_argument("--rtol", type=float, help="relative tolerance override")
+    q.add_argument(
+        "--ignore-stride",
+        action="store_true",
+        help="do not report stride/storage-offset differences",
+    )
+    q.add_argument(
+        "--strict-layout",
+        action="store_true",
+        help="treat stride/storage-offset differences as failures",
+    )
+    _add_json(q, allow_summary=True)
     q.set_defaults(func=cmd_suite_run)
 
     q = ssub.add_parser("report", help="render a suite run as static HTML and JSON")
@@ -1413,6 +1665,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="raise on the first unexpected infrastructure exception",
     )
+    q.add_argument("--comparator", help="comparator plugin ID override")
+    q.add_argument("--tolerance", help="JSON file with per-dtype tolerances")
     q.add_argument("--atol", type=float, help="absolute tolerance override")
     q.add_argument("--rtol", type=float, help="relative tolerance override")
     q.add_argument(
@@ -1438,7 +1692,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop at the earliest divergence (default)",
     )
     q.set_defaults(first_failure=True)
-    _add_json(q)
+    _add_json(q, allow_summary=True)
     q.set_defaults(func=cmd_scenario_run)
 
     # export
@@ -1451,6 +1705,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_agent_compare_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--comparator", help="comparator plugin ID override")
     parser.add_argument("--atol", type=float, help="absolute tolerance override")
     parser.add_argument("--rtol", type=float, help="relative tolerance override")
     parser.add_argument(

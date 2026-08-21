@@ -13,8 +13,7 @@
 //     auto testcase = inferref::Testcase::Load("repro/rope");
 //     auto inputs = testcase.Inputs();
 //     auto outputs = RunYourEngine(testcase.RegionName(), inputs);
-//     for (const auto &name : testcase.OutputNames())
-//         testcase.WriteOutput(name, outputs.at(name));
+//     testcase.WriteOutputs(outputs, "RunYourEngine");
 //     testcase.Finish();
 
 #ifndef INFERREF_TESTCASE_HPP
@@ -62,10 +61,11 @@ public:
         }
         if (!root.Has("format_version") || !root.At("format_version").IsString() ||
             (root.At("format_version").string != "0.1" &&
-             root.At("format_version").string != "0.2"))
+             root.At("format_version").string != "0.2" &&
+             root.At("format_version").string != "0.3"))
         {
             throw TestcaseError(
-                "unsupported testcase format_version; this build reads 0.1 and 0.2");
+                "unsupported testcase format_version; this build reads 0.1, 0.2, and 0.3");
         }
 
         Testcase result;
@@ -129,6 +129,41 @@ public:
         const std::string relative = name + ".irtensor";
         WriteIRTensor(OutputDir() + "/" + relative, tensor);
         written_outputs_[name] = relative;
+    }
+
+    // Validate all declared output roles are present and no undeclared roles
+    // are returned before writing any files to disk. Only after all checks pass,
+    // write each output IRTensor to disk and record it for Finish().
+    void WriteOutputs(
+        const std::map<std::string, IRTensor> &outputs,
+        const std::string &caller_label = "engine")
+    {
+        if (finished_)
+            throw TestcaseError("cannot write output after Finish()");
+        for (const std::string &name : output_names_)
+        {
+            if (outputs.find(name) == outputs.end())
+            {
+                throw TestcaseError(caller_label + " did not return output role '" +
+                                    name + "'");
+            }
+        }
+        for (const auto &entry : outputs)
+        {
+            if (std::find(output_names_.begin(), output_names_.end(),
+                          entry.first) == output_names_.end())
+            {
+                throw TestcaseError(caller_label +
+                                    " returned undeclared output role '" +
+                                    entry.first + "'");
+            }
+        }
+        for (const std::string &name : output_names_)
+        {
+            const std::string relative = name + ".irtensor";
+            WriteIRTensor(OutputDir() + "/" + relative, outputs.at(name));
+            written_outputs_[name] = relative;
+        }
     }
 
     // Write manifest.json with every output written so far, in declared output

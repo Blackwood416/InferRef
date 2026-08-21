@@ -9,6 +9,12 @@ from inferref.agent.protocol import (
     AgentResponse,
     EngineAdapter,
 )
+from inferref.agent.summary import (
+    AGENT_SUMMARY_FORMAT,
+    AGENT_SUMMARY_FORMAT_VERSION,
+    build_agent_summary,
+    summarize_report,
+)
 
 _SERVICE_OPERATIONS = frozenset(
     {
@@ -24,17 +30,19 @@ _SERVICE_OPERATIONS = frozenset(
 __all__ = [
     "AGENT_PROTOCOL_FORMAT",
     "AGENT_PROTOCOL_VERSION",
-    "ENGINE_ADAPTER_FORMAT",
-    "ENGINE_ADAPTER_VERSION",
+    "AGENT_SUMMARY_FORMAT",
+    "AGENT_SUMMARY_FORMAT_VERSION",
     "AdapterCapabilities",
     "AgentResponse",
     "EngineAdapter",
+    "build_agent_summary",
     "capabilities",
     "compare_outputs",
     "context",
     "extract_testcase",
     "run_engine",
     "run_scenario",
+    "summarize_report",
 ]
 
 

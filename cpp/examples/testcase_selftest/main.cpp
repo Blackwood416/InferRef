@@ -287,6 +287,120 @@ void TestErrors(const std::string &base)
     Check(malformed_rejected, "malformed manifest JSON raises ParseError");
 }
 
+void TestWriteOutputs(const std::string &base)
+{
+    std::printf("batch WriteOutputs with role validation and atomicity\n");
+    const std::string dir = base + "/write-outputs";
+    std::filesystem::create_directories(dir + "/inputs");
+    inferref::WriteIRTensor(dir + "/inputs/x.irtensor",
+                            MakeFloat32({1}, {1.0f}));
+    inferref::WriteIRTensor(dir + "/inputs/scale.irtensor",
+                            MakeFloat32({1}, {1.0f}));
+    WriteFile(dir + "/testcase.json", TestcaseJson("", ""));
+
+    // 1. Missing output role error + atomic guarantee (no partial file written)
+    {
+        inferref::Testcase testcase = inferref::Testcase::Load(dir);
+        std::map<std::string, inferref::IRTensor> partial_map = {
+            {"y", MakeFloat32({2}, {1.0f, 2.0f})},
+        };
+        bool missing_role_threw = false;
+        std::string err_msg;
+        try
+        {
+            testcase.WriteOutputs(partial_map, "RunYourEngine");
+        }
+        catch (const inferref::TestcaseError &error)
+        {
+            missing_role_threw = true;
+            err_msg = error.what();
+        }
+        Check(missing_role_threw, "WriteOutputs missing role throws TestcaseError");
+        Check(err_msg == "RunYourEngine did not return output role 'z'",
+              "WriteOutputs error message formats '{caller_label} did not return output role '{role}''");
+        Check(!std::filesystem::exists(dir + "/y.irtensor"),
+              "WriteOutputs leaves no partial files on missing role error");
+    }
+
+    // 2. Default caller label check on missing role
+    {
+        inferref::Testcase testcase = inferref::Testcase::Load(dir);
+        std::map<std::string, inferref::IRTensor> partial_map = {
+            {"y", MakeFloat32({2}, {1.0f, 2.0f})},
+        };
+        std::string err_msg;
+        try
+        {
+            testcase.WriteOutputs(partial_map);
+        }
+        catch (const inferref::TestcaseError &error)
+        {
+            err_msg = error.what();
+        }
+        Check(err_msg == "engine did not return output role 'z'",
+              "WriteOutputs default caller label is 'engine'");
+    }
+
+    // 3. Undeclared output role error + atomic guarantee
+    {
+        inferref::Testcase testcase = inferref::Testcase::Load(dir);
+        std::map<std::string, inferref::IRTensor> extra_map = {
+            {"y", MakeFloat32({2}, {1.0f, 2.0f})},
+            {"z", MakeFloat32({1}, {3.0f})},
+            {"extra_role", MakeFloat32({1}, {4.0f})},
+        };
+        bool extra_role_threw = false;
+        std::string err_msg;
+        try
+        {
+            testcase.WriteOutputs(extra_map, "RunYourEngine");
+        }
+        catch (const inferref::TestcaseError &error)
+        {
+            extra_role_threw = true;
+            err_msg = error.what();
+        }
+        Check(extra_role_threw, "WriteOutputs undeclared role throws TestcaseError");
+        Check(err_msg == "RunYourEngine returned undeclared output role 'extra_role'",
+              "WriteOutputs error message formats '{caller_label} returned undeclared output role '{role}''");
+        Check(!std::filesystem::exists(dir + "/y.irtensor"),
+              "WriteOutputs leaves no partial files on undeclared role error");
+    }
+
+    // 4. Happy path: valid outputs write all files and manifest matches on Finish()
+    {
+        inferref::Testcase testcase = inferref::Testcase::Load(dir);
+        std::map<std::string, inferref::IRTensor> valid_map = {
+            {"y", MakeFloat32({2}, {10.0f, 20.0f})},
+            {"z", MakeFloat32({1}, {30.0f})},
+        };
+        testcase.WriteOutputs(valid_map, "RunYourEngine");
+        Check(std::filesystem::exists(dir + "/y.irtensor"), "valid WriteOutputs writes y.irtensor");
+        Check(std::filesystem::exists(dir + "/z.irtensor"), "valid WriteOutputs writes z.irtensor");
+
+        testcase.Finish();
+        const std::string manifest_str = ReadFile(dir + "/manifest.json");
+        const inferref::json::Value manifest = inferref::json::Parse(manifest_str);
+        Check(manifest.At("outputs").array.size() == 2, "manifest has 2 outputs after Finish");
+        Check(manifest.At("outputs").array[0].At("name").string == "y", "manifest output 0 is y");
+        Check(manifest.At("outputs").array[1].At("name").string == "z", "manifest output 1 is z");
+
+        // 5. WriteOutputs after Finish throws TestcaseError
+        bool after_finish_threw = false;
+        try
+        {
+            testcase.WriteOutputs(valid_map, "RunYourEngine");
+        }
+        catch (const inferref::TestcaseError &error)
+        {
+            after_finish_threw = true;
+            Check(std::string(error.what()) == "cannot write output after Finish()",
+                  "WriteOutputs after Finish throws 'cannot write output after Finish()'");
+        }
+        Check(after_finish_threw, "WriteOutputs after Finish throws");
+    }
+}
+
 void TestPartialFinish(const std::string &base)
 {
     std::printf("Finish publishes only written outputs\n");
@@ -351,6 +465,7 @@ int main(int argc, char **argv)
 
         TestLoadAndInputs(base);
         TestOutputsAndFinish(base);
+        TestWriteOutputs(base);
         TestRegionFallback(base);
         TestErrors(base);
         TestPartialFinish(base);

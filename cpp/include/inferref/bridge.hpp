@@ -55,29 +55,7 @@ inline int RunBridge(const std::string &testcase_dir,
         }
         const std::map<std::string, IRTensor> outputs =
             invoke(region, testcase.Inputs());
-        const std::vector<std::string> output_names = testcase.OutputNames();
-        // Validate the full output contract before writing anything, so a bad
-        // callback cannot leave partial output files behind.
-        for (const std::string &name : output_names)
-        {
-            const auto found = outputs.find(name);
-            if (found == outputs.end())
-            {
-                throw TestcaseError("DebugInvoke did not return output role '" +
-                                    name + "'");
-            }
-        }
-        for (const auto &entry : outputs)
-        {
-            if (std::find(output_names.begin(), output_names.end(),
-                          entry.first) == output_names.end())
-            {
-                throw TestcaseError("DebugInvoke returned undeclared output role '" +
-                                    entry.first + "'");
-            }
-        }
-        for (const std::string &name : output_names)
-            testcase.WriteOutput(name, outputs.at(name));
+        testcase.WriteOutputs(outputs, "DebugInvoke");
         testcase.Finish();
         return kBridgeOk;
     }

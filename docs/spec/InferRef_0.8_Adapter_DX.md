@@ -302,7 +302,7 @@ output-role contract and cannot accidentally lose names.
 
 ### 7.3 Reference implementation
 
-Add `examples/runtime_bridge/main.cpp`:
+Add `cpp/examples/runtime_bridge/main.cpp`:
 
 1. parse `--testcase` / `--output`;
 2. load the testcase with `testcase.hpp`;
@@ -448,7 +448,7 @@ a new T1 work item, not an existing capability.
 ### 11.3 Runtime bridge
 
 - [ ] `bridge.hpp` exists and uses named outputs.
-- [ ] `examples/runtime_bridge/main.cpp` compiles.
+- [ ] `cpp/examples/runtime_bridge/main.cpp` compiles.
 - [ ] A stub `DebugInvoke` runs a fixture testcase end to end.
 - [ ] Missing region dispatch returns `missing_region`.
 
@@ -476,7 +476,7 @@ a new T1 work item, not an existing capability.
 
 ### A3: Runtime bridge
 
-- Files: `cpp/include/inferref/bridge.hpp`, `examples/runtime_bridge/main.cpp`
+- Files: `cpp/include/inferref/bridge.hpp`, `cpp/examples/runtime_bridge/main.cpp`
 - Outcome: section 7 API and reference implementation.
 - Verify: stub bridge runs a fixture testcase.
 

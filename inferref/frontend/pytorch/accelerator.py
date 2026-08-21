@@ -15,21 +15,54 @@ import torch
 
 
 @dataclass(frozen=True)
+class DeviceDetails:
+    id: int
+    name: str
+    driver_version: str | None = None
+    total_memory: int | None = None
+    available_memory: int | None = None
+    compute_capability: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"id": self.id, "name": self.name}
+        if self.driver_version is not None:
+            out["driver_version"] = self.driver_version
+        if self.total_memory is not None:
+            out["total_memory"] = self.total_memory
+        if self.available_memory is not None:
+            out["available_memory"] = self.available_memory
+        if self.compute_capability is not None:
+            out["compute_capability"] = self.compute_capability
+        return out
+
+
+@dataclass(frozen=True)
 class AcceleratorInfo:
     type: str
     available: bool
     device_count: int
     device_names: tuple[str, ...] = ()
+    devices: tuple[DeviceDetails, ...] = ()
+    runtime_version: str | None = None
+    onednn_version: str | None = None
     reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "type": self.type,
             "available": self.available,
             "device_count": self.device_count,
             "device_names": list(self.device_names),
-            **({"reason": self.reason} if self.reason else {}),
         }
+        if self.devices:
+            out["devices"] = [d.to_dict() for d in self.devices]
+        if self.runtime_version is not None:
+            out["runtime_version"] = self.runtime_version
+        if self.onednn_version is not None:
+            out["onednn_version"] = self.onednn_version
+        if self.reason:
+            out["reason"] = self.reason
+        return out
 
 
 def accelerator_module(device_type: str) -> Any | None:
@@ -39,23 +72,101 @@ def accelerator_module(device_type: str) -> Any | None:
     return getattr(torch, device_type, None)
 
 
+def _get_onednn_version() -> str | None:
+    try:
+        if hasattr(torch.backends, "mkldnn") and torch.backends.mkldnn.is_available():
+            # Best-effort version extraction
+            return getattr(torch.backends.mkldnn, "__version__", "enabled")
+    except Exception:
+        pass
+    return None
+
+
 def accelerator_info(device_type: str) -> AcceleratorInfo:
+    onednn = _get_onednn_version()
     if device_type == "cpu":
-        return AcceleratorInfo("cpu", True, 1, ("CPU",))
+        cpu_device = DeviceDetails(id=0, name="CPU")
+        return AcceleratorInfo(
+            "cpu",
+            True,
+            1,
+            ("CPU",),
+            devices=(cpu_device,),
+            onednn_version=onednn,
+        )
     module = accelerator_module(device_type)
     if module is None or not callable(getattr(module, "is_available", None)):
-        return AcceleratorInfo(device_type, False, 0, reason="backend unavailable")
+        return AcceleratorInfo(
+            device_type,
+            False,
+            0,
+            reason="backend unavailable",
+            onednn_version=onednn,
+        )
     try:
         available = bool(module.is_available())
         count = int(module.device_count()) if available else 0
-        names = tuple(str(module.get_device_name(index)) for index in range(count))
-        return AcceleratorInfo(device_type, available, count, names)
+        names: list[str] = []
+        devices: list[DeviceDetails] = []
+        runtime_ver = getattr(torch.version, device_type, None)
+
+        for index in range(count):
+            dev_name = str(module.get_device_name(index))
+            names.append(dev_name)
+            tot_mem: int | None = None
+            avail_mem: int | None = None
+            cap_str: str | None = None
+
+            try:
+                props = module.get_device_properties(index)
+                tot_mem = getattr(props, "total_memory", None)
+            except Exception:
+                pass
+
+            try:
+                if hasattr(module, "mem_get_info"):
+                    free, total = module.mem_get_info(index)
+                    avail_mem = free
+                    if tot_mem is None:
+                        tot_mem = total
+            except Exception:
+                pass
+
+            try:
+                if hasattr(module, "get_device_capability"):
+                    cap = module.get_device_capability(index)
+                    if isinstance(cap, (tuple, list)) and len(cap) >= 2:
+                        cap_str = f"{cap[0]}.{cap[1]}"
+            except Exception:
+                pass
+
+            devices.append(
+                DeviceDetails(
+                    id=index,
+                    name=dev_name,
+                    driver_version=str(runtime_ver) if runtime_ver else None,
+                    total_memory=tot_mem,
+                    available_memory=avail_mem,
+                    compute_capability=cap_str,
+                )
+            )
+
+        return AcceleratorInfo(
+            device_type,
+            available,
+            count,
+            tuple(names),
+            devices=tuple(devices),
+            runtime_version=str(runtime_ver) if runtime_ver else None,
+            onednn_version=onednn,
+        )
     except Exception as exc:
         return AcceleratorInfo(
             device_type,
             False,
             0,
             reason=f"{type(exc).__name__}: {exc}",
+            onednn_version=onednn,
         )
 
 

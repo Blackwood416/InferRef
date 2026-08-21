@@ -92,8 +92,7 @@ int main(int argc, char **argv)
         auto inputs = testcase.Inputs();
         auto outputs = RunYourEngine(testcase.RegionName(), inputs);
 
-        for (const auto &name : testcase.OutputNames())
-            testcase.WriteOutput(name, outputs.at(name));
+        testcase.WriteOutputs(outputs, "RunYourEngine");
         testcase.Finish();
         return 0;
     }

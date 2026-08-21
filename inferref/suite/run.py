@@ -47,6 +47,13 @@ def run_suite(
     *,
     allow_unsupported: bool = False,
     fail_fast: bool = False,
+    comparator: str | None = None,
+    comparison_config: dict[str, Any] | None = None,
+    tolerance: str | Path | dict[str, Any] | None = None,
+    atol: float | None = None,
+    rtol: float | None = None,
+    ignore_stride: bool = False,
+    strict_layout: bool = False,
 ) -> dict[str, Any]:
     """Run each testcase against one or more adapters and write a matrix report."""
 
@@ -82,9 +89,28 @@ def run_suite(
                         engine,
                         case_root,
                         allow_unsupported=allow_unsupported,
+                        comparator=comparator,
+                        comparison_config=comparison_config,
+                        tolerance=tolerance,
+                        atol=atol,
+                        rtol=rtol,
+                        ignore_stride=ignore_stride,
+                        strict_layout=strict_layout,
                     )
                 else:
-                    result = execute_adapter(case.testcase, engine, case_root)
+                    result = execute_adapter(
+                        case.testcase,
+                        engine,
+                        case_root,
+                        suite_spec=case.comparison,
+                        comparator=comparator,
+                        comparison_config=comparison_config,
+                        tolerance=tolerance,
+                        atol=atol,
+                        rtol=rtol,
+                        ignore_stride=ignore_stride,
+                        strict_layout=strict_layout,
+                    )
             except (AgentProtocolError, OSError, ValueError) as exc:
                 if fail_fast:
                     raise

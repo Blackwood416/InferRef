@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inferref-vision"
+version = "0.1.0"
+description = "Fixture comparator pack for InferRef comparator registry tests"
+requires-python = ">=3.10"
+
+[project.entry-points."inferref.comparators"]
+"vision/object-detection/v1" = "inferref_vision.detection:DetectionComparator"
+"broken/comparator/v1" = "inferref_vision.detection:BrokenComparator"
+
+[tool.setuptools]
+packages = ["inferref_vision"]

@@ -9,7 +9,7 @@
   - `inferref adapter scaffold` generates a compilable C++ adapter project
     from a testcase, including `CMakeLists.txt`, `adapter.json`, `main.cpp`,
     and `README.md`;
-  - `cpp/include/inferref/bridge.hpp` and `examples/runtime_bridge/main.cpp`
+  - `cpp/include/inferref/bridge.hpp` and `cpp/examples/runtime_bridge/main.cpp`
     provide a generic runtime bridge with named `DebugInvoke` outputs;
   - bridge-mode scaffolding and the first YOLO/Aila TFCM runbook are
     committed.

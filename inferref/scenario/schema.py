@@ -78,6 +78,7 @@ class ScenarioStep:
     testcase: Path
     input_bindings: dict[str, str] = field(default_factory=dict)
     output_bindings: dict[str, str] = field(default_factory=dict)
+    comparison: Any | None = None
 
     def to_dict(self, root: Path) -> dict[str, Any]:
         record: dict[str, Any] = {
@@ -90,6 +91,12 @@ class ScenarioStep:
                 record["bindings"]["inputs"] = dict(self.input_bindings)
             if self.output_bindings:
                 record["bindings"]["outputs"] = dict(self.output_bindings)
+        if self.comparison is not None:
+            record["comparison"] = (
+                self.comparison.to_dict()
+                if hasattr(self.comparison, "to_dict")
+                else dict(self.comparison)
+            )
         return record
 
 
@@ -514,6 +521,33 @@ def _steps(
                     written_in_step.add(name)
                 elif prefix == "scenario.outputs":
                     written_outputs.add(name)
+
+        step_comparison = None
+        raw_comparison = record.get("comparison")
+        if raw_comparison is not None:
+            if not isinstance(raw_comparison, dict):
+                issues.append(
+                    _issue(
+                        "scenario_invalid_manifest",
+                        "step comparison must be an object",
+                        f"{where}.comparison",
+                    )
+                )
+            else:
+                from inferref.comparison.schema import ComparisonSpec, ComparisonSpecValidationError
+
+                try:
+                    step_comparison = ComparisonSpec.from_dict(raw_comparison)
+                    step_comparison.validate(check_registry=True)
+                except (ComparisonSpecValidationError, ValueError) as exc:
+                    issues.append(
+                        _issue(
+                            "scenario_invalid_manifest",
+                            f"step comparison is invalid: {exc}",
+                            f"{where}.comparison",
+                        )
+                    )
+
         if testcase_path is not None:
             steps.append(
                 ScenarioStep(
@@ -524,6 +558,7 @@ def _steps(
                     testcase=testcase_path,
                     input_bindings=input_bindings,
                     output_bindings=output_bindings,
+                    comparison=step_comparison,
                 )
             )
         initialized.update(written_in_step)

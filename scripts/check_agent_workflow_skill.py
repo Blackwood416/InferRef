@@ -37,7 +37,15 @@ GUIDE_REL = Path("docs") / "AGENT_WORKFLOW.md"
 SKILL_REL = Path("skills") / "inferref" / "SKILL.md"
 OPENAI_YAML_REL = Path("skills") / "inferref" / "agents" / "openai.yaml"
 SKILL_DIR_REL = Path("skills") / "inferref"
-COMMAND_GROUPS = ("agent", "scenario", "suite", "contract", "region", "testcase")
+COMMAND_GROUPS = (
+    "agent",
+    "scenario",
+    "suite",
+    "contract",
+    "comparator",
+    "region",
+    "testcase",
+)
 
 _PATH_PATTERNS = (
     (re.compile(r"E:\\RiderProjects", re.IGNORECASE), "author machine path"),

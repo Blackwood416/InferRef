@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -89,7 +91,7 @@ def test_scaffold_generates_four_files_and_a_valid_adapter(
 
     main_cpp = (out / "main.cpp").read_text(encoding="utf-8")
     assert "RunYourEngine" in main_cpp
-    assert "outputs.at(name)" in main_cpp
+    assert 'testcase.WriteOutputs(outputs, "RunYourEngine")' in main_cpp
     assert "testcase.Finish()" in main_cpp
     assert "catch (const std::exception" in main_cpp
     assert "catch (...)" in main_cpp
@@ -219,3 +221,91 @@ def test_scaffold_cli_rejects_unsupported_language(tmp_path: Path) -> None:
     case = _case(tmp_path / "case")
     with pytest.raises(SystemExit):
         main(["adapter", "scaffold", str(case), "--language", "rust"])
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("bridge_mode", [False, True])
+def test_scaffolded_project_compiles_with_cmake(
+    tmp_path: Path, bridge_mode: bool
+) -> None:
+    """Acceptance F2: end-to-end CMake configure and build of scaffolded project."""
+    cmake_exe = shutil.which("cmake")
+    if not cmake_exe:
+        pytest.skip("CMake is not available on PATH")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    cpp_include = repo_root / "cpp" / "include"
+    if not (cpp_include / "inferref" / "testcase.hpp").is_file():
+        pytest.skip(f"InferRef C++ include directory not found: {cpp_include}")
+
+    case = _case(tmp_path / "case")
+    proj_dir = tmp_path / ("bridge_proj" if bridge_mode else "standard_proj")
+    scaffold_adapter(case, proj_dir, runtime_bridge=bridge_mode)
+
+    build_dir = proj_dir / "build"
+    configure_cmd = [
+        cmake_exe,
+        "-S",
+        str(proj_dir),
+        "-B",
+        str(build_dir),
+        f"-DINFERREF_CPP_INCLUDE={cpp_include.as_posix()}",
+    ]
+    configure_res = subprocess.run(
+        configure_cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if configure_res.returncode != 0:
+        combined = f"{configure_res.stdout}\n{configure_res.stderr}"
+        if (
+            "No CMAKE_CXX_COMPILER could be found" in combined
+            or "The C++ compiler" in combined
+            or "is not able to compile a simple test program" in combined
+            or "compiler not found" in combined.lower()
+            or "c1083" in combined.lower()
+        ):
+            pytest.skip(f"No C++ compiler available for CMake:\n{combined}")
+        pytest.fail(
+            f"CMake configure failed with returncode {configure_res.returncode}:\n"
+            f"STDOUT:\n{configure_res.stdout}\nSTDERR:\n{configure_res.stderr}"
+        )
+
+    build_cmd = [cmake_exe, "--build", str(build_dir)]
+    build_res = subprocess.run(
+        build_cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if build_res.returncode != 0:
+        combined = f"{build_res.stdout}\n{build_res.stderr}"
+        if (
+            "cannot open include file" in combined.lower()
+            or "c1083" in combined.lower()
+            or "no such file or directory" in combined.lower()
+        ):
+            pytest.skip(
+                f"C++ standard libraries / build environment not configured:\n{combined}"
+            )
+        assert build_res.returncode == 0, (
+            f"CMake build failed with returncode {build_res.returncode}:\n"
+            f"STDOUT:\n{build_res.stdout}\nSTDERR:\n{build_res.stderr}"
+        )
+
+    target_name = "inferref_bridge" if bridge_mode else "inferref_adapter"
+    matches = list(build_dir.glob(f"**/{target_name}*"))
+    executable_matches = [
+        m
+        for m in matches
+        if m.is_file()
+        and not m.name.endswith((".obj", ".o", ".lib", ".a", ".pdb", ".ilk"))
+    ]
+    assert len(executable_matches) > 0, (
+        f"No compiled executable found for {target_name} in {build_dir}"
+    )

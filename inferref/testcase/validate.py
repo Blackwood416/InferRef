@@ -126,6 +126,16 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
             f"{manifest.get('format_version')!r}; expected one of {TESTCASE_READ_VERSIONS!r}",
             "format_version",
         )
+    if "comparison" in manifest:
+        version_val = str(manifest.get("format_version", ""))
+        if version_val < "0.3":
+            _error(
+                result,
+                "comparison_requires_0_3",
+                "comparison requires format_version 0.3 or higher",
+                "comparison",
+            )
+        _validate_comparison(result, manifest)
     _validate_requirements(result, manifest)
 
     values = _records(result, manifest, "values")
@@ -699,3 +709,62 @@ def _issue(
             blocks_reproduction=blocks_reproduction,
         )
     )
+
+
+def _validate_comparison(
+    result: TestcaseValidationResult, manifest: dict[str, Any]
+) -> None:
+    from inferref.comparators.registry import get_comparator
+    from inferref.comparison.schema import ComparisonSpec, ComparisonSpecValidationError
+
+    comp_data = manifest.get("comparison")
+    if not isinstance(comp_data, dict):
+        _error(result, "comparison_invalid", "comparison must be an object", "comparison")
+        return
+
+    try:
+        spec = ComparisonSpec.from_dict(comp_data)
+    except (ComparisonSpecValidationError, ValueError) as exc:
+        _error(result, "comparison_invalid", str(exc), "comparison")
+        return
+
+    plugin = get_comparator(spec.comparator)
+    if plugin is None:
+        _error(
+            result,
+            "comparator_unknown",
+            f"unknown comparator {spec.comparator!r}",
+            "comparison.comparator",
+        )
+    else:
+        try:
+            plugin.validate_config(spec.config)
+        except (ValueError, TypeError) as exc:
+            _error(
+                result,
+                "invalid_comparison_config",
+                f"invalid comparison config: {exc}",
+                "comparison.config",
+            )
+
+    for role, out_spec in spec.outputs.items():
+        role_comp_id = out_spec.comparator or spec.comparator
+        role_plugin = get_comparator(role_comp_id)
+        if role_plugin is None:
+            _error(
+                result,
+                "comparator_unknown",
+                f"unknown comparator {role_comp_id!r} for output role {role!r}",
+                f"comparison.outputs.{role}.comparator",
+            )
+        else:
+            try:
+                role_plugin.validate_config(out_spec.config)
+            except (ValueError, TypeError) as exc:
+                _error(
+                    result,
+                    "invalid_comparison_config",
+                    f"invalid comparison config for output role {role!r}: {exc}",
+                    f"comparison.outputs.{role}.config",
+                )
+

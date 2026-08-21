@@ -24,7 +24,7 @@ TESTCASE_FORMAT_VERSION = "0.2"
 
 # The 0.2 writer adds derived requirements; legacy 0.1 testcases remain
 # readable and derive the same information at load time.
-TESTCASE_READ_VERSIONS = ("0.1", "0.2")
+TESTCASE_READ_VERSIONS = ("0.1", "0.2", "0.3")
 
 
 def check_format_version(fmt: str, version: str) -> None:

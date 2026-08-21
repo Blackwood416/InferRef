@@ -16,7 +16,9 @@ def test_doctor_envelope_is_stable() -> None:
         "runtime.python",
         "runtime.inferref",
         "runtime.numpy",
+        "comparator.registry",
     }
+    assert "comparators" in report
 
 
 def test_doctor_cli_json(capsys) -> None:
@@ -65,12 +67,32 @@ def test_invalid_device_returns_structured_failure(capsys) -> None:
 
 def test_doctor_only_loads_plugins_when_explicitly_requested(monkeypatch) -> None:
     calls = []
+    comp_calls = []
 
     def descriptors(*, load=False):
         calls.append(load)
         return []
 
+    def comp_statuses(*, load=False):
+        comp_calls.append(load)
+        return []
+
     monkeypatch.setattr("inferref.semantic.registry.plugin_descriptors", descriptors)
+    monkeypatch.setattr("inferref.comparators.comparator_plugin_statuses", comp_statuses)
     run_doctor()
     run_doctor(verify_plugins=True)
     assert calls == [False, True]
+    assert comp_calls == [False, True]
+
+
+def test_doctor_hardware_details_and_device_names(capsys) -> None:
+    report = run_doctor("cpu")
+    cpu_check = next(item for item in report["checks"] if item["id"] == "device.cpu.availability")
+    if cpu_check["status"] == "pass":
+        assert "CPU" in cpu_check["message"]
+        assert "device_names" in cpu_check["details"]
+        assert "devices" in cpu_check["details"]
+
+    assert main(["doctor"]) == EXIT_OK
+    text_out = capsys.readouterr().out
+    assert "InferRef doctor:" in text_out

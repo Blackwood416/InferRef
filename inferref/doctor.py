@@ -120,6 +120,30 @@ def run_doctor(
             )
         )
 
+    from inferref.comparators import builtin_comparators, comparator_plugin_statuses
+
+    checks.append(
+        DoctorCheck(
+            "comparator.registry",
+            "pass",
+            f"{len(builtin_comparators())} built-in comparator(s) registered",
+        )
+    )
+    comparator_plugins = comparator_plugin_statuses(load=verify_plugins)
+    for plugin in comparator_plugins:
+        checks.append(
+            DoctorCheck(
+                f"comparator.plugin.{plugin.entry_point}",
+                "pass" if plugin.status == "loaded" else "warn",
+                (
+                    f"{plugin.distribution or 'unknown distribution'} "
+                    f"{plugin.version or ''}: {plugin.status}"
+                ).strip(),
+                plugin.to_dict(),
+                remediation=plugin.error,
+            )
+        )
+
     status = "fail" if any(item.status == "fail" for item in checks) else (
         "warn"
         if requested is None and any(item.status == "warn" for item in checks)
@@ -132,6 +156,7 @@ def run_doctor(
         "requested_device": requested,
         "plugin_verification": verify_plugins,
         "contracts": [plugin.to_dict() for plugin in contract_plugins],
+        "comparators": [plugin.to_dict() for plugin in comparator_plugins],
         "runtime": {
             "python": platform.python_version(),
             "platform": platform.platform(),
@@ -189,11 +214,12 @@ def _torch_checks(torch: Any, requested: str | None) -> list[DoctorCheck]:
                 )
             )
             continue
+        dev_names_str = f" ({', '.join(info.device_names)})" if info.device_names else ""
         checks.append(
             DoctorCheck(
                 f"device.{device_type}.availability",
                 "pass",
-                f"{info.device_count} device(s) available",
+                f"{info.device_count} device(s) available{dev_names_str}",
                 info.to_dict(),
             )
         )

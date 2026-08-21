@@ -315,6 +315,7 @@ def extract_operator(
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
     contracts: Sequence[str] | None = None,
+    comparison: dict[str, Any] | Any | None = None,
     force: bool = False,
 ) -> ExtractedTestcase:
     """Extract a single-operator testcase (SPEC §23; IR §53)."""
@@ -334,6 +335,7 @@ def extract_operator(
         input_names=input_names,
         output_names=output_names,
         contracts=contracts,
+        comparison=comparison,
         force=force,
     )
 
@@ -347,6 +349,7 @@ def extract_region(
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
     contracts: Sequence[str] | None = None,
+    comparison: dict[str, Any] | Any | None = None,
     force: bool = False,
 ) -> ExtractedTestcase:
     """Extract a region testcase (SPEC §37; IR §53)."""
@@ -365,6 +368,7 @@ def extract_region(
         input_names=input_names,
         output_names=output_names,
         contracts=contracts,
+        comparison=comparison,
         force=force,
     )
 
@@ -382,6 +386,7 @@ def _write_testcase(
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
     contracts: Sequence[str] | None = None,
+    comparison: dict[str, Any] | Any | None = None,
     force: bool = False,
 ) -> ExtractedTestcase:
     """Build a testcase in a staging directory and publish it atomically.
@@ -414,6 +419,7 @@ def _write_testcase(
             input_names=input_names,
             output_names=output_names,
             contracts=contracts,
+            comparison=comparison,
         )
         validation = validate_testcase(staging)
         blocking = [
@@ -447,6 +453,7 @@ def _build_staged_testcase(
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
     contracts: Sequence[str] | None = None,
+    comparison: dict[str, Any] | Any | None = None,
 ) -> ExtractedTestcase:
     graph = package.graph
     result = ExtractedTestcase(path=output, name=name)
@@ -649,9 +656,10 @@ def _build_staged_testcase(
                 f"contract {profile.id!r} boundary validation failed: "
                 + "; ".join(issues)
             )
+    format_version = "0.3" if comparison is not None else TESTCASE_FORMAT_VERSION
     manifest = {
         "format": TESTCASE_FORMAT,
-        "format_version": TESTCASE_FORMAT_VERSION,
+        "format_version": format_version,
         "name": name,
         "origin": origin,
         "reproducible": result.reproducible,
@@ -660,6 +668,10 @@ def _build_staged_testcase(
         "nodes": node_records,
         "values": manifest_values,
     }
+    if comparison is not None:
+        manifest["comparison"] = (
+            comparison.to_dict() if hasattr(comparison, "to_dict") else dict(comparison)
+        )
     if selected_contracts:
         manifest["contracts"] = selected_contracts
     manifest["requirements"] = derive_requirements(manifest)
