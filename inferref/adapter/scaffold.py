@@ -102,6 +102,11 @@ int main(int argc, char **argv)
         std::cerr << "inferref_adapter: " << error.what() << "\\n";
         return 1;
     }
+    catch (...)
+    {
+        std::cerr << "inferref_adapter: unknown non-standard exception\\n";
+        return 1;
+    }
 }
 """
 

@@ -92,6 +92,7 @@ def test_scaffold_generates_four_files_and_a_valid_adapter(
     assert "outputs.at(name)" in main_cpp
     assert "testcase.Finish()" in main_cpp
     assert "catch (const std::exception" in main_cpp
+    assert "catch (...)" in main_cpp
     cmake = (out / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "INFERREF_CPP_INCLUDE" in cmake
     readme = (out / "README.md").read_text(encoding="utf-8")

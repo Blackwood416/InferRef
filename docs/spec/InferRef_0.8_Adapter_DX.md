@@ -194,6 +194,11 @@ int main(int argc, char **argv)
         std::cerr << "inferref_adapter: " << error.what() << "\n";
         return 1;
     }
+    catch (...)
+    {
+        std::cerr << "inferref_adapter: unknown non-standard exception\n";
+        return 1;
+    }
 }
 ```
 
@@ -209,9 +214,10 @@ Why this shape:
   `outputs.at(name)` compiles and cannot accidentally reorder outputs.
 - `SetOutputDir(output_dir)` directs output tensors and `manifest.json` to the
   adapter's `{output}` directory instead of the testcase directory.
-- The dispatch loop is wrapped in `try`/`catch` so a throwing engine stub (or
-  a runtime error) exits non-zero immediately with a message, matching the
-  bridge's error behavior instead of surfacing an unhandled exception.
+- The dispatch loop is wrapped in `try`/`catch` (with a `catch (...)` fallback)
+  so a throwing engine stub (or a runtime error) exits non-zero immediately
+  with a message, matching the bridge's error behavior instead of surfacing an
+  unhandled exception.
 
 ### 6.3 Generated `adapter.json`
 

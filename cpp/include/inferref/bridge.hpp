@@ -11,6 +11,7 @@
 
 #include <inferref/testcase.hpp>
 
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -55,6 +56,8 @@ inline int RunBridge(const std::string &testcase_dir,
         const std::map<std::string, IRTensor> outputs =
             invoke(region, testcase.Inputs());
         const std::vector<std::string> output_names = testcase.OutputNames();
+        // Validate the full output contract before writing anything, so a bad
+        // callback cannot leave partial output files behind.
         for (const std::string &name : output_names)
         {
             const auto found = outputs.find(name);
@@ -63,7 +66,6 @@ inline int RunBridge(const std::string &testcase_dir,
                 throw TestcaseError("DebugInvoke did not return output role '" +
                                     name + "'");
             }
-            testcase.WriteOutput(name, found->second);
         }
         for (const auto &entry : outputs)
         {
@@ -74,12 +76,19 @@ inline int RunBridge(const std::string &testcase_dir,
                                     entry.first + "'");
             }
         }
+        for (const std::string &name : output_names)
+            testcase.WriteOutput(name, outputs.at(name));
         testcase.Finish();
         return kBridgeOk;
     }
     catch (const std::exception &error)
     {
         std::cerr << program_name << ": " << error.what() << "\n";
+        return kBridgeError;
+    }
+    catch (...)
+    {
+        std::cerr << program_name << ": unknown non-standard exception\n";
         return kBridgeError;
     }
 }

@@ -340,6 +340,8 @@ void TestExtraOutputRole(const std::string &base)
     };
     const int code = inferref::RunBridge(dir, base + "/extra-out", extra);
     Check(code == inferref::kBridgeError, "undeclared output role is an error");
+    Check(!std::filesystem::exists(base + "/extra-out/cache_out.irtensor"),
+          "no partial outputs written for undeclared role");
 }
 
 } // namespace
