@@ -18,12 +18,24 @@ commands:
           shell: powershell.exe
           command: |
             $ErrorActionPreference = "Stop"
-            $package = "python" + ("<< parameters.version >>").Replace(".", "")
-            cmd /c "py -<< parameters.version >> --version >nul 2>&1"
+            $version = "<< parameters.version >>"
+            $package = "python" + $version.Replace(".", "")
+            $wingetId = "Python.Python." + $version
+            $env:PYLAUNCHER_ALLOW_INSTALL = "1"
+            cmd /c "py -$version --version >nul 2>&1"
             if ($LASTEXITCODE -ne 0) {
-                choco install $package --yes --no-progress
+                Write-Host "Python $version missing; trying winget..."
+                winget install -e --id $wingetId --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "winget install failed; falling back to Chocolatey..."
+                    choco install $package --yes --no-progress
+                }
             }
-            py -<< parameters.version >> -m venv .venv
+            cmd /c "py -$version --version >nul 2>&1"
+            if ($LASTEXITCODE -ne 0) {
+                throw "Python $version is still unavailable after install attempts"
+            }
+            py -$version -m venv .venv
             .\.venv\Scripts\python.exe --version
 
   install-frontend-linux:
