@@ -352,6 +352,16 @@ two mutation/concatenation signals, consistent with key and value handling.
 Extracted prefill and decode regions are replayed independently with NumPy and
 compared exactly to their `.irtensor` references.
 
+## Comparison plugins
+
+Numerical comparison is extensible. `inferref comparator list/show` inspects
+the built-in and plugin registry; `--comparator` and `--comparison-config`
+select a plugin and its configuration on `compare`, `agent
+compare/run/run_scenario`, `scenario run`, and `suite run`. The default is
+`tensor/numeric/v1`. Third-party comparators register through the
+`inferref.comparators` entry-point group and are verified by `inferref doctor
+--verify-plugins`; see [EXTENDING](docs/EXTENDING.md).
+
 ## Tracing your own model
 
 ```python
@@ -374,6 +384,7 @@ inferref trace run_model.py --scope model.layers.0 -o trace/ -- --batch 4
 
 | Command | Purpose |
 | --- | --- |
+| `inferref doctor` | Diagnose the installation and accelerator state |
 | `inferref trace` | Run a script under tracing (SPEC §33) |
 | `inferref inspect` | Operators, tensors, module paths, source locations (SPEC §34) |
 | `inferref analyze` | Operator/region/payload coverage and signature counts (SPEC §25) |
@@ -383,15 +394,21 @@ inferref trace run_model.py --scope model.layers.0 -o trace/ -- --batch 4
 | `inferref testcase dedup` | Group executions into unique signatures (SPEC §24) |
 | `inferref region detect` | Find semantic regions automatically (SPEC §17) |
 | `inferref region create/list/delete` | Reference regions (SPEC §37) |
+| `inferref region recommend` | Score and rank regions for engine extraction |
 | `inferref contract list/show/validate` | Built-in and plugin executable contracts (Contract Schema v0.1) |
+| `inferref comparator list/show` | Inspect built-in and plugin comparison plugins |
 | `inferref adapter scaffold` | Generate a compilable adapter or runtime-bridge project from a testcase |
 | `inferref agent capabilities/context` | Versioned discovery and artifact context |
 | `inferref agent extract/compare/run` | Structured Agent and engine-adapter loop |
+| `inferref agent run_scenario` | Execute a stateful testcase chain through one adapter |
+| `inferref agent evaluate` | Run the blind repair benchmark with external coding Agents |
 | `inferref scenario validate/run` | Ordered testcase chains with state binding (Scenario v0.1) |
+| `inferref suite validate/run/report` | Validate and run testcase suites, render matrix reports |
 | `inferref export` | Whole trace as one JSON document |
 
-Every command supports `--json` for agent and CI consumption (SPEC §42). `compare` exits non-zero
-on failure while still emitting a full JSON report.
+Every command accepts `--json` for agent and CI consumption (SPEC §42), except
+`export`, which always emits JSON. `compare` exits non-zero on failure while
+still emitting a full JSON report.
 
 ## Engine side (no PyTorch, no Python)
 
@@ -418,10 +435,16 @@ cpp/build/inferref_compare ref.irtensor actual.irtensor
 | `inferref/tensor/` | numpy | `.irtensor` binary codec |
 | `inferref/compare/` | numpy | Metrics, tolerance policy, layout diffing, reports |
 | `inferref/testcase/` | numpy | Testcase projection & signature dedup |
+| `inferref/contracts/` | stdlib | Executable contract registry, schema, relations |
+| `inferref/comparison/` | numpy | Comparison Spec v0.1 resolution, per-field sources |
+| `inferref/comparators/` | numpy | Comparator plugin registry and numeric comparator |
 | `inferref/region/` | stdlib | Region boundary derivation (IR §34) |
 | `inferref/semantic/` | stdlib | Semantic detectors (SPEC §17, §56) |
 | `inferref/inspect/` | stdlib | Text views and coverage analysis |
-| `inferref/agent/` | stdlib + optional MCP | Agent envelope, engine adapter, MCP transport |
+| `inferref/agent/` | numpy + optional MCP | Agent envelope, engine adapter, MCP transport |
+| `inferref/suite/` | numpy | Suite manifests, matrix runs, HTML/JSON reports |
+| `inferref/scenario/` | numpy | Scenario schema, validation, stateful replay |
+| `inferref/adapter/` | stdlib | Adapter scaffold generator |
 | `inferref/cli/` | stdlib | argparse CLI; imports torch only for `trace` |
 | `inferref/frontend/pytorch/` | torch | Dispatcher-level runtime tracer |
 | `cpp/include/inferref/` | — | Header-only C++ reader + comparator |

@@ -1,7 +1,10 @@
 # InferRef CLI and MCP reference
 
-Every command accepts `--json` for agent and CI consumption. Run commands stop at
-the first divergence by default; pass `--all-failures` to compare everything.
+Every command accepts `--json` for agent and CI consumption, except `export`,
+which always emits JSON. `agent run`, `agent compare`, `scenario run`, and
+`suite run` stop at the first divergence by default; pass `--all-failures`
+(where available) to compare everything. Plain `inferref compare` reports all
+differences unless `--first-failure` is passed.
 
 ## Environment and runtime
 
@@ -23,7 +26,10 @@ the first divergence by default; pass `--all-failures` to compare everything.
 
 - `inferref region detect <trace> [--dry-run] [--detector <name>] [--replace] [-v] [--json]` -
   recognise semantic regions such as Linear, RMSNorm, RoPE, and Attention.
-- `inferref region list <trace> [--json]` - list regions.
+- `inferref region list <trace> [--details] [--json]` - list regions, with
+  boundary/reproducibility details when requested.
+- `inferref region recommend <trace> [--top <n>] [--min-score <n>] [--json]` -
+  score and rank regions for engine extraction.
 - `inferref region create <trace> --name <name> (--from-op <id> --to-op <id> | --module <path> | --source-function <name>) [--semantic <label>] [--engine-op <kernel>] [--json]`.
 - `inferref region delete <trace> <name> [--json]`.
 
@@ -39,6 +45,15 @@ the first divergence by default; pass `--all-failures` to compare everything.
 - `inferref contract show <contract-id> [--json]` - show one resolved contract.
 - `inferref contract validate <file> [--json]` - validate a `.contract.json` file.
 
+## Comparators
+
+- `inferref comparator list [--json]` - list built-in and discovered comparison plugins.
+- `inferref comparator show <id> [--json]` - show one resolved comparator plugin.
+
+`--comparator <id>` and `--comparison-config <json|file>` are accepted by
+`compare`, `agent compare`, `agent run`, `agent run_scenario`, `scenario run`,
+and `suite run`. The default comparator is `tensor/numeric/v1`.
+
 ## Agent operations
 
 - `inferref agent capabilities [--json]` - formats, operations, and MCP tool names.
@@ -47,6 +62,8 @@ the first divergence by default; pass `--all-failures` to compare everything.
 - `inferref agent compare <testcase> <engine-output> [--atol <f>] [--rtol <f>] [--ignore-stride] [--strict-layout] [--all-failures] [--first-failure] [--json]`.
 - `inferref agent run <testcase> --adapter <adapter.json> [--runs-dir <dir>] [--atol <f>] [--rtol <f>] [--ignore-stride] [--strict-layout] [--all-failures] [--first-failure] [--json]`.
 - `inferref agent run_scenario <scenario-dir> --adapter <adapter.json> [--runs-dir <dir>] [--state-mode reference|engine] [--compare-state] [--atol <f>] [--rtol <f>] [--ignore-stride] [--strict-layout] [--all-failures] [--first-failure] [--json]`.
+- `inferref agent evaluate <benchmark> --agents <a,b> --report-dir <dir> [--claude-settings <path>] [--claude-model <model>] [--public-attestation <path>] [--json]` -
+  run the blind repair benchmark with external coding Agents.
 
 ## Scenario
 

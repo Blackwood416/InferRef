@@ -429,34 +429,37 @@ a new T1 work item, not an existing capability.
 
 ## 11. Acceptance criteria
 
+All items below were closed by InferRef 0.8.0/0.8.1 and are covered by the
+C++ selftests and `tests/core/test_adapter_scaffold.py`.
+
 ### 11.1 `testcase.hpp`
 
-- [ ] `Testcase::Load` reads a testcase without PyTorch.
-- [ ] `Input(name)` returns a loaded `IRTensor`.
-- [ ] `WriteOutput` writes output files.
-- [ ] `Finish()` writes `manifest.json` exactly once.
-- [ ] C++ self-test passes.
+- [x] `Testcase::Load` reads a testcase without PyTorch.
+- [x] `Input(name)` returns a loaded `IRTensor`.
+- [x] `WriteOutput` writes output files.
+- [x] `Finish()` writes `manifest.json` exactly once.
+- [x] C++ self-test passes.
 
 ### 11.2 Adapter scaffolder
 
-- [ ] `inferref adapter scaffold` generates the four files.
-- [ ] Generated `main.cpp` compiles without user edits.
-- [ ] Generated `adapter.json` passes `EngineAdapter.load()`.
-- [ ] Generated features are members of the adapter feature whitelist.
-- [ ] Generated capabilities match `derive_requirements()` output.
+- [x] `inferref adapter scaffold` generates the four files.
+- [x] Generated `main.cpp` compiles without user edits.
+- [x] Generated `adapter.json` passes `EngineAdapter.load()`.
+- [x] Generated features are members of the adapter feature whitelist.
+- [x] Generated capabilities match `derive_requirements()` output.
 
 ### 11.3 Runtime bridge
 
-- [ ] `bridge.hpp` exists and uses named outputs.
-- [ ] `cpp/examples/runtime_bridge/main.cpp` compiles.
-- [ ] A stub `DebugInvoke` runs a fixture testcase end to end.
-- [ ] Missing region dispatch returns `missing_region`.
+- [x] `bridge.hpp` exists and uses named outputs.
+- [x] `cpp/examples/runtime_bridge/main.cpp` compiles.
+- [x] A stub `DebugInvoke` runs a fixture testcase end to end.
+- [x] Missing region dispatch returns `missing_region`.
 
 ### 11.4 Docs
 
-- [ ] README documents `inferref adapter scaffold`.
-- [ ] `docs/AGENT_WORKFLOW.md` shows the Human / Agent facade split.
-- [ ] `docs/yolo-aila-080.md` records the first TFCM run.
+- [x] README documents `inferref adapter scaffold`.
+- [x] `docs/AGENT_WORKFLOW.md` shows the Human / Agent facade split.
+- [x] `docs/yolo-aila-080.md` records the first TFCM run.
 
 ## 12. Implementation tasks
 

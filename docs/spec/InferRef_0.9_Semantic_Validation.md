@@ -516,49 +516,53 @@ not silently downgrade to numeric comparison.
 
 ## 13. Acceptance criteria
 
+All items below were closed by InferRef 0.9.0/0.9.2 and are covered by the
+test suite listed in
+[docs/dev/status/2026-08-21-v090-semantic-validation.md](../dev/status/2026-08-21-v090-semantic-validation.md).
+
 ### 13.1 Preflight fixes
 
-- [ ] `WriteOutputs` validates before writing and leaves no partial output.
-- [ ] Standard mode and bridge mode use the same output validation.
-- [ ] Missing-role diagnostics include the caller label (`RunYourEngine` /
+- [x] `WriteOutputs` validates before writing and leaves no partial output.
+- [x] Standard mode and bridge mode use the same output validation.
+- [x] Missing-role diagnostics include the caller label (`RunYourEngine` /
   `DebugInvoke`) and the missing role name.
-- [ ] Slow scaffold compile test exists and runs in C++ CI.
-- [ ] `cpp/examples/runtime_bridge` paths are correct in specs/status.
-- [ ] `docs/EXTENDING.md` standard-mode description is accurate.
+- [x] Slow scaffold compile test exists and runs in C++ CI.
+- [x] `cpp/examples/runtime_bridge` paths are correct in specs/status.
+- [x] `docs/EXTENDING.md` standard-mode description is accurate.
 
 ### 13.2 Comparison spec
 
-- [ ] Comparison Spec v0.1 validates.
-- [ ] Conditional testcase/suite `0.3` is implemented.
-- [ ] Old readers reject `0.3`.
-- [ ] `comparison_requires_0_3` is enforced by validators.
-- [ ] Effective comparison is recorded with per-field `sources`.
-- [ ] Two-axis tolerance is implemented as specified.
-- [ ] Suite and scenario carry comparison policy.
-- [ ] `Suite.to_dict()` preserves source `format_version`.
+- [x] Comparison Spec v0.1 validates.
+- [x] Conditional testcase/suite `0.3` is implemented.
+- [x] Old readers reject `0.3`.
+- [x] `comparison_requires_0_3` is enforced by validators.
+- [x] Effective comparison is recorded with per-field `sources`.
+- [x] Two-axis tolerance is implemented as specified.
+- [x] Suite and scenario carry comparison policy.
+- [x] `Suite.to_dict()` preserves source `format_version`.
 
 ### 13.3 Comparator plugins
 
-- [ ] Entry-point name equals comparator ID.
-- [ ] `validate_config` rejects bad config before engine launch.
-- [ ] Multi-output comparison works.
-- [ ] Missing outputs are short-circuited.
-- [ ] Plugin exceptions do not crash a suite.
-- [ ] `tensor/numeric/v1` matches current numeric behavior.
+- [x] Entry-point name equals comparator ID.
+- [x] `validate_config` rejects bad config before engine launch.
+- [x] Multi-output comparison works.
+- [x] Missing outputs are short-circuited.
+- [x] Plugin exceptions do not crash a suite.
+- [x] `tensor/numeric/v1` matches current numeric behavior.
 
 ### 13.4 Agent UX
 
-- [ ] `--json-summary` works for run/compare/scenario.
-- [ ] Full artifact retains all details.
-- [ ] Summary keeps the envelope `next_actions` shape.
-- [ ] `capabilities()` reports testcase `reads` / `writes` instead of a single
+- [x] `--json-summary` works for run/compare/scenario.
+- [x] Full artifact retains all details.
+- [x] Summary keeps the envelope `next_actions` shape.
+- [x] `capabilities()` reports testcase `reads` / `writes` instead of a single
   version.
 
 ### 13.5 Region / doctor
 
-- [ ] `region list --details` exists.
-- [ ] `region recommend` exists.
-- [ ] Doctor hardware details are best-effort and non-gating.
+- [x] `region list --details` exists.
+- [x] `region recommend` exists.
+- [x] Doctor hardware details are best-effort and non-gating.
 
 ## 14. Implementation tasks
 

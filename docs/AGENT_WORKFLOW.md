@@ -58,8 +58,8 @@ The response is the standard envelope:
   "operation": "capabilities",
   "status": "ok",
   "data": {
-    "inferref_version": "0.6.0",
-    "formats": {"trace": "...", "testcase": "...", "scenario": "...", "tensor": "...", "engine_adapter": "..."},
+    "inferref_version": "0.9.2",
+    "formats": {"trace": "...", "testcase": "...", "suite": "...", "scenario": "...", "tensor": "...", "engine_adapter": "..."},
     "operations": [
       {"name": "context", "mutates": false, "description": "..."},
       {"name": "extract_testcase", "mutates": true, "description": "..."},

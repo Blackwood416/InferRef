@@ -1,8 +1,8 @@
 # Extending InferRef
 
 This page is the "where do I plug in my thing" guide for external engine
-developers. InferRef ships four extension points: semantic detectors,
-executable contracts, engine adapters, and corpus cases.
+developers. InferRef ships five extension points: semantic detectors,
+executable contracts, engine adapters, corpus cases, and comparator plugins.
 
 For stateful chains of testcases (prefill → decode), see
 [InferRef Scenario v0.1](spec/InferRef_Scenario_v0.1.md).
@@ -213,3 +213,55 @@ inferref suite run suite.json --adapter my_engine.adapter.json --runs-dir runs
 
 Suite manifest rules, execution order, and run status semantics are in
 [InferRef Suite v0.1](spec/InferRef_Suite_v0.1.md).
+
+## 5. Add a comparator plugin
+
+**Goal:** teach `inferref compare` (and the agent/scenario/suite commands that
+accept `--comparator`) to validate engine outputs with domain-specific
+semantics instead of plain numeric tolerance.
+
+**Files to create:** a Python module exposing a `ComparatorPlugin` and a
+`pyproject.toml` entry point in the `inferref.comparators` group. The
+entry-point name must equal `comparator.id` and must not shadow
+`tensor/numeric/v1` or another built-in comparator.
+
+**Minimal example:**
+
+```toml
+[project.entry-points."inferref.comparators"]
+my_vision = "my_pack.comparators:MyVisionComparator"
+```
+
+```python
+from inferref.comparators.protocol import ArtifactSet, ComparatorPlugin, ComparatorResult
+
+
+class MyVisionComparator:
+    id = "my_vision/v1"
+
+    def validate_config(self, config: dict | None = None) -> None:
+        """Reject invalid configuration before an engine launches."""
+
+    def compare(
+        self,
+        reference: ArtifactSet,
+        actual: ArtifactSet,
+        config: dict | None = None,
+    ) -> ComparatorResult:
+        """Compare named artifacts and return a structured result."""
+```
+
+**Verify:**
+
+```bash
+inferref comparator list
+inferref comparator show my_vision/v1
+inferref doctor --verify-plugins
+inferref compare repro/case engine-out/ --comparator my_vision/v1 \
+    --comparison-config '{"min_iou": 0.9}'
+```
+
+The full protocol, built-in `tensor/numeric/v1`, and a worked object-detection
+comparator are in
+[InferRef 0.9 Semantic Validation](spec/InferRef_0.9_Semantic_Validation.md)
+and [examples/comparators/object_detection.py](../examples/comparators/object_detection.py).
