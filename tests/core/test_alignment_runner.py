@@ -114,6 +114,29 @@ def test_engine_identity_resolution(tmp_path: Path) -> None:
     assert ident_auto["revision"]
 
 
+def test_engine_identity_resolution_follows_trusted_python_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_python = tmp_path / "python-real"
+    real_python.write_bytes(b"test interpreter")
+    linked_python = tmp_path / "python-link"
+    try:
+        linked_python.symlink_to(real_python)
+    except OSError as exc:
+        pytest.skip(f"file symlinks are unavailable: {exc}")
+
+    import inferref.alignment.runner as runner_module
+
+    monkeypatch.setattr(runner_module.sys, "executable", str(linked_python))
+    adapter = EngineAdapter.load(_make_adapter_file(tmp_path / "adapter.json"))
+
+    identity = resolve_engine_identity(adapter)
+
+    assert identity["kind"] == "file"
+    assert identity["revision"].startswith("sha256:")
+    assert identity["dirty"] is False
+
+
 def test_runner_initialization_digest_check(tmp_path: Path) -> None:
     pkg = _make_trace(tmp_path / "trace")
     adapter_path = _make_adapter_file(tmp_path / "adapter.json")

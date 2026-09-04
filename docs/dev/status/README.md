@@ -27,7 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
-| 2026-09-03 | [v0.10.0 Alignment Orchestrator](2026-09-03-v0100-alignment-orchestrator.md) | Persistent alignment planning, execution, evidence, narrowing, classification, CLI/Agent/MCP integration; 813 tests |
+| 2026-09-03 | [v0.10.0 Alignment Orchestrator](2026-09-03-v0100-alignment-orchestrator.md) | Persistent alignment planning, execution, evidence, narrowing, classification, CLI/Agent/MCP integration; 814 tests |
 | 2026-08-21 | [v0.9.2 core-linux lint gate fix](2026-08-21-v092-core-linux-lint-fix.md) | Ruff policy + lint fixes; core-linux green; 749 tests |
 | 2026-08-21 | [v0.9.1 core-linux MCP test fix](2026-08-21-v091-semantic-validation-fix.md) | Skip optional-MCP comparator test on core-only installs; Linux core 504 passed |
 | 2026-08-21 | [v0.9.0 Semantic Validation](2026-08-21-v090-semantic-validation.md) | Comparison Spec v0.1, comparator plugins, multi-output comparator, agent summary, region recommend, doctor details; 749 tests |

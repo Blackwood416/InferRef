@@ -46,6 +46,9 @@
 5. **适配器哈希一致性 (`hashing.py`)**:
    - 统一 `_adapter_public_record()` 中对文件路径与对象实例的加载逻辑，确保 `adapter_normalized_sha256(adapter_path)`、`normalized_adapter_sha256(adapter)` 与 `normalized_adapter_sha256(adapter.to_dict())` 产生 100% 相同的结果，杜绝重新加载时误判 stale。
 
+6. **POSIX 虚拟环境引擎身份 (`runner.py`)**:
+   - 受信任适配器使用 `{python}` 时，先解析 POSIX venv 的解释器符号链接，再对实际可执行文件和内联脚本计算稳定身份；通用 artifact 哈希仍保持拒绝符号链接的安全策略。
+
 ---
 
 ## 3. 修改与新建文件清单
@@ -88,8 +91,8 @@
 独立审查七轮完成后执行最终发布前门禁：
 
 ```powershell
-python -m pytest -q <alignment test files>                # 61 passed
-python -m pytest -q                                       # 813 passed, 9 skipped, 3 deselected
+python -m pytest -q <alignment test files>                # 62 passed
+python -m pytest -q                                       # 814 passed, 9 skipped, 3 deselected
 ruff check inferref tests scripts                         # All checks passed
 python -m compileall -q inferref tests                    # passed
 python scripts/check_agent_workflow_skill.py --repo .     # passed; 14 MCP tools
@@ -98,7 +101,7 @@ ctest --test-dir cpp/build -C Release --output-on-failure # 3/3 passed
 git diff --check                                          # no errors
 ```
 
-**总计**: 对齐编排器专项 61/61、全工程 813 项测试全部通过；9 项按环境预期跳过，3 项 slow 测试由默认门禁取消选择。
+**总计**: 对齐编排器专项 62/62、全工程 814 项测试全部通过；9 项按环境预期跳过，3 项 slow 测试由默认门禁取消选择。
 
 ---
 

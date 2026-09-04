@@ -94,6 +94,14 @@ def resolve_engine_identity(
         candidate_path = Path(expanded)
         if not candidate_path.is_absolute() and cwd.is_dir():
             candidate_path = cwd / expanded
+        try:
+            # POSIX virtual environments commonly expose their interpreter as
+            # a symlink.  The adapter is trusted executable configuration, so
+            # bind the identity to the regular file that execution will reach
+            # while keeping sha256_file's general no-symlink policy intact.
+            candidate_path = candidate_path.resolve(strict=True)
+        except OSError:
+            continue
         if candidate_path.is_file():
             try:
                 h = sha256_file(candidate_path)
