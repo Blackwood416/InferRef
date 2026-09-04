@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +67,46 @@ def capabilities() -> AgentResponse:
                 "through one trusted engine adapter."
             ),
         },
+        {
+            "name": "alignment_init",
+            "mutates": True,
+            "description": "Initialize an InferRef alignment session.",
+        },
+        {
+            "name": "alignment_plan",
+            "mutates": False,
+            "description": "Inspect alignment candidates and recommendation.",
+        },
+        {
+            "name": "alignment_run",
+            "mutates": True,
+            "description": "Execute alignment boundaries against an engine adapter.",
+        },
+        {
+            "name": "alignment_status",
+            "mutates": False,
+            "description": "Inspect alignment session progress and active failure.",
+        },
+        {
+            "name": "alignment_summary",
+            "mutates": False,
+            "description": "Summarize alignment metrics, TFCM, and adoption ratio.",
+        },
+        {
+            "name": "alignment_narrow",
+            "mutates": False,
+            "description": "Compute smallest confirmed failing boundary and diagnosis.",
+        },
+        {
+            "name": "alignment_note",
+            "mutates": True,
+            "description": "Record human/agent manual note evidence.",
+        },
+        {
+            "name": "alignment_report",
+            "mutates": True,
+            "description": "Generate markdown and JSON sidecar alignment reports.",
+        },
     ]
     return AgentResponse(
         operation="capabilities",
@@ -75,6 +115,8 @@ def capabilities() -> AgentResponse:
             "inferref_version": INFERREF_VERSION,
             "formats": {
                 "trace": {"format": FORMAT, "version": FORMAT_VERSION},
+                "alignment": {"format": "inferref-alignment", "version": "0.1"},
+                "evidence": {"format": "inferref-evidence", "version": "0.1"},
                 "testcase": {
                     "format": TESTCASE_FORMAT,
                     "version": TESTCASE_FORMAT_VERSION,
@@ -538,3 +580,714 @@ def _policy(
     if rtol is not None:
         policy.override_rtol = rtol
     return policy
+
+
+# -- Alignment Service Functions (0.10 L7) ----------------------------------
+
+
+def _is_path_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "outside configured allowed roots" in msg or "not under an allowed" in msg or "allowed root" in msg
+
+
+def alignment_init(
+    trace_path: str | Path,
+    adapter_path: str | Path,
+    *,
+    session_dir: str | Path | None = None,
+    name: str | None = None,
+    force: bool = False,
+    access_policy: Any = None,
+) -> AgentResponse:
+    """Initialize an InferRef alignment session."""
+    import shutil
+
+    from inferref.alignment import (
+        AlignmentStore,
+        normalized_adapter_sha256,
+        trace_metadata_sha256,
+    )
+
+    operation = "alignment_init"
+    try:
+        t_path = Path(trace_path).resolve()
+        a_path = Path(adapter_path).resolve()
+        s_dir = Path(session_dir).resolve() if session_dir else Path.cwd() / "alignment"
+
+        if access_policy is not None:
+            t_path = Path(access_policy(t_path, "trace input")).resolve()
+            a_path = Path(access_policy(a_path, "adapter")).resolve()
+            s_dir = Path(access_policy(s_dir, "alignment session")).resolve()
+
+        pkg = TracePackage.load(t_path)
+        adapter = EngineAdapter.load(a_path)
+        trace_sha = trace_metadata_sha256(pkg.root)
+        adapter_sha = normalized_adapter_sha256(adapter.to_dict())
+
+        if force and s_dir.exists():
+            shutil.rmtree(s_dir, ignore_errors=True)
+
+        session_id = None
+        if name:
+            session_id = name if name.startswith("al-") else f"al-{name}"
+
+        store = AlignmentStore.initialize(
+            s_dir,
+            trace_path=t_path,
+            adapter_path=a_path,
+            trace_metadata_digest=trace_sha,
+            adapter_digest=adapter_sha,
+            session_id=session_id,
+        )
+        return AgentResponse(
+            operation=operation,
+            status="pass",
+            data=store.snapshot.to_dict(),
+            next_actions=(
+                {
+                    "operation": "alignment_plan",
+                    "reason": "Inspect boundary candidates and recommendation.",
+                },
+            ),
+        )
+    except Exception as exc:
+        code = "path_not_allowed" if _is_path_error(exc) else "invalid_request"
+        return AgentResponse.error(operation, str(exc), code=code)
+
+
+align_init = alignment_init
+
+
+def alignment_plan(
+    session_dir: str | Path | None = None,
+    *,
+    trace_path: str | Path | None = None,
+    adapter_path: str | Path | None = None,
+    access_policy: Any = None,
+) -> AgentResponse:
+    """Inspect alignment candidates and recommended boundary."""
+    from inferref.alignment import AlignmentStore, plan_alignment
+
+    operation = "alignment_plan"
+    try:
+        s_dir = Path(session_dir).resolve() if session_dir else Path.cwd() / "alignment"
+        if access_policy is not None and (session_dir or (s_dir / "alignment.json").is_file()):
+            s_dir = Path(access_policy(s_dir, "alignment session")).resolve()
+
+        store = AlignmentStore.load(s_dir) if (s_dir / "alignment.json").is_file() else None
+
+        t_path = (
+            Path(trace_path).resolve()
+            if trace_path
+            else (Path(store.snapshot.source["trace"]["path"]).resolve() if store else None)
+        )
+        if not t_path or not t_path.exists():
+            return AgentResponse.error(
+                operation, "trace path required or session must contain valid trace"
+            )
+
+        a_path = (
+            Path(adapter_path).resolve()
+            if adapter_path
+            else (Path(store.snapshot.target["adapter"]["path"]).resolve() if store else None)
+        )
+
+        if access_policy is not None:
+            t_path = Path(access_policy(t_path, "trace input")).resolve()
+            if a_path:
+                a_path = Path(access_policy(a_path, "adapter")).resolve()
+
+        adapter = EngineAdapter.load(a_path) if a_path and a_path.is_file() else None
+        pkg = TracePackage.load(t_path)
+        plan = plan_alignment(pkg, session=store.snapshot if store else None, adapter=adapter)
+        recommended = plan.candidates[0].boundary if plan.candidates else None
+        data = plan.to_dict()
+        data["recommended_boundary"] = recommended
+        actions = (
+            (
+                {
+                    "operation": "alignment_run",
+                    "reason": f"Run recommended boundary {recommended}",
+                },
+            )
+            if recommended
+            else ()
+        )
+        return AgentResponse(
+            operation=operation,
+            status="ok",
+            data=data,
+            next_actions=actions,
+        )
+    except Exception as exc:
+        code = "path_not_allowed" if _is_path_error(exc) else "invalid_request"
+        return AgentResponse.error(operation, str(exc), code=code)
+
+
+align_plan = alignment_plan
+
+
+def alignment_run(
+    session_dir: str | Path,
+    adapter: str | Path,
+    *,
+    limit: int = 1,
+    boundary_ids: Sequence[str] = (),
+    continue_on_fail: bool = False,
+    engine_revision: str | None = None,
+    comparator_overrides: Mapping[str, Any] | None = None,
+    fixture_kind: str | None = None,
+    fixture_tags: Sequence[str] = (),
+    external_testcase: str | Path | None = None,
+    comparator: str | None = None,
+    atol: float | None = None,
+    rtol: float | None = None,
+    ignore_stride: bool = False,
+    strict_layout: bool = False,
+    access_policy: Any = None,
+) -> AgentResponse:
+    """Execute alignment boundary runs against an explicit engine adapter."""
+    from inferref.alignment import AlignmentRunner, AlignmentStore
+    from inferref.alignment.hashing import normalized_adapter_sha256
+
+    operation = "alignment_run"
+    try:
+        s_dir = Path(session_dir).resolve()
+        a_path = Path(adapter).resolve()
+        if access_policy is not None:
+            s_dir = Path(access_policy(s_dir, "alignment session")).resolve()
+            a_path = Path(access_policy(a_path, "adapter")).resolve()
+
+        ext_tc_path = None
+        if external_testcase:
+            if not fixture_kind:
+                return AgentResponse.error(
+                    operation,
+                    "external_testcase requires an explicit fixture_kind",
+                    code="invalid_request",
+                )
+            ext_tc_path = Path(external_testcase).resolve()
+            if access_policy is not None:
+                ext_tc_path = Path(access_policy(ext_tc_path, "external testcase")).resolve()
+            if len(boundary_ids) != 1:
+                return AgentResponse.error(
+                    operation,
+                    f"external_testcase requires exactly one boundary, got {len(boundary_ids)}",
+                    code="invalid_request",
+                )
+
+        effective_fixture_kind = fixture_kind or "reference_derived"
+
+        if not (s_dir / "alignment.json").is_file():
+            return AgentResponse.error(operation, f"no alignment session found at {s_dir}")
+
+        store = AlignmentStore.load(s_dir)
+
+        # Transitive policy check on trace
+        t_path = Path(store.snapshot.source["trace"]["path"]).resolve()
+        if access_policy is not None:
+            t_path = Path(access_policy(t_path, "trace input")).resolve()
+
+        if not a_path.is_file():
+            return AgentResponse.error(operation, f"adapter file not found: {a_path}")
+
+        engine_adapter = EngineAdapter.load(a_path)
+        actual_adapter_sha = normalized_adapter_sha256(engine_adapter.to_dict())
+        pinned_adapter_sha = store.snapshot.target["adapter"]["normalized_sha256"]
+        if actual_adapter_sha != pinned_adapter_sha:
+            return AgentResponse.error(
+                operation,
+                f"adapter digest mismatch: expected {pinned_adapter_sha}, got {actual_adapter_sha}",
+                code="adapter_digest_mismatch",
+            )
+
+        pkg = TracePackage.load(t_path)
+        runner = AlignmentRunner(store, pkg, engine_adapter)
+
+        merged_comparator_overrides = dict(comparator_overrides or {})
+        if comparator:
+            merged_comparator_overrides["comparator"] = comparator
+        if atol is not None:
+            merged_comparator_overrides["atol"] = atol
+        if rtol is not None:
+            merged_comparator_overrides["rtol"] = rtol
+        if ignore_stride:
+            merged_comparator_overrides["ignore_stride"] = True
+        if strict_layout:
+            merged_comparator_overrides["strict_layout"] = True
+
+        results = runner.run(
+            limit=limit,
+            boundary_ids=boundary_ids,
+            continue_on_fail=continue_on_fail,
+            engine_revision=engine_revision,
+            comparator_overrides=merged_comparator_overrides or None,
+            fixture_kind=effective_fixture_kind,
+            fixture_tags=fixture_tags,
+            external_testcase=ext_tc_path,
+        )
+        has_failure = any(r.status in ("fail", "error") for r in results)
+        has_error = any(r.status == "error" for r in results)
+        if has_error:
+            run_status = "error"
+        elif has_failure:
+            run_status = "fail"
+        else:
+            run_status = "pass"
+
+        actions = (
+            (
+                {
+                    "operation": "alignment_narrow",
+                    "reason": "Diagnose earliest failing boundary.",
+                },
+            )
+            if has_failure
+            else ()
+        )
+        return AgentResponse(
+            operation=operation,
+            status=run_status,
+            data={
+                "results": [
+                    {
+                        "boundary": r.boundary,
+                        "status": r.status,
+                        "evidence_id": r.evidence.id if r.evidence else None,
+                        "error_message": r.error_message,
+                    }
+                    for r in results
+                ],
+                "snapshot": store.snapshot.to_dict(),
+            },
+            next_actions=actions,
+        )
+    except Exception as exc:
+        code = "path_not_allowed" if _is_path_error(exc) else "invalid_request"
+        return AgentResponse.error(operation, str(exc), code=code)
+
+
+def align_run(
+    session_dir: str | Path,
+    adapter: str | Path,
+    **kwargs: Any,
+) -> AgentResponse:
+    """Backward-compatible alias for alignment_run; requires explicit adapter."""
+    return alignment_run(session_dir, adapter, **kwargs)
+
+
+def alignment_status(
+    session_dir: str | Path,
+    *,
+    access_policy: Any = None,
+) -> AgentResponse:
+    """Inspect alignment session progress and active failure."""
+    from inferref.alignment import (
+        AlignmentStore,
+        build_fixture_matrix,
+        classify_failure_domain,
+        compute_narrowing,
+        inventory_boundaries,
+    )
+
+    operation = "alignment_status"
+    try:
+        s_dir = Path(session_dir).resolve()
+        if access_policy is not None:
+            s_dir = Path(access_policy(s_dir, "alignment session")).resolve()
+
+        if not (s_dir / "alignment.json").is_file():
+            return AgentResponse.error(operation, f"no alignment session found at {s_dir}")
+
+        store = AlignmentStore.load(s_dir)
+        snap = store.snapshot
+
+        if access_policy is not None:
+            access_policy(snap.source["trace"]["path"], "trace input")
+            access_policy(snap.target["adapter"]["path"], "adapter")
+
+        matrix = build_fixture_matrix(
+            list(store.evidence.values()),
+            snap,
+            known_boundaries=list(snap.boundaries.keys()),
+            events=store.events,
+        )
+
+        evidence_by_b: dict[str, list[Any]] = {}
+        for ev in matrix.current_evidence.values():
+            if ev.type == "numerical_comparison":
+                evidence_by_b.setdefault(ev.subject["boundary"], []).append(ev)
+
+        t_path = Path(store.snapshot.source["trace"]["path"]).resolve()
+        pkg = TracePackage.load(t_path)
+        inventory = inventory_boundaries(pkg)
+
+        narrowing = compute_narrowing(inventory, evidence_by_b)
+        candidates: list[Any] = []
+        if narrowing.smallest_confirmed_failure:
+            notes = [ev for ev in store.evidence.values() if ev.type == "manual_note"]
+            candidates, _ = classify_failure_domain(
+                narrowing.smallest_confirmed_failure,
+                list(matrix.current_evidence.values()),
+                notes=notes,
+                active_engine_identity=matrix.active_engine_identity,
+                events=store.events,
+            )
+
+        verified = sum(1 for s in matrix.boundary_states.values() if s == "verified")
+        failing = sum(1 for s in matrix.boundary_states.values() if s == "failing")
+        untested = sum(1 for s in matrix.boundary_states.values() if s == "untested")
+        stale = sum(1 for s in matrix.boundary_states.values() if s == "stale")
+
+        return AgentResponse(
+            operation=operation,
+            status="ok",
+            data={
+                "session_id": snap.session_id,
+                "status": snap.status,
+                "counts": {
+                    "verified": verified,
+                    "failing": failing,
+                    "untested": untested,
+                    "stale": stale,
+                    "total": len(snap.boundaries),
+                },
+                "active_failure": snap.narrowing.get("current_failure"),
+                "smallest_confirmed_failure": narrowing.smallest_confirmed_failure,
+                "classification": [c.to_dict() for c in candidates],
+            },
+        )
+    except Exception as exc:
+        code = "path_not_allowed" if _is_path_error(exc) else "invalid_request"
+        return AgentResponse.error(operation, str(exc), code=code)
+
+
+align_status = alignment_status
+
+
+def alignment_summary(
+    session_dir: str | Path,
+    *,
+    access_policy: Any = None,
+) -> AgentResponse:
+    """Summarize alignment metrics, TFCM, and adoption ratio (compact Spec §11.3)."""
+    from inferref.alignment import (
+        AlignmentStore,
+        build_fixture_matrix,
+        classify_failure_domain,
+    )
+
+    operation = "alignment_summary"
+    try:
+        s_dir = Path(session_dir).resolve()
+        if access_policy is not None:
+            s_dir = Path(access_policy(s_dir, "alignment session")).resolve()
+
+        if not (s_dir / "alignment.json").is_file():
+            return AgentResponse.error(operation, f"no alignment session found at {s_dir}")
+
+        store = AlignmentStore.load(s_dir)
+        if access_policy is not None:
+            access_policy(store.snapshot.source["trace"]["path"], "trace input")
+            access_policy(store.snapshot.target["adapter"]["path"], "adapter")
+
+        matrix = build_fixture_matrix(
+            list(store.evidence.values()),
+            store.snapshot,
+            known_boundaries=list(store.snapshot.boundaries.keys()),
+            events=store.events,
+        )
+
+        counts = {
+            "verified": len(matrix.verified_boundaries),
+            "failing": len(matrix.failing_boundaries),
+            "untested": len(matrix.untested_boundaries),
+            "stale": len(matrix.stale_boundaries),
+        }
+
+        current_failure = None
+        candidates_out: list[dict[str, Any]] = []
+        if matrix.failing_boundaries:
+            first_fail = matrix.failing_boundaries[0]
+            fail_name = store.snapshot.boundaries.get(first_fail, {}).get("name", first_fail)
+            b_fixtures: dict[str, str] = {}
+            for k, ev in matrix.current_evidence.items():
+                if k[0] == first_fail:
+                    b_fixtures[ev.fixture["kind"]] = ev.result
+
+            current_failure = {
+                "boundary": first_fail,
+                "name": fail_name,
+                "engine_inputs": "not_observed",
+                "fixtures": b_fixtures,
+            }
+
+            notes = [ev for ev in store.evidence.values() if ev.type == "manual_note"]
+            candidates, _ = classify_failure_domain(
+                first_fail,
+                list(matrix.current_evidence.values()),
+                notes=notes,
+                active_engine_identity=matrix.active_engine_identity,
+                events=store.events,
+            )
+            candidates_out = [
+                {
+                    "id": c.id,
+                    "domain": c.domain,
+                    "confidence": c.confidence,
+                    "supporting_evidence": list(c.supporting_evidence),
+                }
+                for c in candidates[:3]
+            ]
+
+        actions: list[dict[str, Any]] = []
+        if current_failure:
+            actions.append({
+                "operation": "alignment_note",
+                "reason": f"Record observation or failure hypothesis for {current_failure['boundary']}.",
+                "boundary": current_failure["boundary"],
+            })
+            actions.append({
+                "operation": "alignment_narrow",
+                "reason": f"Inspect narrowing path for {current_failure['boundary']}.",
+                "boundary": current_failure["boundary"],
+            })
+        elif matrix.untested_boundaries:
+            actions.append({
+                "operation": "alignment_run",
+                "reason": f"Run next untested boundary {matrix.untested_boundaries[0]}.",
+                "boundary": matrix.untested_boundaries[0],
+            })
+
+        summary_data: dict[str, Any] = {
+            "status": store.snapshot.status,
+            "counts": counts,
+            "current_failure": current_failure,
+            "classification_candidates": candidates_out,
+            "next_actions": actions[:3],
+            "artifacts": {"alignment": "alignment.json"},
+            "metrics": {
+                "tfcm_seconds": matrix.metrics.get("tfcm_seconds"),
+                "adoption_ratio": matrix.metrics.get("adoption_ratio"),
+                "validation_steps": matrix.metrics.get("inferref_validation_steps", 0),
+            },
+        }
+
+        return AgentResponse(
+            operation=operation,
+            status="ok",
+            data=summary_data,
+            next_actions=tuple(actions[:3]),
+        )
+    except Exception as exc:
+        code = "path_not_allowed" if _is_path_error(exc) else "invalid_request"
+        return AgentResponse.error(operation, str(exc), code=code)
+
+
+align_summary = alignment_summary
+
+
+def alignment_narrow(
+    session_dir: str | Path,
+    *,
+    boundary_id: str | None = None,
+    access_policy: Any = None,
+) -> AgentResponse:
+    """Compute smallest confirmed failing boundary and failure domain classification."""
+    from inferref.alignment import (
+        AlignmentStore,
+        build_fixture_matrix,
+        classify_failure_domain,
+        compute_narrowing,
+        inventory_boundaries,
+    )
+
+    operation = "alignment_narrow"
+    try:
+        s_dir = Path(session_dir).resolve()
+        if access_policy is not None:
+            s_dir = Path(access_policy(s_dir, "alignment session")).resolve()
+
+        if not (s_dir / "alignment.json").is_file():
+            return AgentResponse.error(operation, f"no alignment session found at {s_dir}")
+
+        store = AlignmentStore.load(s_dir)
+        if access_policy is not None:
+            access_policy(store.snapshot.source["trace"]["path"], "trace input")
+            access_policy(store.snapshot.target["adapter"]["path"], "adapter")
+
+        matrix = build_fixture_matrix(
+            list(store.evidence.values()),
+            store.snapshot,
+            known_boundaries=list(store.snapshot.boundaries.keys()),
+            events=store.events,
+        )
+
+        evidence_by_b: dict[str, list[Any]] = {}
+        for ev in matrix.current_evidence.values():
+            if ev.type == "numerical_comparison":
+                evidence_by_b.setdefault(ev.subject["boundary"], []).append(ev)
+
+        t_path = Path(store.snapshot.source["trace"]["path"]).resolve()
+        pkg = TracePackage.load(t_path)
+        inventory = inventory_boundaries(pkg)
+
+        narrowing = compute_narrowing(
+            inventory,
+            evidence_by_b,
+            current_failure=boundary_id,
+        )
+        candidates: list[Any] = []
+        if narrowing.smallest_confirmed_failure:
+            notes = [ev for ev in store.evidence.values() if ev.type == "manual_note"]
+            candidates, _ = classify_failure_domain(
+                narrowing.smallest_confirmed_failure,
+                list(matrix.current_evidence.values()),
+                notes=notes,
+                active_engine_identity=matrix.active_engine_identity,
+                events=store.events,
+            )
+
+        return AgentResponse(
+            operation=operation,
+            status="ok",
+            data={
+                "narrowing": narrowing.to_dict(),
+                "classification": [c.to_dict() for c in candidates],
+            },
+        )
+    except Exception as exc:
+        code = "path_not_allowed" if _is_path_error(exc) else "invalid_request"
+        return AgentResponse.error(operation, str(exc), code=code)
+
+
+align_narrow = alignment_narrow
+
+
+def alignment_note(
+    session_dir: str | Path,
+    boundary_id: str,
+    category: str,
+    text: str,
+    *,
+    duration_minutes: float | None = None,
+    milestone: str | None = None,
+    target: str | None = None,
+    author: str = "agent",
+    access_policy: Any = None,
+) -> AgentResponse:
+    """Record human/agent manual note evidence."""
+    from inferref.alignment import (
+        AlignmentStore,
+        build_manual_note_evidence,
+        inventory_boundaries,
+    )
+
+    operation = "alignment_note"
+    try:
+        s_dir = Path(session_dir).resolve()
+        if access_policy is not None:
+            s_dir = Path(access_policy(s_dir, "alignment session")).resolve()
+
+        if not (s_dir / "alignment.json").is_file():
+            return AgentResponse.error(operation, f"no alignment session found at {s_dir}")
+
+        store = AlignmentStore.load(s_dir)
+        if access_policy is not None:
+            access_policy(store.snapshot.source["trace"]["path"], "trace input")
+            access_policy(store.snapshot.target["adapter"]["path"], "adapter")
+
+        t_path = Path(store.snapshot.source["trace"]["path"]).resolve()
+        pkg = TracePackage.load(t_path)
+        inventory = inventory_boundaries(pkg)
+
+        boundary = inventory.resolve(boundary_id)
+        if boundary is None:
+            return AgentResponse.error(operation, f"boundary not in inventory: {boundary_id}")
+
+        evidence = build_manual_note_evidence(
+            subject={"boundary": boundary.id, "name": boundary.name},
+            category=category,
+            reason=text,
+            duration_minutes=duration_minutes,
+            milestone=milestone,
+            target=target,
+            extensions={"author": author},
+        )
+        with store.lock():
+            event_data: dict[str, Any] = {
+                "boundary": boundary.id,
+                "category": category,
+                "text": text,
+            }
+            if duration_minutes is not None:
+                event_data["duration_minutes"] = duration_minutes
+            if milestone is not None:
+                event_data["milestone"] = milestone
+            if target is not None:
+                event_data["target"] = target
+            store.commit_evidence(
+                evidence,
+                event_name="note_recorded",
+                event_data=event_data,
+            )
+        return AgentResponse(
+            operation=operation,
+            status="pass",
+            data=evidence.to_dict(),
+        )
+    except Exception as exc:
+        code = "path_not_allowed" if _is_path_error(exc) else "invalid_request"
+        return AgentResponse.error(operation, str(exc), code=code)
+
+
+align_note = alignment_note
+
+
+def alignment_report(
+    session_dir: str | Path,
+    *,
+    output: str | Path | None = None,
+    json_sidecar: str | Path | None = None,
+    access_policy: Any = None,
+) -> AgentResponse:
+    """Generate markdown and JSON sidecar alignment reports."""
+    from inferref.alignment import AlignmentStore
+    from inferref.alignment.report import generate_alignment_report
+
+    operation = "alignment_report"
+    try:
+        s_dir = Path(session_dir).resolve()
+        if access_policy is not None:
+            s_dir = Path(access_policy(s_dir, "alignment session")).resolve()
+
+        if not (s_dir / "alignment.json").is_file():
+            return AgentResponse.error(operation, f"no alignment session found at {s_dir}")
+
+        store = AlignmentStore.load(s_dir)
+        if access_policy is not None:
+            access_policy(store.snapshot.source["trace"]["path"], "trace input")
+            access_policy(store.snapshot.target["adapter"]["path"], "adapter")
+
+        md_p = Path(output).resolve() if output else s_dir / "reports" / "alignment-report.md"
+        js_p = Path(json_sidecar).resolve() if json_sidecar else s_dir / "reports" / "alignment-report.json"
+        if access_policy is not None:
+            md_p = Path(access_policy(md_p, "report output")).resolve()
+            js_p = Path(access_policy(js_p, "sidecar output")).resolve()
+
+        _md_text, sidecar = generate_alignment_report(
+            store,
+            markdown_path=md_p,
+            json_sidecar_path=js_p,
+        )
+        return AgentResponse(
+            operation=operation,
+            status="ok",
+            data=sidecar,
+        )
+    except Exception as exc:
+        code = "path_not_allowed" if _is_path_error(exc) else "invalid_request"
+        return AgentResponse.error(operation, str(exc), code=code)
+
+
+align_report = alignment_report

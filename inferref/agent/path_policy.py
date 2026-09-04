@@ -28,10 +28,10 @@ class MCPPathPolicy:
         writes = validate_allowed_roots(write_roots or reads, kind="MCP write")
         return cls(read_roots=reads, write_roots=writes)
 
-    def read(self, path: str | Path, *, kind: str) -> Path:
+    def read(self, path: str | Path, kind: str = "path") -> Path:
         return resolve_allowed_path(path, self.read_roots, kind=kind)
 
-    def write(self, path: str | Path, *, kind: str) -> Path:
+    def write(self, path: str | Path, kind: str = "path") -> Path:
         return resolve_allowed_path(path, self.write_roots, kind=kind)
 
     def to_dict(self) -> dict[str, list[str]]:

@@ -81,10 +81,10 @@ def generate() -> None:
         key = rng.normal(size=(2, 2, 5, dim)).astype(np.float32)
         angle = rng.normal(size=(5, dim)).astype(np.float32)
         cos, sin = np.cos(angle), np.sin(angle)
-        def rope(x):
-            half = dim // 2
+        def rope(x, d=dim, c=cos, s=sin):
+            half = d // 2
             rotated = np.concatenate((-x[..., half:], x[..., :half]), axis=-1)
-            return x * cos[None, None] + rotated * sin[None, None]
+            return x * c[None, None] + rotated * s[None, None]
         name = f"rope-dim{dim}"
         cases.append(_case(name, {"query": (query, "float32"), "key": (key, "float32"), "cos": (cos, "float32"), "sin": (sin, "float32")}, {"q_embed": (rope(query), "float32"), "k_embed": (rope(key), "float32")}, ["rope", "decode", f"head-dim-{dim}"], "rope/rotate-half/v1"))
     cache = rng.normal(size=(1, 2, 3, 8)).astype(np.float32)

@@ -21,7 +21,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from model import MiniLlamaConfig, build_inputs, build_model  # noqa: E402
+from model import MiniLlamaConfig, build_inputs, build_model
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,17 +49,16 @@ def main(argv: list[str] | None = None) -> int:
 
     import inferref
 
-    with torch.no_grad():
-        with inferref.trace(
-            output=args.output,
-            scope=args.scope,
-            capture_tensors=args.capture_tensors,
-            model_name="MiniLlama",
-            seed=0,
-        ) as session:
-            session.mark_input("hidden_states", hidden)
-            output = model(hidden)
-            session.mark_output("output", output)
+    with torch.no_grad(), inferref.trace(
+        output=args.output,
+        scope=args.scope,
+        capture_tensors=args.capture_tensors,
+        model_name="MiniLlama",
+        seed=0,
+    ) as session:
+        session.mark_input("hidden_states", hidden)
+        output = model(hidden)
+        session.mark_output("output", output)
 
     package = session.package
     assert package is not None

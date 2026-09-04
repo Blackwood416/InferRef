@@ -8,6 +8,7 @@
     ├── analyze
     ├── compare
     ├── validate
+    ├── align    {init, plan, run, status, summary, narrow, note, report}
     ├── testcase {extract, dedup}
     ├── contract {list, show, validate}
     ├── comparator {list, show}
@@ -938,6 +939,117 @@ def cmd_agent_evaluate(args: argparse.Namespace) -> int:
     return EXIT_OK if report["status"] == "pass" else EXIT_FAIL
 
 
+def cmd_agent_alignment_init(args: argparse.Namespace) -> int:
+    from inferref.agent.service import alignment_init
+
+    res = alignment_init(
+        args.trace,
+        args.adapter,
+        session_dir=getattr(args, "dir", None),
+        name=getattr(args, "name", None),
+        force=getattr(args, "force", False),
+    )
+    return _agent_emit(res, args)
+
+
+def cmd_agent_alignment_plan(args: argparse.Namespace) -> int:
+    from inferref.agent.service import alignment_plan
+
+    res = alignment_plan(
+        getattr(args, "session", None),
+        trace_path=getattr(args, "trace", None),
+        adapter_path=getattr(args, "adapter", None),
+    )
+    return _agent_emit(res, args)
+
+
+def cmd_agent_alignment_run(args: argparse.Namespace) -> int:
+    from inferref.agent.service import alignment_run
+
+    adapter = getattr(args, "adapter", None)
+    if not adapter:
+        print("error: --adapter is required for agent alignment run", file=sys.stderr)
+        return EXIT_USAGE
+    session = getattr(args, "session", None) or "alignment"
+
+    testcase = getattr(args, "testcase", None)
+    fixture_kind = getattr(args, "fixture_kind", None)
+    if testcase and not fixture_kind:
+        print("error: --testcase requires an explicit --fixture-kind", file=sys.stderr)
+        return EXIT_USAGE
+
+    res = alignment_run(
+        session,
+        adapter=adapter,
+        limit=getattr(args, "limit", 1),
+        boundary_ids=getattr(args, "boundary", None) or (),
+        continue_on_fail=getattr(args, "continue_on_fail", False),
+        engine_revision=getattr(args, "engine_revision", None),
+        external_testcase=testcase,
+        fixture_kind=fixture_kind,
+        fixture_tags=getattr(args, "fixture_tag", None) or (),
+        comparator=getattr(args, "comparator", None),
+        atol=getattr(args, "atol", None),
+        rtol=getattr(args, "rtol", None),
+        ignore_stride=getattr(args, "ignore_stride", False),
+        strict_layout=getattr(args, "strict_layout", False),
+    )
+    return _agent_emit(res, args)
+
+
+def cmd_agent_alignment_status(args: argparse.Namespace) -> int:
+    from inferref.agent.service import alignment_status
+
+    res = alignment_status(getattr(args, "session", None) or "alignment")
+    return _agent_emit(res, args)
+
+
+def cmd_agent_alignment_summary(args: argparse.Namespace) -> int:
+    from inferref.agent.service import alignment_summary
+
+    res = alignment_summary(getattr(args, "session", None) or "alignment")
+    return _agent_emit(res, args)
+
+
+def cmd_agent_alignment_narrow(args: argparse.Namespace) -> int:
+    from inferref.agent.service import alignment_narrow
+
+    res = alignment_narrow(
+        getattr(args, "session", None) or "alignment",
+        boundary_id=getattr(args, "boundary", None),
+    )
+    return _agent_emit(res, args)
+
+
+def cmd_agent_alignment_note(args: argparse.Namespace) -> int:
+    from inferref.agent.service import alignment_note
+
+    target = getattr(args, "target", None) or getattr(args, "override_domain", None) or getattr(args, "candidate_id", None)
+    res = alignment_note(
+        getattr(args, "session", None) or "alignment",
+        boundary_id=args.boundary,
+        category=args.category,
+        text=args.text,
+        duration_minutes=getattr(args, "duration_minutes", None),
+        milestone=getattr(args, "milestone", None),
+        target=target,
+        author=getattr(args, "author", "agent"),
+    )
+    return _agent_emit(res, args)
+
+
+def cmd_agent_alignment_report(args: argparse.Namespace) -> int:
+    from inferref.agent.service import alignment_report
+
+    res = alignment_report(
+        getattr(args, "session", None) or "alignment",
+        output=getattr(args, "output", None),
+        json_sidecar=getattr(args, "json_sidecar", None),
+    )
+    return _agent_emit(res, args)
+
+
+
 # -- suite -----------------------------------------------------------------
 
 
@@ -1599,6 +1711,67 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json(q)
     q.set_defaults(func=cmd_agent_evaluate)
 
+    # Agent alignment subcommands
+    from inferref.cli.align import register_align_subparsers
+
+    register_align_subparsers(asub, name="alignment")
+    register_align_subparsers(asub, name="align")
+
+    for op_name, fn in [
+        ("alignment_init", cmd_agent_alignment_init),
+        ("alignment_plan", cmd_agent_alignment_plan),
+        ("alignment_run", cmd_agent_alignment_run),
+        ("alignment_status", cmd_agent_alignment_status),
+        ("alignment_summary", cmd_agent_alignment_summary),
+        ("alignment_narrow", cmd_agent_alignment_narrow),
+        ("alignment_note", cmd_agent_alignment_note),
+        ("alignment_report", cmd_agent_alignment_report),
+    ]:
+        q = asub.add_parser(op_name, help=f"agent {op_name} operation")
+        if "init" in op_name:
+            q.add_argument("trace", help="trace path")
+            q.add_argument("adapter", help="adapter path")
+            q.add_argument("--dir", help="session directory")
+            q.add_argument("--name", help="session name")
+            q.add_argument("--force", action="store_true")
+        elif "plan" in op_name:
+            q.add_argument("session", nargs="?", help="session directory")
+            q.add_argument("--trace", help="trace path")
+            q.add_argument("--adapter", help="adapter path")
+        elif "run" in op_name:
+            q.add_argument("session", nargs="?", help="session directory")
+            q.add_argument("--adapter", required=True, help="adapter path")
+            q.add_argument("--limit", type=int, default=1)
+            q.add_argument("--boundary", action="append")
+            q.add_argument("--continue-on-fail", action="store_true")
+            q.add_argument("--engine-revision")
+            q.add_argument("--testcase", help="external testcase path")
+            q.add_argument("--fixture-kind", default=None)
+            q.add_argument("--fixture-tag", action="append")
+            q.add_argument("--comparator")
+            q.add_argument("--atol", type=float)
+            q.add_argument("--rtol", type=float)
+            q.add_argument("--ignore-stride", action="store_true")
+            q.add_argument("--strict-layout", action="store_true")
+        elif "note" in op_name:
+            q.add_argument("session", nargs="?", help="session directory")
+            q.add_argument("boundary", help="boundary ID")
+            q.add_argument("category", help="category")
+            q.add_argument("text", help="text")
+            q.add_argument("--duration-minutes", type=float)
+            q.add_argument("--milestone")
+            q.add_argument("--target")
+            q.add_argument("--author", default="agent")
+        else:
+            q.add_argument("session", nargs="?", help="session directory")
+            if "narrow" in op_name:
+                q.add_argument("--boundary", help="boundary ID")
+            elif "report" in op_name:
+                q.add_argument("--output", help="markdown output")
+                q.add_argument("--json-sidecar", help="sidecar output")
+        _add_json(q)
+        q.set_defaults(func=fn)
+
     # suite
     p = sub.add_parser("suite", help="validate and run testcase suites")
     ssub = p.add_subparsers(dest="suite_command", metavar="<subcommand>")
@@ -1748,6 +1921,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("trace", help="trace package directory")
     p.add_argument("-o", "--output", help="write to this file instead of stdout")
     p.set_defaults(func=cmd_export)
+    # align
+    from inferref.cli.align import register_align_subparsers
+
+    register_align_subparsers(sub, name="align")
+    register_align_subparsers(sub, name="alignment")
 
     return parser
 

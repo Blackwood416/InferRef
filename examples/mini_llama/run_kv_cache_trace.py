@@ -15,8 +15,15 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from examples.mini_llama.kv_cache import CachedAttention, copy_attention_weights  # noqa: E402
-from examples.mini_llama.model import Attention, MiniLlamaConfig, RotaryEmbedding  # noqa: E402
+from examples.mini_llama.kv_cache import (
+    CachedAttention,
+    copy_attention_weights,
+)
+from examples.mini_llama.model import (
+    Attention,
+    MiniLlamaConfig,
+    RotaryEmbedding,
+)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -77,6 +77,27 @@ python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
 inferref compare repro/rope engine-out/ --first-failure
 ```
 
+## Alignment orchestration
+
+InferRef 0.10 adds a persistent alignment workflow for planning validation
+boundaries, recording immutable evidence, narrowing the first divergence, and
+producing an auditable report:
+
+```bash
+inferref align init trace/ engine.adapter.json --dir alignment/
+inferref align plan alignment/
+inferref align run alignment/ --limit 1
+inferref align status alignment/
+inferref align narrow alignment/
+inferref align report alignment/
+```
+
+Alignment sessions keep an event log and distinguish current evidence from
+historical or stale results by trace, testcase, adapter, engine revision, and
+comparison policy. Every command also supports `--json` for automation. See
+[the Alignment Orchestrator specification](docs/spec/InferRef_0.10_Alignment_Orchestrator.md)
+and [the Agent workflow guide](docs/AGENT_WORKFLOW.md).
+
 `region detect` recognises Linear, RMSNorm, RoPE, Attention, SwiGLU and friends from the module
 hierarchy and source functions the trace already records — no operator ids, no static export:
 

@@ -1,11 +1,19 @@
 ---
 name: inferref
-description: "Validate and debug inference engines with InferRef: trace inspection, testcase extraction, trusted engine-adapter execution, numerical comparison, first-divergence debugging, stateful scenario runs, and suite validation. Use when a coding agent must validate an engine or kernel against InferRef artifacts, isolate a failing region from a trace, write or run an engine adapter, interpret an InferRef agent response envelope, or run a prefill/decode scenario."
+description: "Validate and debug inference engines with InferRef: alignment orchestrator sessions, trace inspection, testcase extraction, trusted engine-adapter execution, numerical comparison, first-divergence debugging, stateful scenario runs, and suite validation. Use when a coding agent must validate an engine or kernel against InferRef artifacts, align an engine through an alignment session, isolate a failing region from a trace, write or run an engine adapter, interpret an InferRef agent response envelope, or run a prefill/decode scenario."
 ---
 
 # InferRef Engine Validation
 
 ## Standard loop
+
+Alignment-first workflow (SPEC §14.4):
+
+```text
+capabilities -> align init / resume -> align plan -> align run -> [narrow / ad-hoc note] -> session verified
+```
+
+For legacy standalone extraction and scenario chains:
 
 ```text
 discover -> context -> extract -> run / scenario -> compare -> fix -> rerun
@@ -16,6 +24,11 @@ discover -> context -> extract -> run / scenario -> compare -> fix -> rerun
 | Task | Operation | Notes |
 | --- | --- | --- |
 | Inventory formats, operations, and MCP tools | capabilities | call once before relying on optional features |
+| Initialize or resume an alignment session | alignment_init / alignment_status | required first step for numerical debugging (SPEC §14.4) |
+| Inspect alignment candidate frontier | alignment_plan | plans in-scope boundaries in topological order |
+| Execute alignment boundary run | alignment_run | executes candidate boundary against explicit adapter |
+| Narrow causal divergence subtree | alignment_narrow | narrows to child boundaries on numerical failure |
+| Record missing capability or escape-hatch | alignment_note | must record `missing-observation` when using custom tools |
 | Summarise or validate one trace/testcase | context | read `data.analysis`, `data.regions`, `data.validation` |
 | Project one operator or region into a testcase | extract_testcase | pass exactly one of `--op` / `--region` |
 | Compare an existing engine output with a testcase | compare_outputs | use when the output directory already exists |
@@ -33,50 +46,51 @@ discover -> context -> extract -> run / scenario -> compare -> fix -> rerun
 
 ## Procedure
 
-### 1. Discover
+### 1. Discover capabilities
 
 Run `inferref agent capabilities --json` (or MCP `inferref_capabilities`) and read
 the returned formats, operations, and MCP tool names before relying on optional
 features.
 
-### 2. Inspect
+### 2. Alignment-first session (SPEC §14.4)
 
-Run `inferref agent context <artifact> --json` (or MCP `inferref_context`). For a
-trace, read `data.analysis`, `data.regions`, and `data.validation`; follow
-`next_actions` when present.
+Always begin numerical engine debugging by initializing or resuming an alignment session:
+- Initialize: `inferref align init <trace> <adapter> --dir <session-dir> --json` (or MCP `inferref_alignment_init`).
+- Check status: `inferref align status <session-dir> --json` (or MCP `inferref_alignment_status`).
+Numerical alignment debugging must start with alignment session state before using any ad-hoc tooling.
 
-### 3. Extract
+### 3. Plan alignment frontier
 
-Run `inferref agent extract <trace> --op <id> --output <dir> --json` or
-`--region <name>`. Name boundary inputs/outputs with `--input-names` and
-`--output-names`, and pass `--contract <id>` when the operation has an executable
-contract. Prefer a region over a single operator when the failing kernel is
-fused or stateful.
+Run `inferref align plan <session-dir> --json` (or MCP `inferref_alignment_plan`).
+Inspect the candidate boundaries recommended in topological order along the in-scope frontier.
 
-### 4. Run or compare
+### 4. Run boundary alignment
 
-- Run: `inferref agent run <testcase> --adapter <adapter.json> --runs-dir <runs> --json`.
-- Compare existing output: `inferref agent compare <testcase> <engine-output> --json`.
+Run `inferref align run <session-dir> --boundary <id> --json`
+(or MCP `inferref_alignment_run`).
+If an external testcase is supplied, pass `--testcase <path>` and explicitly specify `--fixture-kind <kind>`.
 
-Both paths share the same testcase validator. A manifest's `reproducible: true`
-is not trusted until validation passes.
+### 5. Narrow divergence and diagnose
 
-### 5. Run a scenario
+When a boundary run fails:
+- Run `inferref align narrow <session-dir> --boundary <id> --json` (or MCP `inferref_alignment_narrow`) to identify the earliest failing causal descendant.
+- Inspect diagnostic classification candidates (e.g. implementation, layout, model_artifact, quantization).
 
-Validate first: `inferref scenario validate <scenario-dir> --json`. Then run:
-`inferref agent run_scenario <scenario-dir> --adapter <adapter.json> --runs-dir <runs> --json`.
-Use `--state-mode engine` with `--compare-state` to feed engine state forward and
-localise state divergence at the producing step.
+### 6. Ad-hoc tooling escape hatch
 
-### 6. Interpret the envelope
+Whenever custom numerical inspection, ad-hoc scripts, or external debuggers are used outside InferRef, the agent must record the missing capability:
+- Run `inferref align note <session-dir> <boundary> missing-observation "<reason>" --duration-minutes <minutes> --json` (or MCP `inferref_alignment_note`).
+This records the escape-hatch reason and tracks debugging metrics without compromising session integrity.
 
-`ok` means discovery/inspection succeeded; `pass` means validation, extraction,
-or execution succeeded; `fail` means a numerical mismatch or non-reproducible
-artifact; `error` means an adapter, process, or protocol failure. Read `data` and
-`next_actions` before deciding the next step. `fail` is a domain result, not a
-crash.
+### 7. Standalone extraction, runs, and scenarios
 
-### 7. Iterate
+For standalone workflows or multi-step chains:
+- Extract testcase: `inferref agent extract <trace> --op <id> --output <dir> --json` or `--region <name>`.
+- Run engine adapter: `inferref agent run <testcase> --adapter <adapter.json> --runs-dir <runs> --json`.
+- Compare output: `inferref agent compare <testcase> <engine-output> --json`.
+- Run scenario: `inferref agent run_scenario <scenario-dir> --adapter <adapter.json> --runs-dir <runs> --json` (validate first: `inferref scenario validate <scenario-dir> --json`).
 
-Localise the first divergence, fix the engine, and rerun the same command.
-Never reuse a run directory; InferRef always creates a fresh one.
+### 8. Interpret the envelope and iterate
+
+- `ok` means discovery/inspection succeeded; `pass` means validation, extraction, or boundary verification passed; `fail` indicates numerical mismatch; `error` indicates process or protocol failure.
+- Iterate fixes and rerun candidate boundaries until all in-scope frontier boundaries reach `verified` state, emitting `session_verified`.

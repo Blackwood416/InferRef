@@ -39,6 +39,7 @@ OPENAI_YAML_REL = Path("skills") / "inferref" / "agents" / "openai.yaml"
 SKILL_DIR_REL = Path("skills") / "inferref"
 COMMAND_GROUPS = (
     "agent",
+    "align",
     "scenario",
     "suite",
     "contract",

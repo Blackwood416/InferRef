@@ -76,6 +76,25 @@ and `suite run`. The default comparator is `tensor/numeric/v1`.
 - `inferref suite run <suite.json> --adapter <adapter.json> [--adapter <more.json> ...] --runs-dir <dir> [--allow-unsupported] [--fail-fast] [--json]`.
 - `inferref suite report <suite-run.json> --output <report.html> [--json]`.
 
+## Alignment Orchestrator
+
+- `inferref align init <trace> <adapter> [--dir <dir>] [--name <id>] [--force] [--json]` -
+  initialize an alignment session atomically.
+- `inferref align plan <session> [--trace <trace>] [--adapter <adapter>] [--json]` -
+  inspect alignment candidates and recommendation.
+- `inferref align run <session> [--limit <n>] [--boundary <id>] [--continue-on-fail] [--engine-revision <rev>] [--json]` -
+  execute alignment boundaries against an engine adapter.
+- `inferref align status <session> [--json]` -
+  inspect session progress, boundary counts, and active failure.
+- `inferref align summary <session> [--json]` -
+  summarise alignment metrics, TFCM, and adoption ratio.
+- `inferref align narrow <session> [--boundary <id>] [--json]` -
+  compute smallest confirmed failing boundary and failure domain classification.
+- `inferref align note <session> <boundary> <category> <text> [--author <name>] [--json]` -
+  record human or agent manual note evidence.
+- `inferref align report <session> [--output <report.md>] [--json-sidecar <report.json>] [--json]` -
+  generate markdown and JSON sidecar alignment reports.
+
 ## MCP tools
 
 Start the server with `inferref-mcp --read-root <workspace> --write-root <runs>`
@@ -87,6 +106,14 @@ Start the server with `inferref-mcp --read-root <workspace> --write-root <runs>`
 - `inferref_compare_outputs(testcase, engine_output, atol, rtol, ignore_stride, strict_layout, first_failure)`.
 - `inferref_run_engine(testcase, adapter, runs_root, atol, rtol, ignore_stride, strict_layout, first_failure)`.
 - `inferref_run_scenario(scenario, adapter, runs_root, state_mode, compare_state, atol, rtol, ignore_stride, strict_layout, first_failure)`.
+- `inferref_alignment_init(trace, adapter, session_dir, name, force)`.
+- `inferref_alignment_plan(session, trace, adapter)`.
+- `inferref_alignment_run(session, adapter, limit, boundaries, continue_on_fail, engine_revision)`.
+- `inferref_alignment_status(session)`.
+- `inferref_alignment_summary(session)`.
+- `inferref_alignment_narrow(session, boundary)`.
+- `inferref_alignment_note(session, boundary, category, text, author)`.
+- `inferref_alignment_report(session, output, json_sidecar)`.
 
 MCP roots are path-policy containment, not a sandbox. Exact root paths are host
 policy and are never committed to the repository.

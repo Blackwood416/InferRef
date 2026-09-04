@@ -11,6 +11,14 @@ from typing import Any
 from inferref.agent.path_policy import MCPPathPolicy
 from inferref.agent.protocol import AgentResponse
 from inferref.agent.service import (
+    alignment_init,
+    alignment_narrow,
+    alignment_note,
+    alignment_plan,
+    alignment_report,
+    alignment_run,
+    alignment_status,
+    alignment_summary,
     capabilities,
     compare_outputs,
     context,
@@ -211,6 +219,180 @@ def create_server(
             ignore_stride=ignore_stride,
             strict_layout=strict_layout,
             first_failure=first_failure,
+        ).to_dict()
+
+    @server.tool()
+    def inferref_alignment_init(
+        trace: str,
+        adapter: str,
+        session_dir: str | None = None,
+        name: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Initialize an InferRef alignment session."""
+        try:
+            allowed_trace = policy.read(trace, kind="trace")
+            allowed_adapter = policy.read(adapter, kind="adapter")
+            s_target = session_dir or (str(Path.cwd() / "alignment"))
+            allowed_session = policy.write(s_target, kind="alignment session")
+        except ValueError as exc:
+            return AgentResponse.error("alignment_init", str(exc), code="path_not_allowed").to_dict()
+
+        return alignment_init(
+            allowed_trace,
+            allowed_adapter,
+            session_dir=allowed_session,
+            name=name,
+            force=force,
+            access_policy=policy.read,
+        ).to_dict()
+
+    @server.tool()
+    def inferref_alignment_plan(
+        session: str | None = None,
+        trace: str | None = None,
+        adapter: str | None = None,
+    ) -> dict[str, Any]:
+        """Inspect alignment candidates and recommended next boundary."""
+        try:
+            allowed_session = policy.read(session, kind="alignment session") if session else None
+            allowed_trace = policy.read(trace, kind="trace") if trace else None
+            allowed_adapter = policy.read(adapter, kind="adapter") if adapter else None
+        except ValueError as exc:
+            return AgentResponse.error("alignment_plan", str(exc), code="path_not_allowed").to_dict()
+
+        return alignment_plan(
+            session_dir=allowed_session,
+            trace_path=allowed_trace,
+            adapter_path=allowed_adapter,
+            access_policy=policy.read,
+        ).to_dict()
+
+    @server.tool()
+    def inferref_alignment_run(
+        session: str,
+        adapter: str,
+        limit: int = 1,
+        boundaries: list[str] | None = None,
+        continue_on_fail: bool = False,
+        engine_revision: str | None = None,
+        external_testcase: str | None = None,
+        fixture_kind: str | None = None,
+        fixture_tags: list[str] | None = None,
+        comparator: str | None = None,
+        atol: float | None = None,
+        rtol: float | None = None,
+        ignore_stride: bool = False,
+        strict_layout: bool = False,
+    ) -> dict[str, Any]:
+        """Execute boundary alignment runs against an explicit engine adapter."""
+        try:
+            allowed_session = policy.write(session, kind="alignment session")
+            allowed_adapter = policy.read(adapter, kind="adapter")
+            allowed_external_tc = policy.read(external_testcase, kind="external testcase") if external_testcase else None
+        except ValueError as exc:
+            return AgentResponse.error("alignment_run", str(exc), code="path_not_allowed").to_dict()
+
+        return alignment_run(
+            allowed_session,
+            allowed_adapter,
+            limit=limit,
+            boundary_ids=boundaries or (),
+            continue_on_fail=continue_on_fail,
+            engine_revision=engine_revision,
+            external_testcase=allowed_external_tc,
+            fixture_kind=fixture_kind,
+            fixture_tags=fixture_tags or (),
+            comparator=comparator,
+            atol=atol,
+            rtol=rtol,
+            ignore_stride=ignore_stride,
+            strict_layout=strict_layout,
+            access_policy=policy.read,
+        ).to_dict()
+
+    @server.tool()
+    def inferref_alignment_status(session: str) -> dict[str, Any]:
+        """Inspect alignment session progress, boundary counts, and active failure."""
+        try:
+            allowed_session = policy.read(session, kind="alignment session")
+        except ValueError as exc:
+            return AgentResponse.error("alignment_status", str(exc), code="path_not_allowed").to_dict()
+
+        return alignment_status(allowed_session, access_policy=policy.read).to_dict()
+
+    @server.tool()
+    def inferref_alignment_summary(session: str) -> dict[str, Any]:
+        """Summarize alignment metrics, TFCM, and adoption ratio (compact Spec §11.3)."""
+        try:
+            allowed_session = policy.read(session, kind="alignment session")
+        except ValueError as exc:
+            return AgentResponse.error("alignment_summary", str(exc), code="path_not_allowed").to_dict()
+
+        return alignment_summary(allowed_session, access_policy=policy.read).to_dict()
+
+    @server.tool()
+    def inferref_alignment_narrow(
+        session: str,
+        boundary: str | None = None,
+    ) -> dict[str, Any]:
+        """Compute smallest confirmed failing boundary and failure domain classification."""
+        try:
+            allowed_session = policy.read(session, kind="alignment session")
+        except ValueError as exc:
+            return AgentResponse.error("alignment_narrow", str(exc), code="path_not_allowed").to_dict()
+
+        return alignment_narrow(allowed_session, boundary_id=boundary, access_policy=policy.read).to_dict()
+
+    @server.tool()
+    def inferref_alignment_note(
+        session: str,
+        boundary: str,
+        category: str,
+        text: str,
+        duration_minutes: float | None = None,
+        milestone: str | None = None,
+        target: str | None = None,
+        author: str = "agent",
+    ) -> dict[str, Any]:
+        """Record human/agent manual note evidence."""
+        try:
+            allowed_session = policy.write(session, kind="alignment session")
+            allowed_author = author
+        except ValueError as exc:
+            return AgentResponse.error("alignment_note", str(exc), code="path_not_allowed").to_dict()
+
+        return alignment_note(
+            allowed_session,
+            boundary_id=boundary,
+            category=category,
+            text=text,
+            duration_minutes=duration_minutes,
+            milestone=milestone,
+            target=target,
+            author=allowed_author,
+            access_policy=policy.read,
+        ).to_dict()
+
+    @server.tool()
+    def inferref_alignment_report(
+        session: str,
+        output: str | None = None,
+        json_sidecar: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate markdown and JSON sidecar alignment reports."""
+        try:
+            allowed_session = policy.write(session, kind="alignment session")
+            allowed_output = policy.write(output, kind="report output") if output else None
+            allowed_sidecar = policy.write(json_sidecar, kind="sidecar output") if json_sidecar else None
+        except ValueError as exc:
+            return AgentResponse.error("alignment_report", str(exc), code="path_not_allowed").to_dict()
+
+        return alignment_report(
+            allowed_session,
+            output=allowed_output,
+            json_sidecar=allowed_sidecar,
+            access_policy=policy.read,
         ).to_dict()
 
     return server
