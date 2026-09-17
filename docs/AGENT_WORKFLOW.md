@@ -229,6 +229,11 @@ declare a requirement the testcase needs, the response is `error` with
 ```
 
 Adapters are the engine author's declaration of what the engine supports.
+For the README's ready-to-run mini-Llama example, use
+`examples/engine_sim/rope_numpy.alias.adapter.json`, which already declares
+`alias_effects` for this NumPy implementation. The minimal adapter used here
+deliberately demonstrates incomplete capability declarations.
+
 When the declaration is incomplete, copy the adapter, extend
 `capabilities.features` (and adjust `command`/`cwd` for the new location),
 then rerun:

@@ -685,16 +685,41 @@ def compare_traces(
     ignore_stride: bool = False,
     strict_layout: bool = False,
     first_failure: bool = False,
+    comparator: str | None = None,
+    comparison_config: dict[str, Any] | None = None,
 ) -> ComparisonReport:
-    """Compare two traces, aligned by ``execution_index`` (IR §52; SPEC §31)."""
+    """Compare traces by execution index using the built-in numeric comparator.
+
+    Custom, role-based comparators require a testcase, not a trace pair.
+    """
+    from inferref.comparators.numeric import NUMERIC_COMPARATOR_ID, NumericComparator
+    from inferref.comparison.resolution import resolve_comparison_policy
+
+    if comparator is not None and comparator != NUMERIC_COMPARATOR_ID:
+        raise ValueError("trace comparison supports only tensor/numeric/v1; extract a testcase for custom comparators")
+    NumericComparator().validate_config(comparison_config)
+    config = comparison_config or {}
     reference_dir = Path(reference_dir)
     actual_dir = Path(actual_dir)
     policy = policy or TolerancePolicy()
+    effective = resolve_comparison_policy(
+        cli_comparator=comparator,
+        cli_config=comparison_config,
+        cli_atol=policy.override_atol if policy.override_atol is not None else config.get("atol"),
+        cli_rtol=policy.override_rtol if policy.override_rtol is not None else config.get("rtol"),
+        cli_tolerance=config.get("per_dtype", policy.per_dtype),
+        cli_ignore_stride=True if ignore_stride else config.get("ignore_stride"),
+        cli_strict_layout=True if strict_layout else config.get("strict_layout"),
+    )
+    policy = effective.to_tolerance_policy()
+    ignore_stride = effective.config.get("ignore_stride", False)
+    strict_layout = effective.config.get("strict_layout", False)
 
     ref_pkg = TracePackage.load(reference_dir)
     act_pkg = TracePackage.load(actual_dir)
     report = ComparisonReport(
-        reference=str(reference_dir), actual=str(actual_dir), tolerance=policy.to_dict()
+        reference=str(reference_dir), actual=str(actual_dir), tolerance=policy.to_dict(),
+        effective_comparison=effective.to_dict(),
     )
 
     # Align by (execution_index, output position) — the canonical fallback

@@ -112,7 +112,7 @@ def test_suite_validate_and_run(tmp_path: Path) -> None:
     assert validate_suite(suite)["cases"] == 1
     report = run_suite(suite, adapter, tmp_path / "runs")
     assert report["status"] == "pass"
-    assert report["counts"] == {"total": 1, "pass": 1, "unsupported": 0, "failed": 0}
+    assert report["counts"] == {"total": 1, "pass": 1, "unsupported": 0, "partial": 0, "failed": 0, "rejected": 0}
 
 
 def test_suite_rejects_escape_and_preflights_unsupported(tmp_path: Path) -> None:
@@ -140,6 +140,55 @@ def test_allow_unsupported_preserves_semantic_status(tmp_path: Path) -> None:
     assert report["accepted"] is True
     assert report["exit_code_policy_satisfied"] is True
     assert report["counts"]["pass"] == 0
+
+
+@pytest.mark.parametrize("version", ["0.1", "0.2"])
+def test_legacy_report_counts_are_not_reinterpreted(tmp_path: Path, version: str) -> None:
+    legacy = {
+        "format": "inferref-suite-run", "format_version": version,
+        "status": "fail", "accepted": False, "suite": {"name": "legacy"},
+        "adapter": {"name": "old"}, "adapters": [], "cases": [],
+        "counts": {"total": 1, "pass": 0, "unsupported": 1, "failed": 1},
+    }
+    report = render_suite_report(legacy, tmp_path / "report.html")
+    assert report["format_version"] == "0.2"
+    assert report["source_run_format_version"] == version
+    assert report["counts"] == legacy["counts"]
+
+
+@pytest.mark.parametrize("allow", [False, True])
+def test_unsupported_counts_and_cli_policy(tmp_path: Path, capsys, allow: bool) -> None:
+    suite, adapter = _fixture(tmp_path, dtypes=["int8"])
+    args = ["suite", "run", str(suite), "--adapter", str(adapter),
+            "--runs-dir", str(tmp_path / "runs"), "--json"]
+    if allow:
+        args.append("--allow-unsupported")
+    assert main(args) == (EXIT_OK if allow else EXIT_FAIL)
+    report = json.loads(capsys.readouterr().out)
+    assert report["counts"] == {"total": 1, "pass": 0, "unsupported": 1,
+                                 "partial": 0, "failed": 0, "rejected": int(not allow)}
+
+
+@pytest.mark.parametrize("allow", [False, True])
+def test_mixed_real_failure_and_unsupported_counts(tmp_path: Path, allow: bool) -> None:
+    suite, adapter = _fixture(tmp_path)
+    original = json.loads(adapter.read_text(encoding="utf-8"))
+    adapters = [adapter]
+    for name, script in [("mismatch", ENGINE.replace("x + 1", "x + 2")),
+                         ("error", "raise RuntimeError('broken engine')"),
+                         ("unsupported", ENGINE)]:
+        data = json.loads(json.dumps(original))
+        data["name"] = name
+        data["command"] = ["{python}", "-c", script, "{testcase}", "{output}"]
+        if name == "unsupported":
+            data["capabilities"]["dtypes"] = ["int8"]
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        adapters.append(path)
+    report = run_suite(suite, adapters, tmp_path / "runs", allow_unsupported=allow)
+    assert report["accepted"] is False
+    assert report["counts"] == {"total": 4, "pass": 1, "unsupported": 1,
+                                 "partial": 0, "failed": 2, "rejected": 2 + int(not allow)}
 
 
 def test_operation_contract_preflight_and_legacy_unchecked(tmp_path: Path) -> None:
@@ -231,8 +280,8 @@ def test_suite_matrix_and_static_report(tmp_path: Path, capsys) -> None:
     second.write_text(adapter.read_text(encoding="utf-8"), encoding="utf-8")
 
     report = run_suite(suite, [adapter, second], tmp_path / "matrix-runs")
-    assert report["format_version"] == "0.2"
-    assert report["counts"] == {"total": 2, "pass": 2, "unsupported": 0, "failed": 0}
+    assert report["format_version"] == "0.3"
+    assert report["counts"] == {"total": 2, "pass": 2, "unsupported": 0, "partial": 0, "failed": 0, "rejected": 0}
     adapter_ids = [item["id"] for item in report["adapters"]]
     assert adapter_ids == ["python", "python-2"]
     assert len(report["cases"][0]["results"]) == 2
@@ -448,8 +497,8 @@ def test_suite_scenario_cell_runs_and_report_renders_steps(tmp_path: Path) -> No
 
     report = run_suite(suite, adapter, tmp_path / "runs")
     assert report["status"] == "pass"
-    assert report["format_version"] == "0.2"
-    assert report["counts"] == {"total": 1, "pass": 1, "unsupported": 0, "failed": 0}
+    assert report["format_version"] == "0.3"
+    assert report["counts"] == {"total": 1, "pass": 1, "unsupported": 0, "partial": 0, "failed": 0, "rejected": 0}
     cell = report["cases"][0]["results"][0]
     assert cell["status"] == "pass"
     assert cell["run"]["format"] == "inferref-scenario-run"
@@ -480,6 +529,7 @@ def test_suite_report_renders_failed_scenario_steps(tmp_path: Path) -> None:
     )
     cell = report["cases"][0]["results"][0]
     assert cell["status"] == "fail"
+    assert report["counts"]["failed"] == 1
     rendered = render_suite_report(report, tmp_path / "report.html")
     summary = rendered["matrix"][0]["engines"]["kv-copy"]
     assert summary["first_failed_step"] == "prefill"
@@ -504,6 +554,11 @@ def test_suite_scenario_partial_with_allow_unsupported(tmp_path: Path) -> None:
     strict = run_suite(suite, adapter, tmp_path / "strict")
     assert strict["status"] == "fail"
     assert strict["accepted"] is False
+    assert strict["counts"]["partial"] == 1
+    assert strict["counts"]["failed"] == 0
+    assert strict["counts"]["rejected"] == 1
+    assert report["counts"]["partial"] == 1
+    assert report["counts"]["rejected"] == 0
 
 
 def test_suite_scenario_all_unsupported_with_allow_unsupported(
@@ -519,6 +574,10 @@ def test_suite_scenario_all_unsupported_with_allow_unsupported(
     assert report["accepted"] is True
     assert report["cases"][0]["results"][0]["status"] == "unsupported"
     assert report["cases"][0]["results"][0]["accepted"] is True
+    strict = run_suite(suite, adapter, tmp_path / "strict")
+    assert strict["counts"]["unsupported"] == 1
+    assert strict["counts"]["failed"] == 0
+    assert strict["counts"]["rejected"] == 1
 
 
 def test_suite_report_sidecar_keeps_scenario_run_intact(tmp_path: Path) -> None:

@@ -41,15 +41,42 @@ Expected per-cell configuration and validation exceptions are isolated as
 `infrastructure_error`, allowing other engines/cases to finish. `--fail-fast`
 restores exception-first behavior for development.
 
-The writer emits `inferref-suite-run` v0.2. It includes stable adapter IDs,
+The writer emits `inferref-suite-run` v0.3. It includes stable adapter IDs,
 per-case `results`, complete engine run records, aggregate cell counts, and
 overall status. A single-adapter run retains the v0.1 convenience `adapter` and
 per-case `run` fields.
 
 `inferref suite report RUN --output report.html` writes a self-contained HTML
-case-by-engine matrix and a sibling JSON `inferref-suite-report` v0.1. Cells
+case-by-engine matrix and a sibling JSON `inferref-suite-report` v0.2. Cells
 include status, maximum absolute error, first divergence, duration, and
 unsupported reasons when available.
+
+### Count semantics and migration from run v0.2
+
+Counts are per case-by-adapter cell (a whole scenario counts as one cell):
+
+- `total`: all attempted cells.
+- `pass`: cells whose execution entirely passed.
+- `unsupported`: cells with only unsupported outcomes.
+- `partial`: scenario cells containing only passing and unsupported steps.
+- `failed`: cells with numerical mismatches, execution/configuration errors, or
+  other actual failures. Unsupported-only policy rejection is excluded.
+- `rejected`: cells not accepted by the current exit-code policy (the old
+  v0.2 meaning of `failed`).
+
+`pass + unsupported + partial + failed == total`; `rejected` is a separate
+policy count, not an additional outcome bucket. Scenario counts inspect step
+outcomes even when their strict-policy aggregate status is `fail`. A scenario
+containing both unsupported steps and a mismatch/error still counts as failed.
+
+For 13 unsupported cells, strict mode produces `unsupported: 13, failed: 0,
+rejected: 13` and a nonzero exit code. With `--allow-unsupported`, only `rejected`
+and the acceptance/status fields change. Gate CI on `accepted`,
+`exit_code_policy_satisfied`, or `counts.rejected`, not solely `counts.failed`.
+
+The renderer accepts run versions 0.1, 0.2, and 0.3. Its JSON sidecar preserves
+the input counts and records `source_run_format_version`, so old policy counts
+are not silently reinterpreted. Suite **manifest** versions are unchanged.
 
 ## Validation
 

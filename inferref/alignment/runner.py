@@ -488,7 +488,7 @@ class AlignmentRunner:
         if boundary_ids:
             selected_ids = list(boundary_ids)[:limit]
         else:
-            plan = plan_alignment(self.package, session=self.store.snapshot)
+            plan = plan_alignment(self.package, session=self.store.snapshot, adapter=self.adapter)
             selected_ids = [c.boundary for c in plan.candidates if c.runnability.eligible][:limit]
 
         for bid in selected_ids:

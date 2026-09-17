@@ -191,6 +191,61 @@ def test_runner_preflight_capability_check(tmp_path: Path) -> None:
     assert store.snapshot.boundaries["region:1"]["state"] == "unsupported"
 
 
+def test_cli_plan_and_run_choose_same_adapter_supported_boundary(tmp_path: Path, capsys) -> None:
+    from inferref.alignment.planner import plan_alignment
+    from inferref.cli.main import main
+
+    pkg = _make_trace(tmp_path / "trace")
+    # The first region requires float32. The adapter only supports the second,
+    # otherwise-equivalent float64 region, so omission of adapter changes plan.
+    for vid, producer in [(3, None), (4, 11)]:
+        write_array(pkg.root / f"payloads/v{vid}.irtensor", np.array([2., 4.], dtype=np.float64))
+        pkg.graph.values.append(TensorValueRecord(
+            id=vid, shape=(2,), stride=(1,), dtype="float64", producer=producer,
+            capture=CaptureInfo(mode="full", payload=f"payloads/v{vid}.irtensor"),
+        ))
+    pkg.graph.operators.append(OperatorRecord(
+        id=11, execution_index=1, op="double", result=TensorRef(4),
+        positional_args=(TensorRef(3),),
+    ))
+    pkg.regions.append(RegionRecord(id=2, name="op_double_64", node_ids=(11,), inputs=(3,), outputs=(4,)))
+    pkg.graph.reindex()
+    pkg.save(pkg.root)
+    adapter_path = _make_adapter_file(tmp_path / "adapter.json", capabilities={
+        "device_types": ["cpu"], "dtypes": ["float64"], "max_rank": 4,
+    })
+    adapter = EngineAdapter.load(adapter_path)
+    session = tmp_path / "alignment"
+    store = AlignmentStore.initialize(
+        session, trace_path=pkg.root, adapter_path=adapter_path,
+        trace_metadata_digest=trace_metadata_sha256(pkg.root),
+        adapter_digest=normalized_adapter_sha256(adapter.to_dict()),
+    )
+    expected = plan_alignment(pkg, session=store.snapshot, adapter=adapter).candidates[0].boundary
+    assert expected == "region:2"
+    assert plan_alignment(pkg, session=store.snapshot).candidates[0].boundary != expected
+    assert main(["align", "plan", str(session), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["recommended_boundary"] == expected
+    assert main(["align", "run", str(session), "--limit", "1", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["results"][0]["boundary"] == expected
+    assert result["results"][0]["status"] == "pass"
+
+
+def test_runner_does_not_auto_select_known_unsupported_boundaries(tmp_path: Path) -> None:
+    pkg = _make_trace(tmp_path / "trace")
+    adapter_path = _make_adapter_file(tmp_path / "adapter.json", capabilities={
+        "device_types": ["cpu"], "dtypes": ["int8"], "max_rank": 4,
+    })
+    adapter = EngineAdapter.load(adapter_path)
+    store = AlignmentStore.initialize(
+        tmp_path / "session", trace_path=pkg.root, adapter_path=adapter_path,
+        trace_metadata_digest=trace_metadata_sha256(pkg.root),
+        adapter_digest=normalized_adapter_sha256(adapter.to_dict()),
+    )
+    assert AlignmentRunner(store, pkg, adapter).run(limit=1) == []
+
+
 def test_runner_execution_reuse_and_narrowing(tmp_path: Path) -> None:
     pkg = _make_trace(tmp_path / "trace")
     adapter_path = _make_adapter_file(tmp_path / "adapter.json")

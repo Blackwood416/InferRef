@@ -41,6 +41,24 @@ def _run_cli(*args: str) -> int:
     return main([str(a) for a in args])
 
 
+def test_readme_agent_example_passes_without_adapter_edits(traced_dir: Path, tmp_path: Path, capsys) -> None:
+    assert _run_cli("region", "detect", traced_dir, "--json") == 0
+    capsys.readouterr()
+    testcase = tmp_path / "rope"
+    assert _run_cli("agent", "extract", traced_dir, "--region", "RoPE@layers.0.self_attn",
+                    "-o", testcase, "--input-names", "cos,sin,query,key",
+                    "--output-names", "q_embed,k_embed", "--json") == 0
+    capsys.readouterr()
+    manifest = json.loads((testcase / "testcase.json").read_text(encoding="utf-8"))
+    assert "alias_effects" in manifest["requirements"]["features"]
+    assert _run_cli("agent", "run", testcase, "--adapter",
+                    REPO_ROOT / "examples/engine_sim/rope_numpy.alias.adapter.json",
+                    "--runs-dir", tmp_path / "runs", "--json") == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "pass"
+    assert result["data"]["status"] == "pass"
+
+
 def _json_cli(capsys, *args: str, expect: int = 0):
     """Run a CLI command with --json and parse its output.
 

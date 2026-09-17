@@ -15,7 +15,7 @@ def _load_run(run: str | Path | dict[str, Any]) -> dict[str, Any]:
     )
     if not isinstance(data, dict) or data.get("format") != "inferref-suite-run":
         raise ValueError("not an InferRef suite run")
-    if data.get("format_version") not in {"0.1", "0.2"}:
+    if data.get("format_version") not in {"0.1", "0.2", "0.3"}:
         raise ValueError(
             f"unsupported suite run version {data.get('format_version')!r}"
         )
@@ -117,7 +117,8 @@ def render_suite_report(
         )
     report = {
         "format": "inferref-suite-report",
-        "format_version": "0.1",
+        "format_version": "0.2",
+        "source_run_format_version": data.get("format_version"),
         "status": data.get("status"),
         "accepted": data.get("accepted", data.get("status") == "pass"),
         "suite": data.get("suite", {}).get("name"),

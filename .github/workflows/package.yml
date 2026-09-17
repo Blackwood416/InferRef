@@ -1,0 +1,82 @@
+name: Package distributions
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build twine
+      - run: python -m build --outdir dist
+      - run: python -m twine check dist/*
+      - run: python scripts/check_distributions.py dist --install
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  release-assets:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      statuses: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist
+      - name: Check tag version and qualification before uploading
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          import json, os, subprocess
+          tag = os.environ["RELEASE_TAG"]
+          if not tag.startswith("v"):
+              raise SystemExit("Release tag must be v<package-version>")
+          subprocess.run(["python", "scripts/check_distributions.py", "dist",
+                          "--expected-version", tag[1:]], check=True)
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/commits/{commit}/status"
+          status = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
+          required = {"ci/circleci: " + name for name in (
+              "core-linux-3.10", "core-linux-3.12", "core-linux-3.13", "agent-linux",
+              "cpp-linux", "core-windows-py3.10-daily", "cpp-windows-daily",
+              "frontend-linux-py3.10-torch-min", "frontend-linux-py3.12-torch-current",
+              "frontend-linux-py3.13-torch-current", "frontend-linux-generic-min",
+              "frontend-nightly-linux", "frontend-linux-qwen35-latest",
+              "frontend-linux-qwen35-fixed", "frontend-windows-generic-fixed-daily",
+              "core-windows-py3.10-tag", "core-windows-py3.12-tag", "core-windows-py3.13-tag",
+              "frontend-windows-py3.10-torch-min-tag", "frontend-windows-py3.12-torch-current-tag",
+              "frontend-windows-generic-fixed-tag", "cpp-windows-tag")}
+          passed = {item["context"] for item in status["statuses"] if item["state"] == "success"}
+          if status["state"] != "success" or not required <= passed:
+              raise SystemExit("Branch and release-tag qualification must finish green before asset upload")
+      - name: Attach distributions without overwriting existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" dist/*.whl dist/*.tar.gz

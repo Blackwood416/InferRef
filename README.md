@@ -5,6 +5,8 @@
 Reference execution tracing, testcase extraction, and numerical comparison for inference engine
 development.
 
+[Documentation](docs/index.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+
 InferRef turns a PyTorch model execution into a **stable, machine-readable reference specification**
 that a custom inference engine (CUDA / SYCL / ROCm / CPU) can be validated against — without the
 engine side needing PyTorch, or Python at all.
@@ -59,6 +61,22 @@ testcase and runs a comparison (Trace IR §57 acceptance criterion 10).
 
 ## Quick start
 
+For installation directly from a source tag (without a manual clone), local
+wheel/sdist builds, and release availability, see [distribution](docs/DISTRIBUTION.md).
+
+### Current dtype and quantization limits
+
+The Trace IR represents `bool`, signed/unsigned 8/16/32/64-bit integers,
+`float16`, `bfloat16`, `float32`, `float64`, `complex64`, and `complex128`.
+FP8 (E4M3/E5M2), packed INT4, and NF4 are **not native IR dtypes** today;
+packed-weight layouts and quantization scales/zero-points have no standardized
+quantized tensor contract. INT8 storage support alone is not a W8A8 validation
+contract. An adapter can expose supported floating-point/dequantized boundary
+outputs for comparison, but that does not validate the packed weight format or
+quantization semantics. Native quantized formats remain future work.
+
+### Trace and compare
+
 ```bash
 # 1. Produce a reference trace
 python examples/mini_llama/run_trace.py --output trace/
@@ -76,6 +94,12 @@ inferref testcase extract trace/ --region "RoPE@layers.0.self_attn" -o repro/rop
 python examples/engine_sim/rope_numpy.py repro/rope --output engine-out/
 inferref compare repro/rope engine-out/ --first-failure
 ```
+
+For full traces, use `inferref compare reference.trace engine.trace --json`.
+Trace pairs use execution-index/output-position alignment and the built-in
+`tensor/numeric/v1` comparator. Numeric `--comparison-config` is supported;
+explicit scalar tolerance/layout flags override the corresponding config values.
+Custom role-based comparator plugins require an extracted testcase.
 
 ## Alignment orchestration
 
@@ -157,7 +181,7 @@ inferref agent extract trace/ --region "RoPE@layers.0.self_attn" \
   -o repro/rope --input-names cos,sin,query,key \
   --output-names q_embed,k_embed --json
 inferref agent run repro/rope \
-  --adapter examples/engine_sim/rope_numpy.adapter.json \
+  --adapter examples/engine_sim/rope_numpy.alias.adapter.json \
   --runs-dir inferref-runs --json
 ```
 
@@ -166,6 +190,12 @@ Every response has a versioned envelope with `status`, `data`, `diagnostics`, an
 is `error`, so an Agent cannot confuse a kernel bug with a broken test invocation.
 Each run receives a unique output directory and writes an `inferref-run.json`
 execution record.
+
+The quick start's extracted RoPE region contains internal alias effects. The
+ready-to-run `rope_numpy.alias.adapter.json` declares support for those effects.
+The minimal `rope_numpy.adapter.json` intentionally omits that declaration for
+the capability-preflight demonstration in [the workflow guide](docs/AGENT_WORKFLOW.md).
+Do not add capabilities to your own adapter unless the engine actually supports them.
 
 InferRef exposes two facades over the same core operations:
 

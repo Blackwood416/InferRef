@@ -165,9 +165,10 @@ def run_suite(
         {"id": adapter_id, "name": engine.name, "adapter": engine.to_dict()}
         for adapter_id, engine in zip(adapter_ids, engines, strict=True)
     ]
+    outcomes = [_semantic_outcome(cell) for cell in cells]
     report: dict[str, Any] = {
         "format": "inferref-suite-run",
-        "format_version": "0.2",
+        "format_version": "0.3",
         "status": status,
         "accepted": accepted,
         "exit_code_policy_satisfied": accepted,
@@ -177,9 +178,11 @@ def run_suite(
         "duration_ms": round((time.perf_counter() - started) * 1000, 3),
         "counts": {
             "total": len(cells),
-            "pass": sum(cell["status"] == "pass" for cell in cells),
-            "unsupported": sum(cell["status"] == "unsupported" for cell in cells),
-            "failed": sum(not cell["accepted"] for cell in cells),
+            "pass": outcomes.count("pass"),
+            "unsupported": outcomes.count("unsupported"),
+            "partial": outcomes.count("partial"),
+            "failed": sum(status not in ("pass", "unsupported", "partial") for status in outcomes),
+            "rejected": sum(not cell["accepted"] for cell in cells),
         },
         "cases": cases,
     }
@@ -190,6 +193,25 @@ def run_suite(
         encoding="utf-8",
     )
     return report
+
+
+def _semantic_outcome(cell: dict[str, Any]) -> str:
+    """Count outcomes independently of the unsupported exit-code policy.
+
+    Scenarios retain their policy-dependent status for compatibility. Inspect
+    their steps to distinguish unsupported-only rejection from real failures.
+    """
+    run = cell["run"]
+    if run.get("format") == "inferref-scenario-run" and run.get("steps"):
+        statuses = [step["status"] for step in run["steps"]]
+        if all(status == "pass" for status in statuses):
+            return "pass"
+        if all(status == "unsupported" for status in statuses):
+            return "unsupported"
+        if all(status in ("pass", "unsupported") for status in statuses):
+            return "partial"
+        return "failed"
+    return str(cell["status"])
 
 
 def _aggregate_status(cells: Sequence[dict[str, Any]], *, accepted: bool) -> str:

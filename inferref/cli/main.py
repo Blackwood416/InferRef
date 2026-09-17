@@ -240,8 +240,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         try:
             comp_cfg = _parse_comparison_config(args.comparison_config)
         except Exception as exc:
-            print(f"error: invalid comparison config: {exc}", file=sys.stderr)
-            return EXIT_USAGE
+            raise ValueError(f"invalid comparison config: {exc}") from exc
 
     if is_trace_package(reference) and is_trace_package(actual):
         report = compare_traces(
@@ -251,6 +250,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             ignore_stride=args.ignore_stride,
             strict_layout=args.strict_layout,
             first_failure=args.first_failure,
+            comparator=getattr(args, "comparator", None),
             comparison_config=comp_cfg,
         )
     elif (reference / "testcase.json").is_file():
@@ -265,11 +265,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             comparison_config=comp_cfg,
         )
     else:
-        print(
-            f"error: {reference} is neither a trace package nor a testcase directory",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
+        raise ValueError(f"{reference} is neither a trace package nor a testcase directory")
 
     if getattr(args, "json_summary", False):
         from inferref.agent.summary import summarize_report
@@ -1984,10 +1980,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         return args.func(args)
-    except (FileNotFoundError, NotADirectoryError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return EXIT_USAGE
-    except ValueError as exc:
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        if args.func == cmd_compare and (
+            getattr(args, "json", False) or getattr(args, "json_summary", False)
+        ):
+            print(json.dumps({"status": "error", "error": {
+                "type": type(exc).__name__, "message": str(exc),
+            }}))
+            return EXIT_USAGE
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
     except BrokenPipeError:  # pragma: no cover - piping into head
