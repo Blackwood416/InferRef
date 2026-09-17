@@ -1,7 +1,8 @@
 """Mapping between stable InferRef dtype names and numpy dtypes.
 
-The only awkward case is ``bfloat16``: numpy has no native bfloat16, so it is
-carried as raw ``uint16`` bit patterns and decoded on demand. This is exactly
+Reduced-precision formats without a native numpy type use integer carriers:
+``bfloat16`` uses raw ``uint16`` and FP8 uses raw ``uint8`` bit patterns.
+They are decoded on demand. This is exactly
 the path an engine-side reader in C++/Rust would take, so keeping it explicit
 here is deliberate.
 """
@@ -9,6 +10,8 @@ here is deliberate.
 from __future__ import annotations
 
 import numpy as np
+
+from inferref.ir.dtypes import FLOAT8_DTYPES
 
 #: InferRef dtype name -> numpy dtype used to *carry* the bytes.
 #: bfloat16 is carried as uint16; see :func:`bfloat16_bytes_to_float32`.
@@ -28,6 +31,8 @@ _TO_NUMPY: dict[str, np.dtype] = {
     "float64": np.dtype("<f8"),
     "complex64": np.dtype("<c8"),
     "complex128": np.dtype("<c16"),
+    "float8_e4m3fn": np.dtype("u1"),
+    "float8_e5m2": np.dtype("u1"),
 }
 
 #: numpy dtype name -> InferRef dtype name. bfloat16 is intentionally absent:
@@ -69,7 +74,33 @@ def inferref_dtype_for_numpy(dtype: np.dtype) -> str:
 
 def is_carried_as_raw(name: str) -> bool:
     """Whether ``name`` is carried in a numpy dtype that is not its real type."""
-    return name == "bfloat16"
+    return name == "bfloat16" or name in FLOAT8_DTYPES
+
+
+def float8_bytes_to_float32(raw: np.ndarray, dtype: str) -> np.ndarray:
+    """Decode native FP8 bytes, preserving signed zeros, infinities and NaNs.
+
+    E4M3FN has bias 7, no infinities, and NaN at magnitude 0x7f only.
+    E5M2 has bias 15 and IEEE-style exponent-31 infinities/NaNs.
+    This does not apply scales or interpret FNUZ/scaled FP8 formats.
+    """
+    if dtype not in FLOAT8_DTYPES:
+        raise ValueError(f"unsupported FP8 dtype: {dtype!r}")
+    bits = np.asarray(raw)
+    if bits.dtype != np.dtype("uint8"):
+        raise ValueError("FP8 decoding requires raw uint8 bit patterns")
+    mantissa_bits, bias = (3, 7) if dtype == "float8_e4m3fn" else (2, 15)
+    magnitude = bits & 0x7f
+    exponent = (magnitude >> mantissa_bits).astype(np.int32)
+    mantissa = (magnitude & ((1 << mantissa_bits) - 1)).astype(np.float32)
+    significand = np.where(exponent == 0, mantissa, mantissa + (1 << mantissa_bits))
+    values = np.ldexp(significand, np.maximum(exponent, 1) - bias - mantissa_bits)
+    if dtype == "float8_e4m3fn":
+        values = np.where(magnitude == 0x7f, np.float32(np.nan), values)
+    else:
+        values = np.where(magnitude == 0x7c, np.float32(np.inf), values)
+        values = np.where(magnitude > 0x7c, np.float32(np.nan), values)
+    return np.copysign(values, np.where(bits & 0x80, -1.0, 1.0)).astype(np.float32)
 
 
 def bfloat16_bytes_to_float32(raw: np.ndarray) -> np.ndarray:
@@ -108,6 +139,8 @@ def to_comparable_float(data: np.ndarray, dtype: str) -> np.ndarray:
     """
     if dtype == "bfloat16":
         return bfloat16_bytes_to_float32(data).astype(np.float64)
+    if dtype in FLOAT8_DTYPES:
+        return float8_bytes_to_float32(data, dtype).astype(np.float64)
     if dtype in ("complex64", "complex128"):
         return np.asarray(data)
     return np.asarray(data).astype(np.float64)

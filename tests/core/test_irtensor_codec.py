@@ -98,6 +98,7 @@ def test_dtype_codes_are_stable() -> None:
         "uint8": 6, "uint16": 7, "uint32": 8, "uint64": 9,
         "float16": 10, "bfloat16": 11, "float32": 12, "float64": 13,
         "complex64": 14, "complex128": 15,
+        "float8_e4m3fn": 16, "float8_e5m2": 17,
     }
     assert DTYPE_CODES == expected
     for name, code in expected.items():

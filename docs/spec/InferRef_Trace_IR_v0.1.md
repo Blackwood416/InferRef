@@ -419,7 +419,15 @@ float32
 float64
 complex64
 complex128
+float8_e4m3fn
+float8_e5m2
 ```
+
+The unreleased FP8 extension appends wire codes 16 (`float8_e4m3fn`) and 17
+(`float8_e5m2`). Codes 1–15 and the version-1 tensor header are unchanged.
+Each FP8 element occupies one byte; an older reader rejects the unknown dtype
+code rather than interpreting it as uint8. FNUZ/scaled FP8 and packed sub-byte
+formats are not implied. See [the FP8 contract](InferRef_Quantization.md).
 
 Framework-specific scalar kinds MAY be stored through extensions.
 

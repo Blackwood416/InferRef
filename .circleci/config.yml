@@ -430,6 +430,7 @@ jobs:
             python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
             python -m pip install -e ".[dev]"
             python examples/mini_llama/run_trace.py --output trace/
+            python scripts/generate_cpp_golden.py golden/ --fp8-selftest cpp/build/inferref_fp8_selftest
             inferref region detect trace/
             inferref testcase extract trace/ --region "RoPE@layers.0.self_attn" \
               -o repro/rope \
@@ -501,7 +502,9 @@ jobs:
             PY="./.venv/Scripts/python.exe"
             "$PY" -m pip install --upgrade pip
             "$PY" -m pip install -e ".[dev]"
-            "$PY" scripts/generate_cpp_golden.py golden/
+            FP8=cpp/build/inferref_fp8_selftest.exe
+            [ -x "$FP8" ] || FP8=cpp/build/Release/inferref_fp8_selftest.exe
+            "$PY" scripts/generate_cpp_golden.py golden/ --fp8-selftest "$FP8"
             BIN=cpp/build/inferref_compare.exe
             [ -x "$BIN" ] || BIN=cpp/build/Release/inferref_compare.exe
             "$BIN" golden/a.irtensor golden/a_equal.irtensor

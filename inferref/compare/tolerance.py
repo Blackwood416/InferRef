@@ -27,6 +27,9 @@ DEFAULT_TOLERANCES: dict[str, tuple[float, float]] = {
     "bfloat16": (1.6e-2, 1.6e-2),
     "complex64": (1e-5, 1e-5),
     "complex128": (1e-9, 1e-9),
+    # Native FP8 has no implicit quantization-error budget. Opt in explicitly.
+    "float8_e4m3fn": (0.0, 0.0),
+    "float8_e5m2": (0.0, 0.0),
 }
 
 #: Integer and boolean tensors must match exactly.

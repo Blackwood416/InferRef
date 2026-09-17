@@ -41,10 +41,16 @@ from typing import Any, BinaryIO
 
 import numpy as np
 
-from inferref.ir.dtypes import dtype_code, dtype_itemsize, dtype_name_from_code
+from inferref.ir.dtypes import (
+    FLOAT8_DTYPES,
+    dtype_code,
+    dtype_itemsize,
+    dtype_name_from_code,
+)
 from inferref.ir.version import TENSOR_FORMAT_VERSION
 from inferref.tensor.dtype_numpy import (
     bfloat16_bytes_to_float32,
+    float8_bytes_to_float32,
     numpy_dtype_for,
     to_comparable_float,
 )
@@ -100,7 +106,8 @@ class TensorView:
 
     ``data`` is the canonical contiguous payload as a numpy array. For
     ``bfloat16`` — which numpy has no native dtype for — ``data`` is ``uint16``
-    holding the raw bit pattern; use :meth:`as_float32` to decode it.
+    holding the raw bit pattern. FP8 uses raw ``uint8`` bit patterns;
+    use :meth:`as_float32` to decode either format.
     """
 
     dtype: str
@@ -134,9 +141,11 @@ class TensorView:
         return bool(self.flags & FLAG_CANONICAL_CONTIGUOUS)
 
     def as_float32(self) -> np.ndarray:
-        """Return the payload as ``float32``, decoding ``bfloat16`` if needed."""
+        """Return the payload as ``float32``, decoding raw carriers if needed."""
         if self.dtype == "bfloat16":
             return bfloat16_bytes_to_float32(self.data).reshape(self.shape)
+        if self.dtype in FLOAT8_DTYPES:
+            return float8_bytes_to_float32(self.data, self.dtype).reshape(self.shape)
         return self.data.astype(np.float32)
 
     def as_comparable(self) -> np.ndarray:
@@ -373,11 +382,16 @@ def write_array(
 
     Used by engine-side Python tooling and tests. ``stride`` defaults to the
     canonical contiguous stride of ``array``.
+    FP8 requires an explicit dtype and a uint8 array of already-encoded bits;
+    this function does not quantize floating-point values to FP8.
     """
     from inferref.tensor.dtype_numpy import inferref_dtype_for_numpy
 
     resolved = dtype or inferref_dtype_for_numpy(array.dtype)
-    contiguous = np.ascontiguousarray(array, dtype=numpy_dtype_for(resolved))
+    if resolved in FLOAT8_DTYPES and array.dtype != np.dtype("uint8"):
+        raise IRTensorError("FP8 write_array requires raw uint8 bit patterns, not numeric values")
+    # ascontiguousarray promotes rank-0 arrays to rank 1; retain logical shape.
+    contiguous = np.ascontiguousarray(array, dtype=numpy_dtype_for(resolved)).reshape(array.shape)
     if stride is None:
         stride = contiguous_stride(contiguous.shape)
     return write(

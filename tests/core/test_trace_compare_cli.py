@@ -17,15 +17,17 @@ from inferref.ir.package import TracePackage
 from inferref.ir.tensor_value import CaptureInfo, TensorValueRecord
 from inferref.ir.values import TensorRef
 from inferref.tensor.codec import write_array
+from inferref.tensor.dtype_numpy import numpy_dtype_for
 
 
-def _trace(root: Path, *, delta: float = 0, missing: bool = False) -> Path:
+def _trace(root: Path, *, delta: float = 0, missing: bool = False, dtype="float32") -> Path:
     graph = Graph()
     for index in range(2):
         payload = f"payloads/v{index}.irtensor"
-        write_array(root / payload, np.array([index + delta], dtype=np.float32))
+        write_array(root / payload, np.array([index + delta], dtype=numpy_dtype_for(dtype)),
+                    dtype=dtype)
         graph.values.append(TensorValueRecord(
-            id=index, shape=(1,), stride=(1,), dtype="float32", producer=index,
+            id=index, shape=(1,), stride=(1,), dtype=dtype, producer=index,
             capture=CaptureInfo(mode="full", payload=payload),
         ))
         if not missing or index != 0:
@@ -35,6 +37,20 @@ def _trace(root: Path, *, delta: float = 0, missing: bool = False) -> Path:
     graph.reindex()
     TracePackage(manifest=Manifest(), graph=graph, root=root).save(root)
     return root
+
+
+@pytest.mark.parametrize("dtype", ["float8_e4m3fn", "float8_e5m2"])
+def test_trace_compare_fp8_cli(tmp_path, capsys, dtype):
+    ref = _trace(tmp_path / "ref", dtype=dtype)
+    actual = _trace(tmp_path / "actual", dtype=dtype, delta=1)
+    assert main(["compare", str(ref), str(ref), "--json"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out)["status"] == "pass"
+    assert main(["compare", str(ref), str(actual), "--json"]) == EXIT_FAIL
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
+    assert report["comparisons"][0]["metrics"]["max_abs_error"] < 0.01
+    assert main(["compare", str(ref), str(actual), "--atol", "0.01", "--json"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out)["status"] == "pass"
 
 
 @pytest.mark.parametrize("json_flag", [None, "--json", "--json-summary"])

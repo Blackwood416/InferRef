@@ -68,12 +68,17 @@ wheel/sdist builds, and release availability, see [distribution](docs/DISTRIBUTI
 
 The Trace IR represents `bool`, signed/unsigned 8/16/32/64-bit integers,
 `float16`, `bfloat16`, `float32`, `float64`, `complex64`, and `complex128`.
-FP8 (E4M3/E5M2), packed INT4, and NF4 are **not native IR dtypes** today;
+The unreleased development version also supports native `float8_e4m3fn` and
+`float8_e5m2` payloads, with numpy-only and dependency-free C++ decoding.
+FP8 comparison uses decoded values with exact tolerances by default; adapters
+must explicitly declare the exact FP8 dtype. This does not imply FP8 kernel or
+scaled-FP8 support. FNUZ variants, packed INT4/UINT4, and NF4 are not supported;
 packed-weight layouts and quantization scales/zero-points have no standardized
 quantized tensor contract. INT8 storage support alone is not a W8A8 validation
 contract. An adapter can expose supported floating-point/dequantized boundary
 outputs for comparison, but that does not validate the packed weight format or
-quantization semantics. Native quantized formats remain future work.
+quantization semantics. See the [quantization implementation plan and FP8 API](docs/spec/InferRef_Quantization.md)
+for supported behavior, staged tasks, and acceptance criteria.
 
 ### Trace and compare
 

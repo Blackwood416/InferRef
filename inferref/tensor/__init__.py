@@ -19,6 +19,7 @@ from inferref.tensor.codec import (
 )
 from inferref.tensor.dtype_numpy import (
     bfloat16_bytes_to_float32,
+    float8_bytes_to_float32,
     float32_to_bfloat16_bytes,
     inferref_dtype_for_numpy,
     numpy_dtype_for,
@@ -34,6 +35,7 @@ __all__ = [
     "contiguous_stride",
     "decode",
     "encode",
+    "float8_bytes_to_float32",
     "float32_to_bfloat16_bytes",
     "header_size_for_rank",
     "inferref_dtype_for_numpy",

@@ -5,6 +5,14 @@ User-facing changes belong here. Historical implementation evidence remains in
 
 ## Unreleased
 
+### Added
+
+- Native `float8_e4m3fn` and `float8_e5m2` tensor payloads (append-only wire codes
+  16/17), numpy-only software decoding, C++ reader support, and PyTorch capture
+  coverage. Exact numerical comparison is the default; this is not a scaled
+  quantization contract, and existing adapters do not gain FP8 kernel support.
+- Exhaustive FP8 encoding tests and Python/C++ binary roundtrip checks in CI.
+
 ### Fixed
 
 - Restore trace-vs-trace CLI comparison; apply numeric comparison configuration
@@ -12,6 +20,7 @@ User-facing changes belong here. Historical implementation evidence remains in
 - Keep automatic alignment execution consistent with adapter-aware planning.
 - Provide a ready-to-run alias-aware adapter for the README Agent example.
 - Separate suite execution failures from unsupported exit-policy rejections.
+- Preserve rank-0 array shape in the `write_array` convenience writer.
 
 ### Compatibility
 
@@ -21,7 +30,8 @@ User-facing changes belong here. Historical implementation evidence remains in
   scenarios containing only passing and unsupported steps. Exit codes are unchanged.
 - Rendered suite report JSON uses version **0.2** and records
   `source_run_format_version`; old suite run versions 0.1/0.2 remain readable.
-- Trace IR, testcase, adapter, and suite manifest formats are unchanged.
+- Trace IR, testcase, adapter, and suite manifest schemas are unchanged.
+  FP8 extends the dtype code table; old readers reject the new dtype codes.
 
 ### Documentation and distribution
 

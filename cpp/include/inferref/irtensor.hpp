@@ -37,8 +37,10 @@
 #define INFERREF_IRTENSOR_HPP
 
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -66,6 +68,8 @@ enum class DataType : std::uint16_t
     kFloat64 = 13,
     kComplex64 = 14,
     kComplex128 = 15,
+    kFloat8E4M3FN = 16,
+    kFloat8E5M2 = 17,
 };
 
 inline const char *DataTypeName(DataType dtype)
@@ -87,6 +91,8 @@ inline const char *DataTypeName(DataType dtype)
     case DataType::kFloat64: return "float64";
     case DataType::kComplex64: return "complex64";
     case DataType::kComplex128: return "complex128";
+    case DataType::kFloat8E4M3FN: return "float8_e4m3fn";
+    case DataType::kFloat8E5M2: return "float8_e5m2";
     default: return "invalid";
     }
 }
@@ -97,7 +103,9 @@ inline std::size_t DataTypeSize(DataType dtype)
     {
     case DataType::kBool:
     case DataType::kInt8:
-    case DataType::kUInt8: return 1;
+    case DataType::kUInt8:
+    case DataType::kFloat8E4M3FN:
+    case DataType::kFloat8E5M2: return 1;
     case DataType::kInt16:
     case DataType::kUInt16:
     case DataType::kFloat16:
@@ -180,6 +188,30 @@ public:
     explicit IRTensorError(const std::string &what) : std::runtime_error(what) {}
 };
 
+// Native FP8 decoding only: no scale/zero-point or FNUZ reinterpretation.
+inline float DecodeFloat8(std::uint8_t bits, DataType dtype)
+{
+    if (dtype != DataType::kFloat8E4M3FN && dtype != DataType::kFloat8E5M2)
+        throw IRTensorError("DecodeFloat8 requires a supported FP8 dtype");
+    const int mantissa_bits = dtype == DataType::kFloat8E4M3FN ? 3 : 2;
+    const int bias = dtype == DataType::kFloat8E4M3FN ? 7 : 15;
+    const int magnitude = bits & 0x7f;
+    const int exponent = magnitude >> mantissa_bits;
+    const int mantissa = magnitude & ((1 << mantissa_bits) - 1);
+    float value;
+    if ((dtype == DataType::kFloat8E4M3FN && magnitude == 0x7f) ||
+        (dtype == DataType::kFloat8E5M2 && magnitude > 0x7c))
+        value = std::numeric_limits<float>::quiet_NaN();
+    else if (dtype == DataType::kFloat8E5M2 && magnitude == 0x7c)
+        value = std::numeric_limits<float>::infinity();
+    else if (exponent == 0)
+        value = std::ldexp(static_cast<float>(mantissa), 1 - bias - mantissa_bits);
+    else
+        value = std::ldexp(static_cast<float>((1 << mantissa_bits) + mantissa),
+                           exponent - bias - mantissa_bits);
+    return std::copysign(value, bits & 0x80 ? -1.0f : 1.0f);
+}
+
 // One decoded .irtensor. Owns its payload bytes.
 class IRTensor
 {
@@ -231,6 +263,14 @@ public:
         std::vector<float> out(static_cast<std::size_t>(count));
         switch (dtype)
         {
+        case DataType::kFloat8E4M3FN:
+        case DataType::kFloat8E5M2:
+        {
+            for (std::int64_t i = 0; i < count; ++i)
+                out[static_cast<std::size_t>(i)] = DecodeFloat8(
+                    static_cast<std::uint8_t>(data[static_cast<std::size_t>(i)]), dtype);
+            break;
+        }
         case DataType::kFloat32:
         {
             std::memcpy(out.data(), data.data(), data.size());

@@ -13,6 +13,7 @@
 - [Extension guide](EXTENDING.md) and [semantic plugins](semantic-plugins.md)
 - [Engine adapter contract](spec/InferRef_Engine_Adapter_v0.2.md)
 - [Comparator plugins](spec/InferRef_0.9_Semantic_Validation.md)
+- [Native FP8 and quantization implementation plan](spec/InferRef_Quantization.md)
 - [Stateful scenarios](spec/InferRef_Scenario_v0.1.md)
 - [Agent protocol](spec/InferRef_Agent_Protocol_v0.1.md)
 - [XPU/SYCL guide](xpu-sycl.md)

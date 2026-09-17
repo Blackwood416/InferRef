@@ -32,6 +32,9 @@ struct Tolerance
         case DataType::kFloat32: return {1e-5, 1e-5};
         case DataType::kFloat16: return {2e-3, 2e-3};
         case DataType::kBFloat16: return {1.6e-2, 1.6e-2};
+        // Native FP8 is exact by default; no implicit quantization-error budget.
+        case DataType::kFloat8E4M3FN:
+        case DataType::kFloat8E5M2:
         default: return {0.0, 0.0}; // integral types must match exactly
         }
     }

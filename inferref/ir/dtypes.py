@@ -29,6 +29,8 @@ _TABLE: dict[str, tuple[int, int]] = {
     "float64": (13, 8),
     "complex64": (14, 8),
     "complex128": (15, 16),
+    "float8_e4m3fn": (16, 1),
+    "float8_e5m2": (17, 1),
 }
 
 #: dtype name -> wire code
@@ -41,7 +43,8 @@ DTYPE_NAMES: dict[int, str] = {code: name for name, (code, _) in _TABLE.items()}
 DTYPE_ITEMSIZES: dict[str, int] = {name: size for name, (_, size) in _TABLE.items()}
 
 #: dtype names whose values are floating point (used by tolerance policies).
-FLOAT_DTYPES = frozenset({"float16", "bfloat16", "float32", "float64"})
+FLOAT8_DTYPES = frozenset({"float8_e4m3fn", "float8_e5m2"})
+FLOAT_DTYPES = frozenset({"float16", "bfloat16", "float32", "float64"}) | FLOAT8_DTYPES
 
 #: dtype names whose values are complex.
 COMPLEX_DTYPES = frozenset({"complex64", "complex128"})
