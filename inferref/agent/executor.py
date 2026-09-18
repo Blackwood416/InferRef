@@ -78,7 +78,18 @@ def execute_adapter(
         raise AgentProtocolError(f"invalid comparison policy: {exc}") from exc
 
     requirements = testcase_requirements(validation.manifest)
+    from inferref.quantization.artifacts import needs_quantization, validate_comparison
+
+    validate_comparison(validation.manifest, effective_comp)
     capability_status = "unchecked"
+    if adapter.capabilities is None and needs_quantization(requirements):
+        return {
+            "run_id": None, "adapter": adapter.to_dict(), "testcase": str(testcase_path),
+            "requirements": requirements, "capability_status": "unsupported",
+            "status": "unsupported", "execution": None, "comparison": None,
+            "effective_comparison": effective_comp.to_dict(),
+            "unsupported": ["quantized testcases require explicit adapter capabilities"],
+        }
     if adapter.capabilities is not None:
         capability_status = adapter.capabilities.assessment(requirements)
         incompatible = list(adapter.capabilities.incompatibilities(requirements))

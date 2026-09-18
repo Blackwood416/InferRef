@@ -167,6 +167,13 @@ class AlignmentRunner:
         comparator_overrides: Mapping[str, Any] | None = None,
     ) -> RunResult:
         """Execute one boundary, record immutable Evidence, and update session."""
+        # A long-lived API runner must not reuse testcases after source code or
+        # scale bytes changed since construction. CLI calls normally recreate
+        # the runner, but both entry points share this freshness check.
+        current_trace_sha = trace_metadata_sha256(self.package.root)
+        expected_trace_sha = self.store.snapshot.source.get("trace", {}).get("metadata_sha256")
+        if expected_trace_sha and current_trace_sha != expected_trace_sha:
+            raise ValueError("trace metadata digest mismatch: source changed during alignment session")
         boundary = (
             boundary_or_id
             if isinstance(boundary_or_id, Boundary)

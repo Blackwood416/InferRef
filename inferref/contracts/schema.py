@@ -20,13 +20,14 @@ from inferref.contracts.relations import (
     parse,
     relation_roles,
 )
+from inferref.quantization.artifacts import QUANTIZATION_FEATURES
 
 CONTRACT_FORMAT = "inferref-contract"
 CONTRACT_FORMAT_VERSION = "0.1"
 
 #: Feature vocabulary (section 7.1), shared with adapter capabilities.
 FEATURE_VOCABULARY = frozenset(
-    {"multiple_outputs", "strided_inputs", "alias_effects", "mutation_effects"}
+    {"multiple_outputs", "strided_inputs", "alias_effects", "mutation_effects"} | QUANTIZATION_FEATURES
 )
 
 #: Effect vocabulary (section 7.2) mapped onto the feature vocabulary.

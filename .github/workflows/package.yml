@@ -64,7 +64,7 @@ jobs:
           status = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
           required = {"ci/circleci: " + name for name in (
               "core-linux-3.10", "core-linux-3.12", "core-linux-3.13", "agent-linux",
-              "cpp-linux", "core-windows-py3.10-daily", "cpp-windows-daily",
+              "cpp-linux", "bitsandbytes-cpu-linux", "core-windows-py3.10-daily", "cpp-windows-daily",
               "frontend-linux-py3.10-torch-min", "frontend-linux-py3.12-torch-current",
               "frontend-linux-py3.13-torch-current", "frontend-linux-generic-min",
               "frontend-nightly-linux", "frontend-linux-qwen35-latest",

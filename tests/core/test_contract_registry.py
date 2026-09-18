@@ -409,12 +409,18 @@ def test_builtins_are_always_registered_in_sorted_order() -> None:
     assert [entry.id for entry in contract_list()] == [
         "kv-cache/append/v1",
         "kv-cache/indexed-update/v1",
+        "linear/affine-int8/v1",
+        "linear/affine-w4a16/v1",
+        "linear/nf4-w4a16/v1",
         "rmsnorm/last-dim/v1",
         "rope/rotate-half/v1",
     ]
     assert [contract.id for contract in EXECUTABLE_CONTRACTS] == [
         "kv-cache/append/v1",
         "kv-cache/indexed-update/v1",
+        "linear/affine-int8/v1",
+        "linear/affine-w4a16/v1",
+        "linear/nf4-w4a16/v1",
         "rmsnorm/last-dim/v1",
         "rope/rotate-half/v1",
     ]
@@ -444,13 +450,16 @@ def test_plugin_discovery_loads_and_lists_deterministically(
     assert get_contract("swiglu/fused/v1").inputs == ("x", "gate")
     assert get_contract("gated-deltanet/step/v1").outputs == ("state_out",)
     entries = contract_list()
-    assert [entry.id for entry in entries][:4] == [
+    assert [entry.id for entry in entries][:7] == [
         "kv-cache/append/v1",
         "kv-cache/indexed-update/v1",
+        "linear/affine-int8/v1",
+        "linear/affine-w4a16/v1",
+        "linear/nf4-w4a16/v1",
         "rmsnorm/last-dim/v1",
         "rope/rotate-half/v1",
     ]
-    assert [entry.id for entry in entries][4:] == [
+    assert [entry.id for entry in entries][7:] == [
         "gated-deltanet/step/v1",
         "swiglu/fused/v1",
     ]
@@ -458,6 +467,9 @@ def test_plugin_discovery_loads_and_lists_deterministically(
     assert set(REGISTRY) == {
         "kv-cache/append/v1",
         "kv-cache/indexed-update/v1",
+        "linear/affine-int8/v1",
+        "linear/affine-w4a16/v1",
+        "linear/nf4-w4a16/v1",
         "rmsnorm/last-dim/v1",
         "rope/rotate-half/v1",
         "gated-deltanet/step/v1",

@@ -36,15 +36,7 @@ def _tensor_signature(graph: Graph, value_id: int) -> tuple:
     if not graph.has_value(value_id):
         return ("tensor", "unknown")
     value = graph.value(value_id)
-    return (
-        "tensor",
-        value.dtype,
-        len(value.shape),
-        tuple(value.shape),
-        tuple(value.stride),
-        value.storage_offset_elements,
-        value.contiguous,
-    )
+    return ("tensor", *value.layout_signature())
 
 
 def _argument_signature(graph: Graph, value: Value) -> tuple:

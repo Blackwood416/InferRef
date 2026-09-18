@@ -201,9 +201,9 @@ def canonical_tree_sha256(path: str | Path) -> str:
 def trace_metadata_manifest(path: str | Path) -> list[dict[str, Any]]:
     """Return the content manifest for Trace IR metadata files.
 
-    Payloads under ``tensors/`` are deliberately excluded.  A trace metadata
-    digest describes the graph/region contract; testcase payloads are linked
-    separately by their testcase tree digest.  Missing optional metadata files
+    Plain trace payloads are excluded; quantized traces additionally bind code
+    and parameter payloads because these define numerical interpretation.
+    Testcases remain independently linked by their full tree digest. Missing optional metadata files
     are not synthesized, but the two required IR files are required to exist.
     """
 
@@ -241,6 +241,32 @@ def trace_metadata_manifest(path: str | Path) -> list[dict[str, Any]]:
                 "sha256": sha256_file(candidate),
             }
         )
+    # Quantized graph semantics depend on code AND parameter bytes, even if
+    # metadata is unchanged. Bind these before session reuse is considered.
+    from inferref.ir.package import TracePackage
+    from inferref.quantization.artifacts import validate_trace_metadata
+
+    package = TracePackage.load(root)
+    closure = validate_trace_metadata(package)
+    if closure:
+        payloads = set()
+        for value_id in (*closure.quantized_ids, *closure.parameter_ids):
+            value = package.graph.value(value_id)
+            if value.capture.mode == "full" and value.capture.payload:
+                relative = value.capture.payload
+                candidate = root / relative
+                # Reject internal symlinks too, before resolve erases them.
+                package.tensor_payload_path(relative)
+                for part in (candidate, *candidate.parents):
+                    if part == root:
+                        break
+                    if part.is_symlink() or getattr(part, "is_junction", lambda: False)():
+                        raise HashingError(f"refusing to hash linked quantization payload: {part}")
+                payloads.add(relative)
+        for relative in sorted(payloads):
+            candidate = package.tensor_payload_path(relative)
+            entries.append({"path": relative, "kind": "file", "size": candidate.stat().st_size,
+                            "sha256": sha256_file(candidate)})
     return entries
 
 

@@ -21,11 +21,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from inferref.ir.dtypes import dtype_itemsize, dtype_name_from_code, is_known_dtype
+from inferref.ir.dtypes import (
+    PACKED_DTYPES,
+    dtype_name_from_code,
+    dtype_payload_nbytes,
+    is_known_dtype,
+)
 from inferref.ir.operator import ALIAS_RELATIONSHIPS
 from inferref.ir.package import TracePackage
 from inferref.ir.values import walk_tensor_refs
-from inferref.ir.version import TENSOR_FORMAT_VERSION
+from inferref.ir.version import PACKED_TENSOR_FORMAT_VERSION, TENSOR_FORMAT_VERSION
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,20 @@ def validate_package(
     _check_regions(package, issues)
     if check_payloads:
         _check_payloads(package, issues)
+
+    from inferref.quantization.artifacts import validate_trace_metadata
+
+    try:
+        closure = validate_trace_metadata(package)
+        if closure and check_payloads:
+            from inferref.quantization.trace import trace_tensor
+
+            for value_id in closure.quantized_ids:
+                value = graph.value(value_id)
+                if value.capture.mode == "full" and value.capture.payload:
+                    trace_tensor(package, value_id)
+    except (ValueError, OSError) as exc:
+        issues.append(ValidationIssue(10, "error", str(exc), "quantization"))
 
     return issues
 
@@ -516,7 +535,7 @@ def _check_payloads(pkg: TracePackage, issues: list[ValidationIssue]) -> None:
             )
             continue
         try:
-            expected = value.logical_numel * dtype_itemsize(value.dtype)
+            expected = dtype_payload_nbytes(value.dtype, value.logical_numel)
         except ValueError:
             continue  # dtype already reported by invariant 6
 
@@ -534,7 +553,8 @@ def _check_payloads(pkg: TracePackage, issues: list[ValidationIssue]) -> None:
             issues.append(ValidationIssue(10, "error", str(exc), where))
             continue
 
-        if header.version != TENSOR_FORMAT_VERSION:
+        expected_version = PACKED_TENSOR_FORMAT_VERSION if header_dtype in PACKED_DTYPES else TENSOR_FORMAT_VERSION
+        if header.version != expected_version:
             issues.append(
                 ValidationIssue(
                     10,
@@ -564,6 +584,12 @@ def _check_payloads(pkg: TracePackage, issues: list[ValidationIssue]) -> None:
                     10, "error", "payload is not marked canonical contiguous", where
                 )
             )
+        if header_dtype in PACKED_DTYPES and header.logical_numel % 2 and header.payload_nbytes:
+            with path.open("rb") as stream:
+                stream.seek(header.header_size + header.payload_nbytes - 1)
+                last = stream.read(1)
+                if last and last[0] & 0xf0:
+                    issues.append(ValidationIssue(10, "error", "unused high nibble must be zero", where))
         if header_dtype != value.dtype:
             issues.append(
                 ValidationIssue(

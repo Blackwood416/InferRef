@@ -13,9 +13,10 @@ import pytest
 
 from inferref.ir.dtypes import (
     DTYPE_CODES,
+    PACKED_DTYPES,
     dtype_code,
-    dtype_itemsize,
     dtype_name_from_code,
+    dtype_payload_nbytes,
 )
 from inferref.tensor import codec
 from inferref.tensor.dtype_numpy import (
@@ -51,7 +52,7 @@ def test_roundtrip_every_dtype(name: str) -> None:
         shape=shape,
         stride=stride,
         storage_offset=0,
-        payload=array.tobytes(),
+        payload=codec.pack_nibbles(array, name) if name in PACKED_DTYPES else array.tobytes(),
     )
     view = codec.decode(blob)
 
@@ -59,7 +60,7 @@ def test_roundtrip_every_dtype(name: str) -> None:
     assert view.shape == shape
     assert view.stride == stride
     assert view.numel == 6
-    assert view.nbytes == 6 * dtype_itemsize(name)
+    assert view.nbytes == dtype_payload_nbytes(name, 6)
     assert np.array_equal(view.data, array.reshape(shape))
 
 
@@ -99,6 +100,7 @@ def test_dtype_codes_are_stable() -> None:
         "float16": 10, "bfloat16": 11, "float32": 12, "float64": 13,
         "complex64": 14, "complex128": 15,
         "float8_e4m3fn": 16, "float8_e5m2": 17,
+        "int4": 18, "uint4": 19,
     }
     assert DTYPE_CODES == expected
     for name, code in expected.items():

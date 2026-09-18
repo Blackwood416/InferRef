@@ -58,6 +58,7 @@ class TensorComparison:
 
     atol: float = 0.0
     rtol: float = 0.0
+    comparison_domain: str | None = None
 
     @property
     def passed(self) -> bool:
@@ -71,6 +72,8 @@ class TensorComparison:
         }
         if self.message:
             out["message"] = self.message
+        if self.comparison_domain:
+            out["comparison_domain"] = self.comparison_domain
         if self.value_id is not None:
             out["value_id"] = self.value_id
         if self.producer_op_id is not None:
@@ -333,11 +336,15 @@ def compare_testcase(
         engine_manifest = json.loads(engine_manifest_path.read_text(encoding="utf-8"))
         if not isinstance(engine_manifest, dict):
             raise ValueError("engine output manifest root must be a JSON object")
+        if "quantization_parameters" in engine_manifest:
+            raise ValueError("quantized engine output manifests are not supported; emit float32 outputs or compare two traces")
         if not isinstance(engine_manifest.get("outputs", []), list):
             raise ValueError("engine output manifest outputs must be an array")
         for entry in engine_manifest.get("outputs", ()):
             if not isinstance(entry, dict):
                 raise ValueError("engine output manifest entries must be objects")
+            if "quantization" in entry:
+                raise ValueError("quantized engine output descriptors require trace-vs-trace comparison")
             if "name" in entry and "payload" in entry:
                 if not isinstance(entry["name"], str) or not isinstance(
                     entry["payload"], str
@@ -388,6 +395,10 @@ def compare_testcase(
 
     top_comparator = getattr(effective_comparison, "comparator", NUMERIC_COMPARATOR_ID) or NUMERIC_COMPARATOR_ID
     per_output_specs = getattr(effective_comparison, "per_output", {}) or {}
+
+    from inferref.quantization.artifacts import validate_comparison
+
+    validate_comparison(manifest, effective_comparison)
 
     # Case A: Global multi-output comparator (top-level comparator is non-numeric)
     if top_comparator != NUMERIC_COMPARATOR_ID:
@@ -565,6 +576,26 @@ def compare_testcase(
                 strict_layout=role_strict_layout,
                 value_id=value_id,
             )
+            if "quantization" in output:
+                from dataclasses import replace
+
+                from inferref.quantization.reference import dequantize
+                from inferref.quantization.spec import QuantizationSpec
+
+                try:
+                    parameters = {entry["value_id"]: codec.read(resolve_contained_path(
+                        testcase_dir, entry["payload"], kind="quantization parameter"))
+                        for entry in manifest.get("quantization_parameters", [])}
+                    reference = codec.read(reference_path)
+                    decoded = dequantize(reference, QuantizationSpec.from_dict(output["quantization"]), values=parameters)
+                    comparison = compare_tensors(name, replace(reference, dtype="float32", data=decoded),
+                                                 codec.read(actual_path), policy=role_policy,
+                                                 ignore_stride=role_ignore_stride, strict_layout=role_strict_layout)
+                except (ValueError, OSError, TypeError) as exc:
+                    comparison = TensorComparison(name=name, status=STATUS_ERROR, message=str(exc))
+                comparison.comparison_domain = "dequantized_reference_vs_float32_output"
+            elif manifest.get("quantization_parameters") and output.get("dtype") in {"float16", "float32"}:
+                comparison.comparison_domain = f"{output['dtype']}_kernel_output"
 
         _annotate_from_testcase(comparison, output)
         report.comparisons.append(comparison)
@@ -687,6 +718,7 @@ def compare_traces(
     first_failure: bool = False,
     comparator: str | None = None,
     comparison_config: dict[str, Any] | None = None,
+    quantization_mode: str = "dequantized",
 ) -> ComparisonReport:
     """Compare traces by execution index using the built-in numeric comparator.
 
@@ -694,6 +726,9 @@ def compare_traces(
     """
     from inferref.comparators.numeric import NUMERIC_COMPARATOR_ID, NumericComparator
     from inferref.comparison.resolution import resolve_comparison_policy
+
+    if quantization_mode not in {"dequantized", "raw_codes"}:
+        raise ValueError("quantization_mode must be dequantized or raw_codes")
 
     if comparator is not None and comparator != NUMERIC_COMPARATOR_ID:
         raise ValueError("trace comparison supports only tensor/numeric/v1; extract a testcase for custom comparators")
@@ -745,14 +780,30 @@ def compare_traces(
                 )
             else:
                 _actual_value_id, actual_payload = counterpart
-                comparison = _compare_one_file(
-                    name,
-                    ref_pkg.tensor_payload_path(value.capture.payload),
-                    act_pkg.tensor_payload_path(actual_payload),
-                    policy=policy,
-                    ignore_stride=ignore_stride,
-                    strict_layout=strict_layout,
-                )
+                actual_value = act_pkg.graph.value(_actual_value_id)
+                if value.quantization is not None or actual_value.quantization is not None:
+                    from inferref.quantization.trace import trace_tensor
+
+                    try:
+                        if quantization_mode == "raw_codes" and (value.quantization is None or actual_value.quantization is None):
+                            raise ValueError("raw_codes comparison requires quantized descriptors on both sides")
+                        comparison = compare_tensors(
+                            name, trace_tensor(ref_pkg, value_id, dequantize=quantization_mode == "dequantized"),
+                            trace_tensor(act_pkg, _actual_value_id, dequantize=quantization_mode == "dequantized"),
+                            policy=policy, ignore_stride=ignore_stride, strict_layout=strict_layout,
+                        )
+                    except (ValueError, OSError) as exc:
+                        comparison = TensorComparison(name=name, status=STATUS_ERROR, message=str(exc))
+                    comparison.comparison_domain = quantization_mode
+                else:
+                    comparison = _compare_one_file(
+                        name,
+                        ref_pkg.tensor_payload_path(value.capture.payload),
+                        act_pkg.tensor_payload_path(actual_payload),
+                        policy=policy,
+                        ignore_stride=ignore_stride,
+                        strict_layout=strict_layout,
+                    )
             # Provenance always comes from the reference side: it is the trace
             # that carries authoritative module/source context.
             _annotate_from_trace(comparison, ref_pkg, value_id)

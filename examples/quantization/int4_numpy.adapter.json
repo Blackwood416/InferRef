@@ -1,0 +1,22 @@
+{
+  "format": "inferref-engine-adapter",
+  "format_version": "0.2",
+  "name": "affine-w4a16-numpy",
+  "target_device": "cpu",
+  "capabilities": {
+    "device_types": ["cpu"],
+    "dtypes": ["float16", "float32", "int4", "uint4", "int8", "uint8"],
+    "max_rank": 8,
+    "features": [
+      "quantization/affine-int4/v1/per_tensor",
+      "quantization/affine-int4/v1/per_axis",
+      "quantization/affine-int4/v1/per_group",
+      "quantization/affine-uint4/v1/per_tensor",
+      "quantization/affine-uint4/v1/per_axis",
+      "quantization/affine-uint4/v1/per_group"
+    ],
+    "contracts": ["linear/affine-w4a16/v1"]
+  },
+  "command": ["{python}", "{adapter_dir}/int8_numpy.py", "{testcase}", "--output", "{output}"],
+  "timeout_seconds": 30
+}

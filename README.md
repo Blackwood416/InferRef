@@ -68,17 +68,37 @@ wheel/sdist builds, and release availability, see [distribution](docs/DISTRIBUTI
 
 The Trace IR represents `bool`, signed/unsigned 8/16/32/64-bit integers,
 `float16`, `bfloat16`, `float32`, `float64`, `complex64`, and `complex128`.
-The unreleased development version also supports native `float8_e4m3fn` and
+The 0.11.0rc1 prerelease also supports native `float8_e4m3fn` and
 `float8_e5m2` payloads, with numpy-only and dependency-free C++ decoding.
 FP8 comparison uses decoded values with exact tolerances by default; adapters
 must explicitly declare the exact FP8 dtype. This does not imply FP8 kernel or
-scaled-FP8 support. FNUZ variants, packed INT4/UINT4, and NF4 are not supported;
-packed-weight layouts and quantization scales/zero-points have no standardized
-quantized tensor contract. INT8 storage support alone is not a W8A8 validation
-contract. An adapter can expose supported floating-point/dequantized boundary
-outputs for comparison, but that does not validate the packed weight format or
-quantization semantics. See the [quantization implementation plan and FP8 API](docs/spec/InferRef_Quantization.md)
+scaled-FP8 support. FNUZ variants are not supported. The development
+version supports packed INT4/UINT4 payloads and explicit affine W4A16 semantics
+(float32 accumulation, float16 output); this does not imply hardware execution.
+NF4 uses explicit codebook/block-scale semantics. In addition to the original
+flat host importer, a pinned bitsandbytes 0.50.1 `QuantState` bridge accepts one
+level of double-quantized scales and float16/bfloat16/float32 source weights.
+It expands scales into ordinary float32 parameters and keeps source output
+rounding explicit. Unknown profiles and deeper nesting are rejected. See the
+[real-checkpoint audit](examples/quantization/README.md#real-bitsandbytes-quantstate-and-double-quantization).
+Explicit affine INT8 descriptors now carry scale/zero-point semantics through
+trace extraction, adapter preflight, comparison, Agent, Suite and Alignment.
+This is float32 computation with dequantized INT8 weights, **not** W8A8 integer
+accumulation or automatic capture of framework quantized tensors.
+See the [quantization implementation plan and FP8 API](docs/spec/InferRef_Quantization.md)
 for supported behavior, staged tasks, and acceptance criteria.
+
+**0.11.0rc1 scope:** CPU artifact/reference workflows and the pinned bitsandbytes
+CPU path are qualified. Whole-model generation, GPU execution, vendor fused
+kernels and the optional AVX512 repacking path are not qualified by this release.
+See [candidate release notes](docs/releases/0.11.0rc1.md).
+
+The development version provides a standalone, numpy-only affine INT8 reference
+API (`inferref.quantization`) for per-tensor/per-axis/per-group quantization,
+dequantization and float32 Linear evaluation. Try
+`python examples/quantization/int8_reference.py`. For a complete torch-free
+trace → testcase → independent engine workflow, including injected-error
+debugging, see the [INT8 Linear example](examples/quantization/README.md).
 
 ### Trace and compare
 

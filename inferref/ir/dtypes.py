@@ -31,6 +31,8 @@ _TABLE: dict[str, tuple[int, int]] = {
     "complex128": (15, 16),
     "float8_e4m3fn": (16, 1),
     "float8_e5m2": (17, 1),
+    "int4": (18, 0),
+    "uint4": (19, 0),
 }
 
 #: dtype name -> wire code
@@ -40,7 +42,8 @@ DTYPE_CODES: dict[str, int] = {name: code for name, (code, _) in _TABLE.items()}
 DTYPE_NAMES: dict[int, str] = {code: name for name, (code, _) in _TABLE.items()}
 
 #: dtype name -> itemsize in bytes
-DTYPE_ITEMSIZES: dict[str, int] = {name: size for name, (_, size) in _TABLE.items()}
+DTYPE_ITEMSIZES: dict[str, int] = {name: size for name, (_, size) in _TABLE.items() if size}
+PACKED_DTYPES = frozenset({"int4", "uint4"})
 
 #: dtype names whose values are floating point (used by tolerance policies).
 FLOAT8_DTYPES = frozenset({"float8_e4m3fn", "float8_e5m2"})
@@ -64,11 +67,25 @@ def dtype_code(name: str) -> int:
 
 
 def dtype_itemsize(name: str) -> int:
-    """Return the size in bytes of one element of ``name``."""
+    """Return integral bytes/element; packed types require dtype_payload_nbytes."""
+    if name in PACKED_DTYPES:
+        raise ValueError(f"{name} is sub-byte; use dtype_bits and dtype_payload_nbytes")
     try:
         return _TABLE[name][1]
     except KeyError:
         raise ValueError(f"unknown InferRef dtype name: {name!r}") from None
+
+
+def dtype_bits(name: str) -> int:
+    """Number of significant storage bits per logical element."""
+    return 4 if name in PACKED_DTYPES else 8 * dtype_itemsize(name)
+
+
+def dtype_payload_nbytes(name: str, numel: int) -> int:
+    """Canonical payload length, including zero padding in the final byte."""
+    if type(numel) is not int or numel < 0:
+        raise ValueError("numel must be a nonnegative integer")
+    return (numel * dtype_bits(name) + 7) // 8
 
 
 def dtype_name_from_code(code: int) -> str:

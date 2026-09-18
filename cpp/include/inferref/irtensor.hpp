@@ -70,6 +70,8 @@ enum class DataType : std::uint16_t
     kComplex128 = 15,
     kFloat8E4M3FN = 16,
     kFloat8E5M2 = 17,
+    kInt4 = 18,
+    kUInt4 = 19,
 };
 
 inline const char *DataTypeName(DataType dtype)
@@ -93,6 +95,8 @@ inline const char *DataTypeName(DataType dtype)
     case DataType::kComplex128: return "complex128";
     case DataType::kFloat8E4M3FN: return "float8_e4m3fn";
     case DataType::kFloat8E5M2: return "float8_e5m2";
+    case DataType::kInt4: return "int4";
+    case DataType::kUInt4: return "uint4";
     default: return "invalid";
     }
 }
@@ -126,6 +130,28 @@ inline std::size_t DataTypeSize(DataType dtype)
 inline constexpr std::uint32_t kFlagCanonicalContiguous = 1u << 0;
 
 inline constexpr std::uint16_t kTensorFormatVersion = 1;
+inline constexpr std::uint16_t kPackedTensorFormatVersion = 2;
+
+inline bool IsPacked(DataType dtype)
+{
+    return dtype == DataType::kInt4 || dtype == DataType::kUInt4;
+}
+
+// DataTypeSize deliberately returns zero for sub-byte types: no fractional
+// byte size or misleading one-byte physical size is exposed.
+inline std::size_t DataTypeBits(DataType dtype)
+{
+    return IsPacked(dtype) ? 4 : 8 * DataTypeSize(dtype);
+}
+
+inline std::uint64_t PayloadSize(DataType dtype, std::uint64_t numel)
+{
+    if (IsPacked(dtype)) return numel / 2 + numel % 2;
+    const auto size = DataTypeSize(dtype);
+    if (!size || numel > std::numeric_limits<std::uint64_t>::max() / size)
+        throw std::runtime_error("unknown dtype or payload size overflow");
+    return numel * size;
+}
 
 // IEEE-754 round-to-nearest-even encoders shared by native engines and tests.
 inline std::uint16_t EncodeFloat16(float value)
@@ -263,6 +289,20 @@ public:
         std::vector<float> out(static_cast<std::size_t>(count));
         switch (dtype)
         {
+        case DataType::kInt4:
+        case DataType::kUInt4:
+        {
+            if (data.size() != PayloadSize(dtype, static_cast<std::uint64_t>(count)))
+                throw IRTensorError("packed payload size mismatch");
+            for (std::int64_t i = 0; i < count; ++i)
+            {
+                const auto byte = static_cast<std::uint8_t>(data[static_cast<std::size_t>(i / 2)]);
+                int code = (byte >> (4 * (i % 2))) & 15;
+                if (dtype == DataType::kInt4 && code >= 8) code -= 16;
+                out[static_cast<std::size_t>(i)] = static_cast<float>(code);
+            }
+            break;
+        }
         case DataType::kFloat8E4M3FN:
         case DataType::kFloat8E5M2:
         {
@@ -463,7 +503,7 @@ inline IRTensor DecodeIRTensor(const std::byte *buffer, std::size_t size)
     }
 
     const auto version = detail::ReadLE<std::uint16_t>(buffer, 4);
-    if (version != kTensorFormatVersion)
+    if (version != kTensorFormatVersion && version != kPackedTensorFormatVersion)
     {
         throw IRTensorError("unsupported .irtensor version " + std::to_string(version));
     }
@@ -479,7 +519,7 @@ inline IRTensor DecodeIRTensor(const std::byte *buffer, std::size_t size)
     {
         throw IRTensorError("header_size does not match rank");
     }
-    if (size < header_size + payload_nbytes)
+    if (size < header_size || payload_nbytes > size - header_size)
     {
         throw IRTensorError("truncated .irtensor payload");
     }
@@ -487,11 +527,15 @@ inline IRTensor DecodeIRTensor(const std::byte *buffer, std::size_t size)
     IRTensor tensor;
     tensor.dtype = static_cast<DataType>(dtype_code);
     tensor.flags = flags;
-    if (DataTypeSize(tensor.dtype) == 0)
+    if (DataTypeBits(tensor.dtype) == 0)
     {
         throw IRTensorError("unknown dtype code " + std::to_string(dtype_code));
     }
-    if (numel * DataTypeSize(tensor.dtype) != payload_nbytes)
+    if (version != (IsPacked(tensor.dtype) ? kPackedTensorFormatVersion : kTensorFormatVersion))
+        throw IRTensorError("dtype and tensor format version disagree");
+    if (detail::ReadLE<std::uint16_t>(buffer, 16) != 0 || !(flags & kFlagCanonicalContiguous))
+        throw IRTensorError("invalid reserved field or noncanonical payload");
+    if (PayloadSize(tensor.dtype, numel) != payload_nbytes)
     {
         throw IRTensorError("payload_nbytes inconsistent with numel and dtype");
     }
@@ -508,6 +552,18 @@ inline IRTensor DecodeIRTensor(const std::byte *buffer, std::size_t size)
         tensor.stride[i] = detail::ReadLE<std::int64_t>(buffer, offset);
     }
     tensor.storage_offset = detail::ReadLE<std::int64_t>(buffer, offset);
+
+    std::uint64_t shape_numel = 1;
+    for (const auto dim : tensor.shape)
+    {
+        if (dim < 0 || (dim && shape_numel > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) / static_cast<std::uint64_t>(dim)))
+            throw IRTensorError("negative dimension or shape product overflow");
+        shape_numel *= static_cast<std::uint64_t>(dim);
+    }
+    if (shape_numel != numel) throw IRTensorError("shape product differs from logical numel");
+    if (IsPacked(tensor.dtype) && numel % 2 &&
+        (static_cast<std::uint8_t>(buffer[header_size + payload_nbytes - 1]) & 0xf0))
+        throw IRTensorError("unused high nibble must be zero");
 
     tensor.data.resize(static_cast<std::size_t>(payload_nbytes));
     if (payload_nbytes != 0)
@@ -557,7 +613,7 @@ inline void WriteIRTensor(const std::string &path, const IRTensor &tensor)
     };
 
     std::memcpy(header.data(), "IRTN", 4);
-    write_le(4, kTensorFormatVersion, 2);
+    write_le(4, IsPacked(tensor.dtype) ? kPackedTensorFormatVersion : kTensorFormatVersion, 2);
     write_le(6, header_size, 2);
     write_le(8, static_cast<std::uint16_t>(tensor.dtype), 2);
     write_le(10, tensor.flags, 4);
@@ -567,8 +623,15 @@ inline void WriteIRTensor(const std::string &path, const IRTensor &tensor)
     std::uint64_t numel = 1;
     for (std::int64_t dim : tensor.shape)
     {
+        if (dim < 0 || (dim && numel > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) / static_cast<std::uint64_t>(dim)))
+            throw IRTensorError("negative dimension or shape product overflow");
         numel *= static_cast<std::uint64_t>(dim);
     }
+    if (tensor.data.size() != PayloadSize(tensor.dtype, numel))
+        throw IRTensorError("payload size differs from shape and dtype");
+    if (IsPacked(tensor.dtype) && numel % 2 &&
+        (static_cast<std::uint8_t>(tensor.data.back()) & 0xf0))
+        throw IRTensorError("unused high nibble must be zero");
     write_le(18, numel, 8);
     write_le(26, tensor.data.size(), 8);
 

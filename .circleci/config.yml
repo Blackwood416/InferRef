@@ -229,6 +229,32 @@ commands:
             echo "end-to-end loop behaved correctly in both directions"
 
 jobs:
+  bitsandbytes-cpu-linux:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: medium
+    environment:
+      OMP_NUM_THREADS: "2"
+    steps:
+      - checkout
+      - run:
+          name: Install pinned real QuantState runtime
+          command: |
+            python -m pip install --upgrade pip
+            pip install "torch==2.13.0" --index-url https://download.pytorch.org/whl/cpu
+            pip install -e ".[dev]" "bitsandbytes==0.50.1" safetensors
+      - run:
+          name: Run real runtime tests without allowing skipped coverage
+          command: |
+            python -m pytest tests/frontend/test_bitsandbytes_quant_state.py -q --junitxml=test-results/bnb/results.xml
+            python .circleci/check_ci.py bnb-results test-results/bnb/results.xml
+      - run:
+          name: Qualify independent Linear and portable workflows
+          command: python examples/quantization/qualify_bitsandbytes_linear.py --output bnb-qualification
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: bnb-qualification/report.json
   core-linux:
     parameters:
       python:
@@ -430,7 +456,7 @@ jobs:
             python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
             python -m pip install -e ".[dev]"
             python examples/mini_llama/run_trace.py --output trace/
-            python scripts/generate_cpp_golden.py golden/ --fp8-selftest cpp/build/inferref_fp8_selftest
+            python scripts/generate_cpp_golden.py golden/ --fp8-selftest cpp/build/inferref_fp8_selftest --packed-selftest cpp/build/inferref_packed_selftest
             inferref region detect trace/
             inferref testcase extract trace/ --region "RoPE@layers.0.self_attn" \
               -o repro/rope \
@@ -504,7 +530,9 @@ jobs:
             "$PY" -m pip install -e ".[dev]"
             FP8=cpp/build/inferref_fp8_selftest.exe
             [ -x "$FP8" ] || FP8=cpp/build/Release/inferref_fp8_selftest.exe
-            "$PY" scripts/generate_cpp_golden.py golden/ --fp8-selftest "$FP8"
+            PACKED=cpp/build/inferref_packed_selftest.exe
+            [ -x "$PACKED" ] || PACKED=cpp/build/Release/inferref_packed_selftest.exe
+            "$PY" scripts/generate_cpp_golden.py golden/ --fp8-selftest "$FP8" --packed-selftest "$PACKED"
             BIN=cpp/build/inferref_compare.exe
             [ -x "$BIN" ] || BIN=cpp/build/Release/inferref_compare.exe
             "$BIN" golden/a.irtensor golden/a_equal.irtensor
@@ -518,6 +546,10 @@ jobs:
 workflows:
   ci:
     jobs:
+      - bitsandbytes-cpu-linux:
+          filters:
+            tags:
+              only: /^v.*/
       # Full Linux correctness matrix: every branch only. Tag pipelines run
       # the Windows qualification below instead of duplicating the branch run.
       - core-linux:

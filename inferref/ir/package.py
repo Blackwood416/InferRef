@@ -118,6 +118,9 @@ class TracePackage:
 
     def save(self, root: str | Path) -> Path:
         """Write the package to ``root`` (creating it if needed)."""
+        from inferref.quantization.artifacts import validate_trace_metadata
+
+        validate_trace_metadata(self)
         root = Path(root)
         root.mkdir(parents=True, exist_ok=True)
         root = root.resolve()
@@ -194,7 +197,7 @@ class TracePackage:
                 return []
             return [record_cls.from_dict(d) for d in _read_json(path).get(key, ())]
 
-        return cls(
+        package = cls(
             manifest=manifest,
             graph=graph,
             modules=_optional(MODULES_FILE, "modules", ModuleRecord),
@@ -203,6 +206,10 @@ class TracePackage:
             storages=_optional(STORAGES_FILE, "storages", StorageRecord),
             root=root,
         )
+        from inferref.quantization.artifacts import validate_trace_metadata
+
+        validate_trace_metadata(package)
+        return package
 
 
 def is_trace_package(path: str | Path) -> bool:

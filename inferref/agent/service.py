@@ -114,14 +114,15 @@ def capabilities() -> AgentResponse:
         data={
             "inferref_version": INFERREF_VERSION,
             "formats": {
-                "trace": {"format": FORMAT, "version": FORMAT_VERSION},
+                "trace": {"format": FORMAT, "version": FORMAT_VERSION,
+                          "quantized_version": "1.0"},
                 "alignment": {"format": "inferref-alignment", "version": "0.1"},
                 "evidence": {"format": "inferref-evidence", "version": "0.1"},
                 "testcase": {
                     "format": TESTCASE_FORMAT,
                     "version": TESTCASE_FORMAT_VERSION,
-                    "writes": ["0.2", "0.3"],
-                    "reads": ["0.1", "0.2", "0.3"],
+                    "writes": ["0.2", "0.3", "0.4"],
+                    "reads": ["0.1", "0.2", "0.3", "0.4"],
                 },
                 "suite": {
                     "format": "inferref-suite",
@@ -130,7 +131,7 @@ def capabilities() -> AgentResponse:
                     "reads": ["0.1", "0.2", "0.3"],
                 },
                 "scenario": {"format": "inferref-scenario", "version": "0.1"},
-                "tensor": {"format": "irtensor", "version": TENSOR_FORMAT_VERSION},
+                "tensor": {"format": "irtensor", "version": TENSOR_FORMAT_VERSION, "packed_version": 2},
                 "engine_adapter": {
                     "format": ENGINE_ADAPTER_FORMAT,
                     "version": ENGINE_ADAPTER_VERSION,

@@ -8,9 +8,11 @@ acceptance criterion #10).
 from inferref.ir.dtypes import (
     DTYPE_CODES,
     DTYPE_NAMES,
+    dtype_bits,
     dtype_code,
     dtype_itemsize,
     dtype_name_from_code,
+    dtype_payload_nbytes,
     is_known_dtype,
 )
 from inferref.ir.graph import Graph, GraphIO
@@ -93,9 +95,11 @@ __all__ = [
     "TupleValue",
     "ValidationIssue",
     "Value",
+    "dtype_bits",
     "dtype_code",
     "dtype_itemsize",
     "dtype_name_from_code",
+    "dtype_payload_nbytes",
     "is_known_dtype",
     "validate_package",
     "value_from_dict",

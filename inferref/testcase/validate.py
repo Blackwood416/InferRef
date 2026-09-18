@@ -13,6 +13,7 @@ from inferref.contracts import (
 )
 from inferref.ir.paths import PathBoundaryError, resolve_contained_path
 from inferref.ir.version import TESTCASE_FORMAT, TESTCASE_READ_VERSIONS
+from inferref.quantization.spec import QuantizationError, reject_embedded_quantization
 from inferref.tensor import codec
 from inferref.testcase.requirements import derive_requirements, is_contract_id
 
@@ -122,6 +123,18 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
 
     _validate_manifest(result, manifest)
 
+    # Old formats cannot carry critical quantization semantics as extensions.
+    for key in ("inputs", "outputs", "values", "quantization_parameters"):
+        records = manifest.get(key, [])
+        if isinstance(records, list):
+            for index, record in enumerate(records):
+                if isinstance(record, dict):
+                    try:
+                        if manifest.get("format_version") != "0.4":
+                            reject_embedded_quantization(record)
+                    except QuantizationError as exc:
+                        _error(result, "quantization_unsupported", str(exc), f"{key}[{index}]")
+
     values = _records(result, manifest, "values")
     nodes = _records(result, manifest, "nodes")
     value_ids = _unique_ids(result, values, "values")
@@ -146,6 +159,11 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
 
     for collection_name, entries in (("inputs", inputs), ("outputs", outputs)):
         _validate_payloads(result, resolved_root, collection_name, entries)
+
+    if manifest.get("format_version") == "0.4":
+        _validate_quantization(result, values, inputs, outputs)
+    elif "quantization_parameters" in manifest:
+        _error(result, "quantization_unsupported", "quantization_parameters requires format_version 0.4")
 
     _validate_value_references(result, values, node_ids)
     _validate_node_references(result, nodes, value_ids, storage_ids)
@@ -180,6 +198,48 @@ def validate_testcase(root: str | Path) -> TestcaseValidationResult:
                 field_name,
             )
     return result
+
+
+def _validate_quantization(result, values, inputs, outputs) -> None:
+    from inferref.quantization.artifacts import validate_registry
+    from inferref.quantization.reference import validate_parameters
+    from inferref.quantization.spec import QuantizationSpec
+
+    try:
+        closure = validate_registry(values)
+        parameters = _boundary(result, result.manifest, "quantization_parameters", set(closure.value_ids))
+        ids = [item.get("value_id") for item in parameters]
+        if len(ids) != len(set(ids)) or set(ids) != set(closure.parameter_ids):
+            raise QuantizationError("quantization_parameters must contain each referenced parameter exactly once")
+        registry = {item["id"]: item for item in values}
+        for item in [*inputs, *outputs, *parameters]:
+            record = registry[item["value_id"]]
+            for key in ("dtype", "shape", "stride", "storage_offset", "quantization",
+                        "contiguous", "runtime_object_id", "storage_id", "storage_version"):
+                if item.get(key) != record.get(key):
+                    raise QuantizationError(f"value {item['value_id']}: inconsistent {key} in boundary/parameter metadata")
+        _validate_payloads(result, result.root, "quantization_parameters", parameters)
+        views = {}
+        for item in parameters:
+            if item.get("payload"):
+                path = resolve_contained_path(result.root, item["payload"], kind="quantization parameter")
+                if path.is_file():
+                    views[item["value_id"]] = codec.read(path)
+        for value_id in closure.quantized_ids:
+            spec = QuantizationSpec.from_dict(registry[value_id]["quantization"])
+            if all(parameter_id in views for parameter_id in spec.dependencies):
+                validate_parameters(spec, views)
+        # If a parameter is also an executable boundary, it must not have a
+        # second, different payload with otherwise identical metadata.
+        import numpy as np
+
+        for item in [*inputs, *outputs]:
+            if item.get("value_id") in views and item.get("payload"):
+                path = resolve_contained_path(result.root, item["payload"], kind="parameter boundary")
+                if path.is_file() and not np.array_equal(codec.read(path).data, views[item["value_id"]].data):
+                    raise QuantizationError(f"value {item['value_id']}: conflicting parameter payloads")
+    except (ValueError, TypeError, KeyError, OSError) as exc:
+        _error(result, "quantization_invalid", str(exc), "quantization_parameters")
 
 
 def _validate_manifest(

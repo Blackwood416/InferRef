@@ -8,11 +8,17 @@ records that share ``runtime_object_id`` and ``storage_id`` but differ in
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from inferref.ir._common import Record, drop_none
-from inferref.ir.dtypes import dtype_itemsize
+from inferref.ir.dtypes import dtype_payload_nbytes
+from inferref.quantization.spec import (
+    QuantizationError,
+    QuantizationSpec,
+    reject_embedded_quantization,
+)
 
 #: Tensor capture modes (IR §18).
 CAPTURE_MODES = ("none", "metadata", "hash", "sample", "full")
@@ -162,6 +168,7 @@ class TensorValueRecord(Record):
     qualified_names: tuple[str, ...] = ()
 
     capture: CaptureInfo = field(default_factory=CaptureInfo)
+    quantization: QuantizationSpec | None = None
 
     kind: str = "tensor"
 
@@ -186,6 +193,7 @@ class TensorValueRecord(Record):
         "qualified_name",
         "qualified_names",
         "capture",
+        "quantization",
     )
 
     @property
@@ -198,14 +206,17 @@ class TensorValueRecord(Record):
 
     @property
     def logical_nbytes(self) -> int:
-        """Logical byte size, i.e. ``numel * itemsize`` (IR §12, SPEC §12)."""
-        return self.logical_numel * dtype_itemsize(self.dtype)
+        """Canonical payload bytes, rounded up for packed sub-byte dtypes."""
+        return dtype_payload_nbytes(self.dtype, self.logical_numel)
 
     @property
     def rank(self) -> int:
         return len(self.shape)
 
     def _encode(self) -> dict[str, Any]:
+        reject_embedded_quantization(self.unknown)
+        if self.quantization is not None and not isinstance(self.quantization, QuantizationSpec):
+            raise QuantizationError("quantization must be a typed QuantizationSpec")
         return drop_none(
             {
                 "id": self.id,
@@ -228,6 +239,7 @@ class TensorValueRecord(Record):
                 "qualified_name": self.qualified_name,
                 "qualified_names": list(self.qualified_names) or None,
                 "capture": self.capture.to_dict(),
+                "quantization": self.quantization.to_dict() if self.quantization else None,
             }
         )
 
@@ -251,12 +263,13 @@ class TensorValueRecord(Record):
             "qualified_name": data.get("qualified_name"),
             "qualified_names": tuple(data.get("qualified_names") or ()),
             "capture": CaptureInfo.from_dict(data.get("capture")),
+            "quantization": QuantizationSpec.from_dict(data["quantization"]) if "quantization" in data else None,
             "kind": "tensor",
         }
 
     def layout_signature(self) -> tuple[Any, ...]:
         """Shape/layout signature used for testcase dedup (SPEC §24)."""
-        return (
+        signature = (
             self.dtype,
             self.rank,
             self.shape,
@@ -264,3 +277,6 @@ class TensorValueRecord(Record):
             self.storage_offset_elements,
             self.contiguous,
         )
+        if self.quantization is not None:
+            signature += (json.dumps(self.quantization.to_dict(), sort_keys=True, separators=(",", ":")),)
+        return signature

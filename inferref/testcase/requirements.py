@@ -19,7 +19,7 @@ def is_contract_id(value: object) -> bool:
 def derive_requirements(manifest: dict[str, Any]) -> dict[str, Any]:
     tensors = [
         item
-        for key in ("inputs", "outputs", "values")
+        for key in ("inputs", "outputs", "values", "quantization_parameters")
         for item in manifest.get(key, [])
         if isinstance(item, dict) and isinstance(item.get("shape"), list)
     ]
@@ -28,6 +28,13 @@ def derive_requirements(manifest: dict[str, Any]) -> dict[str, Any]:
     )
     max_rank = max((len(item["shape"]) for item in tensors), default=0)
     features: set[str] = set()
+    # Derive even from malformed descriptors so preflight never silently treats
+    # an explicit quantized carrier as an ordinary integer tensor. Validation
+    # owns the exact schema and reports any malformed descriptor separately.
+    for item in tensors:
+        spec = item.get("quantization")
+        if isinstance(spec, dict):
+            features.add(f"quantization/{spec.get('scheme')}/{spec.get('granularity')}")
     if len(manifest.get("outputs", [])) > 1:
         features.add("multiple_outputs")
     if any(

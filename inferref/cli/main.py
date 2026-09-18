@@ -252,8 +252,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
             first_failure=args.first_failure,
             comparator=getattr(args, "comparator", None),
             comparison_config=comp_cfg,
+            quantization_mode=getattr(args, "quantization_mode", None) or "dequantized",
         )
     elif (reference / "testcase.json").is_file():
+        if getattr(args, "quantization_mode", None) is not None:
+            raise ValueError("--quantization-mode is available only for trace-vs-trace comparison")
         report = compare_testcase(
             reference,
             actual,
@@ -1358,6 +1361,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # compare
     p = sub.add_parser("compare", help="compare reference and engine outputs")
+    p.add_argument("--quantization-mode", choices=("dequantized", "raw_codes"),
+                   help="trace-only quantized comparison domain (default: dequantized)")
     p.add_argument("reference", help="reference trace or testcase directory")
     p.add_argument("actual", help="engine trace or engine output directory")
     p.add_argument(

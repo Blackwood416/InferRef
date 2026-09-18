@@ -56,7 +56,7 @@ class Runnability:
 
     @property
     def eligible(self) -> bool:
-        return self.status != "unsupported"
+        return self.status not in {"unsupported", "blocked"}
 
     @property
     def reason(self) -> str:
@@ -369,15 +369,23 @@ def boundary_requirements(
         for value_id in boundary.inputs
         if graph.has_value(value_id)
     ]
-    output_values = [
-        graph.value(value_id)
-        for value_id in boundary.outputs
-        if graph.has_value(value_id)
-    ]
-    values = input_values + output_values
+    from inferref.quantization.artifacts import feature, validate_registry
+
+    value_ids = set(boundary.inputs) | set(boundary.outputs)
+    for node_id in boundary.node_ids:
+        if graph.has_op(node_id):
+            op = graph.op(node_id)
+            value_ids.update(graph.op_input_value_ids(op))
+            value_ids.update(graph.op_output_value_ids(op))
+            for alias in op.effects.aliases:
+                value_ids.update((alias.input_value_id, alias.output_value_id))
+    if any(v.quantization is not None for v in graph.values):
+        closure = validate_registry([v.to_dict() for v in graph.values], value_ids)
+        value_ids.update(closure.value_ids)
+    values = [graph.value(value_id) for value_id in value_ids if graph.has_value(value_id)]
     dtypes = sorted({str(value.dtype) for value in values if value.dtype})
     max_rank = max((value.rank for value in values), default=0)
-    features: set[str] = set()
+    features: set[str] = {feature(v.quantization) for v in values if v.quantization is not None}
     if len(boundary.outputs) > 1:
         features.add("multiple_outputs")
     for value in input_values:
@@ -407,6 +415,10 @@ def boundary_requirements(
             result["dtypes"] = sorted(result["dtypes"])
         if "features" in result and isinstance(result["features"], (tuple, set)):
             result["features"] = sorted(result["features"])
+        if any(v.quantization is not None for v in values):
+            result["features"] = sorted(set(result.get("features", ())) | features)
+            result["dtypes"] = sorted(set(result.get("dtypes", ())) | set(dtypes))
+            result["max_rank"] = max(result.get("max_rank", 0), max_rank)
     return result
 
 
@@ -592,6 +604,27 @@ def _runnability(
     requirements: Mapping[str, Any],
 ) -> Runnability:
     reasons: list[str] = []
+    from inferref.quantization.artifacts import needs_quantization, validate_registry
+
+    if needs_quantization(requirements):
+        from inferref.quantization.reference import validate_parameters
+        from inferref.quantization.trace import trace_tensor
+
+        try:
+            graph = package.graph
+            roots = set(boundary.inputs) | set(boundary.outputs)
+            for node_id in boundary.node_ids:
+                roots.update(graph.op_input_value_ids(graph.op(node_id)))
+                roots.update(graph.op_output_value_ids(graph.op(node_id)))
+            closure = validate_registry([v.to_dict() for v in graph.values], roots)
+            parameters = {i: trace_tensor(package, i, dequantize=False) for i in closure.parameter_ids}
+            for value_id in closure.quantized_ids:
+                # Intermediate q-values need not carry full code payloads for
+                # an extracted region. Only parameters are additional boundary
+                # dependencies; avoid materializing entire weights to plan.
+                validate_parameters(graph.value(value_id).quantization, parameters)
+        except (ValueError, OSError) as exc:
+            return Runnability(status="blocked", basis="source", reasons=(str(exc),), requirements=requirements)
     if not details.reproducible:
         reasons.append("boundary lacks complete portable payload coverage")
         return Runnability(
@@ -602,6 +635,10 @@ def _runnability(
         )
 
     capabilities, capability_error = _adapter_capabilities(adapter)
+    if adapter is not None and capabilities is None and needs_quantization(requirements):
+        return Runnability(status="unsupported", basis="declared",
+                           reasons=("quantized testcases require explicit adapter capabilities",),
+                           requirements=requirements)
     if capability_error and adapter is not None:
         # An old v0.1 adapter intentionally has no declaration.  It can still
         # be run, but compatibility is estimated and receives a planner

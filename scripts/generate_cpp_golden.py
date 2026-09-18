@@ -24,6 +24,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", help="directory for the generated fixtures")
     parser.add_argument("--fp8-selftest", type=Path, help="run C++ FP8 reader and verify its writes")
+    parser.add_argument("--packed-selftest", type=Path, help="run C++ packed reader and verify its writes")
     args = parser.parse_args()
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
@@ -51,6 +52,20 @@ def main() -> int:
             if original != rewritten:
                 raise RuntimeError(f"C++ FP8 roundtrip changed wire bytes: {dtype}")
 
+    for dtype, carrier in (("int4", "int8"), ("uint4", "uint8")):
+        values = np.array([value for byte in range(256) for value in (byte % 16, byte // 16)], dtype=np.uint8)
+        if dtype == "int4":
+            values = values.astype(np.int8)
+            values[values >= 8] -= 16
+        for label, codes in (("pairs", values), ("odd", values[:31]),
+                             ("scalar", np.array(7, dtype=carrier)),
+                             ("empty", np.empty((2, 0), dtype=carrier))):
+            source = codec.write_array(output / f"{dtype}.{label}.irtensor", codes, dtype=dtype)
+            if args.packed_selftest:
+                target = output / f"{dtype}.{label}.roundtrip.irtensor"
+                subprocess.run([str(args.packed_selftest.resolve()), str(source.resolve()), str(target.resolve())], check=True)
+                if source.read_bytes() != target.read_bytes():
+                    raise RuntimeError(f"C++ packed roundtrip changed wire bytes: {dtype}/{label}")
     print(f"wrote golden fixtures to {output}")
     return 0
 

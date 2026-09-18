@@ -571,8 +571,9 @@ def test_agent_capabilities_reports_reads_writes_formats() -> None:
     formats = cap.data["formats"]
 
     assert "testcase" in formats
-    assert formats["testcase"]["writes"] == ["0.2", "0.3"]
-    assert formats["testcase"]["reads"] == ["0.1", "0.2", "0.3"]
+    assert formats["testcase"]["writes"] == ["0.2", "0.3", "0.4"]
+    assert formats["testcase"]["reads"] == ["0.1", "0.2", "0.3", "0.4"]
+    assert formats["trace"]["quantized_version"] == "1.0"
 
     assert "suite" in formats
     assert formats["suite"]["reads"] == ["0.1", "0.2", "0.3"]

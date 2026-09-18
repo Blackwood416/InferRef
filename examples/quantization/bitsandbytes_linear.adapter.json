@@ -1,0 +1,16 @@
+{
+  "format": "inferref-engine-adapter",
+  "format_version": "0.2",
+  "name": "bitsandbytes-0.50.1-nf4-linear-cpu-fp16",
+  "target_device": "cpu",
+  "capabilities": {
+    "device_types": ["cpu"],
+    "dtypes": ["float16", "float32", "uint4"],
+    "max_rank": 8,
+    "features": ["strided_inputs", "quantization/nf4/v1/per_block"]
+  },
+  "command": ["{python}", "bitsandbytes_linear.py", "{testcase}", "--output", "{output}"],
+  "cwd": ".",
+  "timeout_seconds": 120,
+  "max_output_chars": 65536
+}

@@ -565,6 +565,7 @@ def contract_requirements(
             {
                 "inputs": [by_name[name] for name in contract.inputs],
                 "outputs": [by_name[name] for name in contract.outputs],
+                "quantization_parameters": manifest.get("quantization_parameters", []),
                 "nodes": [],
             }
         )

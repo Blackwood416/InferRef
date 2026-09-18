@@ -33,6 +33,9 @@ _TO_NUMPY: dict[str, np.dtype] = {
     "complex128": np.dtype("<c16"),
     "float8_e4m3fn": np.dtype("u1"),
     "float8_e5m2": np.dtype("u1"),
+    # Packed payloads are unpacked into logical codes before constructing views.
+    "int4": np.dtype("i1"),
+    "uint4": np.dtype("u1"),
 }
 
 #: numpy dtype name -> InferRef dtype name. bfloat16 is intentionally absent:

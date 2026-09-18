@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import sys
+import xml.etree.ElementTree as ET
 
 
 def assert_no_torch(message: str) -> None:
@@ -84,10 +85,17 @@ def main() -> None:
 
     frontend = sub.add_parser("frontend")
     frontend.add_argument("--hf-suite", default="")
+    bnb = sub.add_parser("bnb-results")
+    bnb.add_argument("report")
 
     args = parser.parse_args()
     if args.command == "no-torch":
         assert_no_torch(args.message)
+    elif args.command == "bnb-results":
+        cases = ET.parse(args.report).getroot().findall(".//testcase")
+        if len(cases) < 8 or any(c.find(tag) is not None for c in cases for tag in ("skipped", "failure", "error")):
+            raise SystemExit("Required bitsandbytes coverage is missing, skipped or failed")
+        print(f"bitsandbytes: {len(cases)} tests executed successfully; none skipped")
     else:
         check_frontend(args.hf_suite)
 

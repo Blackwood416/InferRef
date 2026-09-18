@@ -1,0 +1,15 @@
+{
+  "format": "inferref-engine-adapter",
+  "format_version": "0.2",
+  "name": "nf4-w4a16-numpy",
+  "target_device": "cpu",
+  "capabilities": {
+    "device_types": ["cpu"],
+    "dtypes": ["float16", "float32", "uint4"],
+    "max_rank": 8,
+    "features": ["quantization/nf4/v1/per_block"],
+    "contracts": ["linear/nf4-w4a16/v1"]
+  },
+  "command": ["{python}", "{adapter_dir}/int8_numpy.py", "{testcase}", "--output", "{output}"],
+  "timeout_seconds": 30
+}

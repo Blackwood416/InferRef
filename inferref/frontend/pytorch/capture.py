@@ -71,6 +71,10 @@ def logical_bytes(tensor: torch.Tensor) -> bytes:
     already accounts for any storage offset, so ``numel * itemsize`` bytes from
     there are exactly this tensor's logical values.
     """
+    from inferref.ir.dtypes import PACKED_DTYPES
+
+    if str(tensor.dtype).removeprefix("torch.") in PACKED_DTYPES:
+        raise ValueError("native packed Torch tensors require an explicit canonicalizing importer")
     flat = materialize_to_host(tensor)
 
     nbytes = flat.numel() * flat.element_size()

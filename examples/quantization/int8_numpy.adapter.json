@@ -1,0 +1,19 @@
+{
+  "format": "inferref-engine-adapter",
+  "format_version": "0.2",
+  "name": "affine-int8-numpy",
+  "target_device": "cpu",
+  "capabilities": {
+    "device_types": ["cpu"],
+    "dtypes": ["float32", "int8"],
+    "max_rank": 8,
+    "features": [
+      "quantization/affine-int8/v1/per_tensor",
+      "quantization/affine-int8/v1/per_axis",
+      "quantization/affine-int8/v1/per_group"
+    ],
+    "contracts": ["linear/affine-int8/v1"]
+  },
+  "command": ["{python}", "{adapter_dir}/int8_numpy.py", "{testcase}", "--output", "{output}"],
+  "timeout_seconds": 30
+}

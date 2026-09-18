@@ -1,4 +1,4 @@
-"""``.irtensor`` v0.1 binary codec (IR §20, §21).
+"""``.irtensor`` binary codec: version 1 byte types, version 2 packed types.
 
 Header layout — all little-endian, exactly the field order of IR §21::
 
@@ -43,17 +43,19 @@ import numpy as np
 
 from inferref.ir.dtypes import (
     FLOAT8_DTYPES,
+    PACKED_DTYPES,
     dtype_code,
-    dtype_itemsize,
     dtype_name_from_code,
+    dtype_payload_nbytes,
 )
-from inferref.ir.version import TENSOR_FORMAT_VERSION
+from inferref.ir.version import PACKED_TENSOR_FORMAT_VERSION, TENSOR_FORMAT_VERSION
 from inferref.tensor.dtype_numpy import (
     bfloat16_bytes_to_float32,
     float8_bytes_to_float32,
     numpy_dtype_for,
     to_comparable_float,
 )
+from inferref.tensor.packed import pack_nibbles, unpack_nibbles
 
 MAGIC = b"IRTN"
 
@@ -108,6 +110,8 @@ class TensorView:
     ``bfloat16`` — which numpy has no native dtype for — ``data`` is ``uint16``
     holding the raw bit pattern. FP8 uses raw ``uint8`` bit patterns;
     use :meth:`as_float32` to decode either format.
+    INT4/UINT4 use unpacked logical int8/uint8 codes; :meth:`payload_bytes`
+    returns their canonical packed representation.
     """
 
     dtype: str
@@ -134,7 +138,11 @@ class TensorView:
 
     @property
     def nbytes(self) -> int:
-        return self.numel * dtype_itemsize(self.dtype)
+        return dtype_payload_nbytes(self.dtype, self.numel)
+
+    def payload_bytes(self) -> bytes:
+        """Canonical wire bytes (data contains unpacked codes for sub-byte types)."""
+        return pack_nibbles(self.data, self.dtype) if self.dtype in PACKED_DTYPES else self.data.tobytes()
 
     @property
     def is_canonical_contiguous(self) -> bool:
@@ -189,17 +197,20 @@ def encode(
     numel = 1
     for dim in shape:
         numel *= dim
-    expected = numel * dtype_itemsize(dtype)
+    expected = dtype_payload_nbytes(dtype, numel)
     if len(payload) != expected:
         raise IRTensorError(
             f"payload is {len(payload)} bytes, expected {expected} "
             f"({numel} elements x {dtype})"
         )
 
+    if dtype in PACKED_DTYPES and numel % 2 and payload[-1] & 0xf0:
+        raise IRTensorError("unused high nibble must be zero")
+    version = PACKED_TENSOR_FORMAT_VERSION if dtype in PACKED_DTYPES else TENSOR_FORMAT_VERSION
     hsize = header_size_for_rank(rank)
     out = bytearray(hsize)
     _FIXED.pack_into(
-        out, 0, MAGIC, TENSOR_FORMAT_VERSION, hsize, dtype_code(dtype), flags, rank, 0, numel,
+        out, 0, MAGIC, version, hsize, dtype_code(dtype), flags, rank, 0, numel,
         len(payload),
     )
     off = _FIXED.size
@@ -221,7 +232,7 @@ def decode(blob: bytes, *, path: Path | None = None) -> TensorView:
     )
     if magic != MAGIC:
         raise IRTensorError(f"bad magic {magic!r}, expected {MAGIC!r}")
-    if version != TENSOR_FORMAT_VERSION:
+    if version not in (TENSOR_FORMAT_VERSION, PACKED_TENSOR_FORMAT_VERSION):
         raise IRTensorError(
             f"unsupported .irtensor version {version}; this build reads "
             f"version {TENSOR_FORMAT_VERSION}"
@@ -241,6 +252,7 @@ def decode(blob: bytes, *, path: Path | None = None) -> TensorView:
         )
 
     dtype = dtype_name_from_code(dcode)
+    _check_dtype_version(dtype, version)
     off = _FIXED.size
     shape = struct.unpack_from(f"<{rank}q", blob, off)
     off += 8 * rank
@@ -258,13 +270,16 @@ def decode(blob: bytes, *, path: Path | None = None) -> TensorView:
             f"logical_numel {numel} inconsistent with shape product {shape_numel}"
         )
 
-    if numel * dtype_itemsize(dtype) != payload_nbytes:
+    if dtype_payload_nbytes(dtype, numel) != payload_nbytes:
         raise IRTensorError(
             f"payload_nbytes {payload_nbytes} inconsistent with {numel} x {dtype}"
         )
 
     raw = blob[hsize : hsize + payload_nbytes]
-    array = np.frombuffer(raw, dtype=numpy_dtype_for(dtype))
+    try:
+        array = unpack_nibbles(raw, dtype, numel) if dtype in PACKED_DTYPES else np.frombuffer(raw, dtype=numpy_dtype_for(dtype))
+    except ValueError as exc:
+        raise IRTensorError(str(exc)) from exc
     if numel:
         array = array.reshape(shape)
     else:
@@ -311,7 +326,7 @@ def read_header(path: str | Path) -> TensorHeader:
         )
         if magic != MAGIC:
             raise IRTensorError(f"bad magic {magic!r}, expected {MAGIC!r}")
-        if version != TENSOR_FORMAT_VERSION:
+        if version not in (TENSOR_FORMAT_VERSION, PACKED_TENSOR_FORMAT_VERSION):
             raise IRTensorError(
                 f"unsupported .irtensor version {version}; this build reads "
                 f"version {TENSOR_FORMAT_VERSION}"
@@ -343,7 +358,8 @@ def read_header(path: str | Path) -> TensorHeader:
             f"logical_numel {numel} inconsistent with shape product {shape_numel}"
         )
     dtype = dtype_name_from_code(dcode)
-    if numel * dtype_itemsize(dtype) != nbytes:
+    _check_dtype_version(dtype, version)
+    if dtype_payload_nbytes(dtype, numel) != nbytes:
         raise IRTensorError(
             f"payload_nbytes {nbytes} inconsistent with {numel} x {dtype}"
         )
@@ -352,6 +368,11 @@ def read_header(path: str | Path) -> TensorHeader:
         raise IRTensorError(
             f"truncated: need {hsize + nbytes} bytes, have {actual_size}"
         )
+    if dtype in PACKED_DTYPES and numel % 2:
+        with path.open("rb") as stream:
+            stream.seek(hsize + nbytes - 1)
+            if stream.read(1)[0] & 0xf0:
+                raise IRTensorError("unused high nibble must be zero")
     return TensorHeader(
         dtype=dtype,
         shape=tuple(shape),
@@ -368,6 +389,12 @@ def read_header(path: str | Path) -> TensorHeader:
 def read_stream(stream: BinaryIO) -> TensorView:
     """Read and decode one ``.irtensor`` from an open binary stream."""
     return decode(stream.read())
+
+
+def _check_dtype_version(dtype: str, version: int) -> None:
+    expected = PACKED_TENSOR_FORMAT_VERSION if dtype in PACKED_DTYPES else TENSOR_FORMAT_VERSION
+    if version != expected:
+        raise IRTensorError(f"{dtype} requires tensor_format_version {expected}, got {version}")
 
 
 def write_array(
@@ -388,6 +415,14 @@ def write_array(
     from inferref.tensor.dtype_numpy import inferref_dtype_for_numpy
 
     resolved = dtype or inferref_dtype_for_numpy(array.dtype)
+    if resolved in PACKED_DTYPES:
+        try:
+            payload = pack_nibbles(array, resolved)
+        except ValueError as exc:
+            raise IRTensorError(str(exc)) from exc
+        return write(path, dtype=resolved, shape=array.shape,
+                     stride=contiguous_stride(array.shape) if stride is None else stride,
+                     storage_offset=storage_offset, payload=payload)
     if resolved in FLOAT8_DTYPES and array.dtype != np.dtype("uint8"):
         raise IRTensorError("FP8 write_array requires raw uint8 bit patterns, not numeric values")
     # ascontiguousarray promotes rank-0 arrays to rank 1; retain logical shape.

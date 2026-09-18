@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from inferref.quantization.artifacts import QUANTIZATION_FEATURES
 from inferref.testcase.requirements import is_contract_id
 
 AGENT_PROTOCOL_FORMAT = "inferref-agent-response"
@@ -26,7 +27,7 @@ class AgentProtocolError(ValueError):
 
 
 ADAPTER_FEATURES = frozenset(
-    {"multiple_outputs", "strided_inputs", "alias_effects", "mutation_effects"}
+    {"multiple_outputs", "strided_inputs", "alias_effects", "mutation_effects"} | QUANTIZATION_FEATURES
 )
 
 

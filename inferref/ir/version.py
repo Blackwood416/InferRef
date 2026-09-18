@@ -9,12 +9,14 @@ FORMAT = "inferref-trace"
 
 #: Graph/manifest IR version (IR §5).
 FORMAT_VERSION = "0.1"
+QUANTIZED_FORMAT_VERSION = "1.0"
 
 #: ``.irtensor`` binary format version — independent of ``FORMAT_VERSION`` (IR §5).
 TENSOR_FORMAT_VERSION = 1
+PACKED_TENSOR_FORMAT_VERSION = 2
 
 #: Version of this InferRef implementation.
-INFERREF_VERSION = "0.10.0"
+INFERREF_VERSION = "0.11.0rc1"
 
 #: Format string for a testcase package (IR §54).
 TESTCASE_FORMAT = "inferref-testcase"
@@ -24,7 +26,8 @@ TESTCASE_FORMAT_VERSION = "0.2"
 
 # The 0.2 writer adds derived requirements; legacy 0.1 testcases remain
 # readable and derive the same information at load time.
-TESTCASE_READ_VERSIONS = ("0.1", "0.2", "0.3")
+TESTCASE_READ_VERSIONS = ("0.1", "0.2", "0.3", "0.4")
+QUANTIZED_TESTCASE_VERSION = "0.4"
 
 
 def check_format_version(fmt: str, version: str) -> None:
@@ -37,8 +40,8 @@ def check_format_version(fmt: str, version: str) -> None:
         raise ValueError(f"not an InferRef trace: format={fmt!r} (expected {FORMAT!r})")
     major = version.split(".", 1)[0]
     supported_major = FORMAT_VERSION.split(".", 1)[0]
-    if major != supported_major:
+    if major != supported_major and version != QUANTIZED_FORMAT_VERSION:
         raise ValueError(
             f"unsupported trace format_version {version!r}; "
-            f"this InferRef build reads {supported_major}.x"
+            f"this InferRef build reads {supported_major}.x and {QUANTIZED_FORMAT_VERSION}"
         )

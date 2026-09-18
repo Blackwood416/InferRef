@@ -45,6 +45,12 @@ and publish the GitHub Release. Releasing a new version is a separate operation
 from merging these QA fixes. The workflow is not retroactively triggered for
 the already published v0.10.0 release.
 
+For `0.11.0rc1`, use tag `v0.11.0rc1` and mark the GitHub Release as a prerelease,
+not latest. Qualification additionally requires the pinned bitsandbytes CPU job
+with zero skipped runtime tests and a passing synthetic portable Linear workflow.
+The release does not qualify whole-model generation, GPU execution or optional
+AVX512 repacking. See [release notes](releases/0.11.0rc1.md).
+
 ## PyPI remains an explicit maintainer step
 
 Verify PyPI project-name ownership, configure credentials or a trusted publisher

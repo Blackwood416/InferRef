@@ -25,6 +25,7 @@ from inferref.tensor.dtype_numpy import (
     numpy_dtype_for,
     to_comparable_float,
 )
+from inferref.tensor.packed import pack_nibbles, unpack_nibbles
 
 __all__ = [
     "FLAG_CANONICAL_CONTIGUOUS",
@@ -40,9 +41,11 @@ __all__ = [
     "header_size_for_rank",
     "inferref_dtype_for_numpy",
     "numpy_dtype_for",
+    "pack_nibbles",
     "read",
     "read_stream",
     "to_comparable_float",
+    "unpack_nibbles",
     "write",
     "write_array",
 ]

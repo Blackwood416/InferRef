@@ -1,4 +1,4 @@
-"""The four built-in executable contracts (Contract Schema v0.1 section 11).
+"""Built-in executable contracts, including explicit quantized Linear profiles.
 
 These are migrated unchanged from the old hardcoded table in
 ``inferref/testcase/contracts.py``: same IDs, role names, validators, issue
@@ -228,10 +228,95 @@ def _kv_indexed_relation(
     return list(_kv_dtype_issues(inputs, outputs))
 
 
+def _int8_linear_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    from inferref.quantization.spec import QuantizationError, QuantizationSpec
+
+    x, weight = inputs.get("x", {}), inputs.get("weight", {})
+    issues = []
+    if x.get("dtype") != "float32" or not _shape(x) or "quantization" in x:
+        issues.append("x must be an ordinary float32 tensor with rank >= 1")
+    try:
+        spec = QuantizationSpec.from_dict(weight.get("quantization"))
+        if len(spec.logical_shape) != 2 or weight.get("dtype") != "int8":
+            issues.append("weight must be affine INT8 [out_features, in_features]")
+        elif _shape(x) and x["shape"][-1] != spec.logical_shape[1]:
+            issues.append("x last dimension must equal weight in_features")
+    except QuantizationError as exc:
+        issues.append(str(exc))
+    return issues
+
+
+def _int8_linear_relation(inputs, outputs) -> Sequence[str]:
+    x, weight, y = inputs.get("x", {}), inputs.get("weight", {}), outputs.get("y", {})
+    if y.get("dtype") != "float32" or "quantization" in y:
+        return ["y must be an ordinary float32 tensor"]
+    if _shape(x) and _shape(weight) and y.get("shape") != x["shape"][:-1] + weight["shape"][:1]:
+        return ["y shape must equal x leading dimensions plus weight out_features"]
+    return []
+
+
+def _w4a16_inputs(inputs) -> Sequence[str]:
+    from inferref.quantization.spec import QuantizationError, QuantizationSpec
+
+    x, weight = inputs.get("x", {}), inputs.get("weight", {})
+    issues = []
+    if x.get("dtype") != "float16" or not _shape(x) or "quantization" in x:
+        issues.append("W4A16 x must be ordinary float16 with rank >= 1")
+    try:
+        spec = QuantizationSpec.from_dict(weight.get("quantization"))
+        if spec.scheme == "nf4/v1" or spec.storage_dtype not in {"int4", "uint4"} or len(spec.logical_shape) != 2 or weight.get("dtype") != spec.storage_dtype:
+            issues.append("weight must be affine INT4/UINT4 [out_features, in_features]")
+        elif _shape(x) and x["shape"][-1] != spec.logical_shape[1]:
+            issues.append("x last dimension must equal weight in_features")
+    except QuantizationError as exc:
+        issues.append(str(exc))
+    return issues
+
+
+def _w4a16_relation(inputs, outputs) -> Sequence[str]:
+    y = outputs.get("y", {})
+    if y.get("dtype") != "float16" or "quantization" in y:
+        return ["W4A16 y must be ordinary float16"]
+    return _int8_linear_relation(inputs, {"y": {**y, "dtype": "float32"}})
+
+
+def _nf4_inputs(inputs) -> Sequence[str]:
+    from inferref.quantization.spec import QuantizationError, QuantizationSpec
+
+    x, weight = inputs.get("x", {}), inputs.get("weight", {})
+    issues = []
+    if x.get("dtype") != "float16" or not _shape(x) or "quantization" in x:
+        issues.append("NF4 x must be ordinary float16 with rank >= 1")
+    try:
+        spec = QuantizationSpec.from_dict(weight.get("quantization"))
+        if spec.scheme != "nf4/v1" or len(spec.logical_shape) != 2 or weight.get("dtype") != "uint4":
+            issues.append("weight must be NF4 [out_features, in_features]")
+        elif _shape(x) and x["shape"][-1] != spec.logical_shape[1]:
+            issues.append("x last dimension must equal weight in_features")
+    except QuantizationError as exc:
+        issues.append(str(exc))
+    return issues
+
+
 def _build_builtin_contracts() -> tuple[ExecutableContract, ...]:
     return tuple(
         sorted(
             (
+                ExecutableContract(
+                    id="linear/affine-int8/v1", inputs=("x", "weight"), outputs=("y",),
+                    validate_inputs=_int8_linear_inputs, validate_relation=_int8_linear_relation,
+                    description="Float32 x @ dequantized INT8 weight.T; no bias or integer accumulation",
+                ),
+                ExecutableContract(
+                    id="linear/affine-w4a16/v1", inputs=("x", "weight"), outputs=("y",),
+                    validate_inputs=_w4a16_inputs, validate_relation=_w4a16_relation,
+                    description="Float16 x, affine INT4/UINT4 weight, float32 dequant/matmul, float16 y; no bias",
+                ),
+                ExecutableContract(
+                    id="linear/nf4-w4a16/v1", inputs=("x", "weight"), outputs=("y",),
+                    validate_inputs=_nf4_inputs, validate_relation=_w4a16_relation,
+                    description="Float16 x, explicit NF4 codebook/block scales, float32 dequant/matmul, float16 y",
+                ),
                 ExecutableContract(
                     id="rmsnorm/last-dim/v1",
                     inputs=("x", "weight", "epsilon"),

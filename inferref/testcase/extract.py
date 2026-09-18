@@ -456,6 +456,22 @@ def _build_staged_testcase(
     comparison: dict[str, Any] | Any | None = None,
 ) -> ExtractedTestcase:
     graph = package.graph
+    from inferref.quantization.artifacts import (
+        validate_registry,
+        validate_trace_metadata,
+    )
+
+    validate_trace_metadata(package)
+    referenced_value_ids = set(input_ids) | set(output_ids)
+    for op in operators:
+        referenced_value_ids.update(graph.op_input_value_ids(op))
+        referenced_value_ids.update(graph.op_output_value_ids(op))
+        for alias in op.effects.aliases:
+            referenced_value_ids.update((alias.input_value_id, alias.output_value_id))
+    quantized = any(value.quantization is not None for value in graph.values)
+    closure = validate_registry([v.to_dict() for v in graph.values], referenced_value_ids) if quantized else None
+    if closure:
+        referenced_value_ids.update(closure.value_ids)
     result = ExtractedTestcase(path=output, name=name)
     manifest_inputs: list[dict[str, Any]] = []
     manifest_outputs: list[dict[str, Any]] = []
@@ -570,13 +586,18 @@ def _build_staged_testcase(
         if (mutation.storage_id, mutation.version_after) not in output_states:
             result.unobservable_mutations.append(mutation.to_dict())
 
-    referenced_value_ids: set[int] = set(input_ids) | set(output_ids)
-    for op in operators:
-        referenced_value_ids.update(graph.op_input_value_ids(op))
-        referenced_value_ids.update(graph.op_output_value_ids(op))
-        for alias in op.effects.aliases:
-            referenced_value_ids.add(alias.input_value_id)
-            referenced_value_ids.add(alias.output_value_id)
+    manifest_parameters = []
+    for value_id in closure.parameter_ids if closure else ():
+        value = graph.value(value_id)
+        relative = f"quantization_parameters/v{value_id}.irtensor"
+        ok = _copy_payload(package, value, root / relative)
+        if not ok:
+            result.missing_payloads.append(value_id)
+            result.missing_payload_details.append(
+                _missing_payload_detail(package, value_id, f"v{value_id}", "quantization_parameter", value)
+            )
+        manifest_parameters.append({"value_id": value_id, "name": f"v{value_id}",
+                                    "payload": relative if ok else None, **_tensor_metadata(value)})
     selected_op_ids = {op.id for op in operators}
     manifest_values = [
         {
@@ -657,6 +678,8 @@ def _build_staged_testcase(
                 + "; ".join(issues)
             )
     format_version = "0.3" if comparison is not None else TESTCASE_FORMAT_VERSION
+    if closure and closure.quantized_ids:
+        format_version = "0.4"
     manifest = {
         "format": TESTCASE_FORMAT,
         "format_version": format_version,
@@ -668,6 +691,8 @@ def _build_staged_testcase(
         "nodes": node_records,
         "values": manifest_values,
     }
+    if closure and closure.quantized_ids:
+        manifest["quantization_parameters"] = manifest_parameters
     if comparison is not None:
         manifest["comparison"] = (
             comparison.to_dict() if hasattr(comparison, "to_dict") else dict(comparison)
@@ -710,6 +735,9 @@ def _promote_staging(staging: Path, target: Path, *, force: bool) -> None:
 
 
 def _tensor_metadata(value: TensorValueRecord) -> dict[str, Any]:
+    from inferref.quantization.spec import reject_embedded_quantization
+
+    reject_embedded_quantization(value.unknown)
     return {
         "dtype": value.dtype,
         "shape": list(value.shape),
@@ -719,6 +747,7 @@ def _tensor_metadata(value: TensorValueRecord) -> dict[str, Any]:
         "runtime_object_id": value.runtime_object_id,
         "storage_id": value.storage_id,
         "storage_version": value.storage_version,
+        **({"quantization": value.quantization.to_dict()} if value.quantization else {}),
     }
 
 

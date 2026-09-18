@@ -27,12 +27,15 @@ def _tensor(shape: list[int], dtype: str = "float32") -> dict[str, object]:
     return {"shape": shape, "dtype": dtype, "stride": list(range(len(shape)))}
 
 
-def test_registry_covers_the_four_engine_contracts() -> None:
+def test_registry_covers_builtin_engine_contracts() -> None:
     assert {contract.id for contract in EXECUTABLE_CONTRACTS} == {
         "rmsnorm/last-dim/v1",
         "rope/rotate-half/v1",
         "kv-cache/append/v1",
         "kv-cache/indexed-update/v1",
+        "linear/affine-int8/v1",
+        "linear/affine-w4a16/v1",
+        "linear/nf4-w4a16/v1",
     }
     assert get_contract("rmsnorm/last-dim/v1").inputs == ("x", "weight", "epsilon")
     assert get_contract("rmsnorm/last-dim/v1").outputs == ("y",)
