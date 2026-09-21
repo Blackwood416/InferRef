@@ -603,3 +603,27 @@ On Windows, 2026-09-18, CPU Torch 2.13.0 and bitsandbytes 0.50.1:
 This is stored-weight and scale-decoding acceptance on CPU, not full-model token
 generation, fused low-bit GEMM, GPU execution, arbitrary bnb versions, deeper
 nesting or C++ quantized testcase support.
+
+
+## Whole-model generation and GPU qualification
+
+On Windows, 2026-09-21, Intel Arc A770 Graphics (Level Zero driver 1.15.38308)
+and PyTorch 2.13.0 + bitsandbytes 0.50.1 / Aila native SYCL engine:
+
+- Compiled reference causal generation prefill and multi-step autoregressive
+  decode into an InferRef Scenario v0.1 (`scenario.json` + `cases/prefill`,
+  `cases/decode-0`, `cases/decode-1`). Each step testcase provides self-contained
+  input prefix tokens and reference float32 logits.
+- Target execution on Intel Arc A770 GPU via Aila's native SYCL engine adapter
+  (`aila-qwen3-nf4`, `AilaQwen3Nf4InferRefAdapter.exe`).
+  Loaded all 28 transformer layers, 196 NF4 weights (513.78 MB) and allocated
+  KV cache on device.
+- Step-by-step token parity: Reference and Aila GPU both predicted identical
+  token sequences: [16, 13, 576] ("1. The") with 100% token match.
+- Numerical alignment: 28-layer bfloat16 accumulation on Arc A770 GPU achieved
+  0.99988 cosine similarity and passed tolerance comparison across all steps.
+- Device evidence: Every step emitted valid `inferref-sycl-device` v0.1 evidence
+  confirming execution on 'Intel(R) Arc(TM) A770 Graphics' (backend 'ext_oneapi_level_zero').
+- Relocation, Agent, Suite (3/3 passed) and Alignment Orchestrator verification
+  passed; injected bug (`--inject-bug`) was detected immediately.
+  Detailed report: '.scratch/whole-model-qwen3-gpu-qual-final/report.json'.

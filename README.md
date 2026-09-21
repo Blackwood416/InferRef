@@ -88,10 +88,10 @@ accumulation or automatic capture of framework quantized tensors.
 See the [quantization implementation plan and FP8 API](docs/spec/InferRef_Quantization.md)
 for supported behavior, staged tasks, and acceptance criteria.
 
-**0.11.0rc1 scope:** CPU artifact/reference workflows and the pinned bitsandbytes
-CPU path are qualified. Whole-model generation, GPU execution, vendor fused
-kernels and the optional AVX512 repacking path are not qualified by this release.
-See [candidate release notes](docs/releases/0.11.0rc1.md).
+**0.11.0 scope:** CPU artifact/reference workflows, whole-model causal generation,
+and Intel Arc GPU execution (Level Zero / SYCL) are qualified. Vendor fused
+low-bit kernels and optional AVX512 repacking remain outside this scope.
+See [release notes](docs/releases/0.11.0.md).
 
 The development version provides a standalone, numpy-only affine INT8 reference
 API (`inferref.quantization`) for per-tensor/per-axis/per-group quantization,

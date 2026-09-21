@@ -202,3 +202,22 @@ dequantized weights to float16 compute dtype before GEMM; it is intentionally
 The trace explicitly records the weight cast and compute dtype. Neither source
 bfloat16 rounding nor full-model generation is silently substituted into this
 Linear comparison. No GPU qualification is implied.
+
+
+### Whole-model causal generation and GPU qualification
+
+```bash
+python examples/quantization/qualify_whole_model_generation.py \
+    --model /path/to/model \
+    --adapter /path/to/gpu_adapter.json \
+    --output whole-model-audit \
+    --tokens 3
+```
+
+This compiles reference prefill and autoregressive decode steps into an
+InferRef Scenario v0.1 (`scenario.json` + `cases/prefill`, `cases/decode-0`, ...),
+executes them against the engine adapter on GPU (such as Aila on Intel Arc A770
+via Level Zero / SYCL), verifies exact token parity ('argmax(logits)'), checks
+numerical tolerance across layers, audits device evidence (`inferref-sycl-device`),
+detects injected bugs (`--inject-bug`), and verifies Suite and Alignment Orchestrator
+workflows (`session_verified`).

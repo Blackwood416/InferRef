@@ -360,7 +360,7 @@ class EngineAdapter:
     @classmethod
     def load(cls, path: str | Path) -> EngineAdapter:
         source = Path(path).resolve()
-        data = json.loads(source.read_text(encoding="utf-8"))
+        data = json.loads(source.read_text(encoding="utf-8-sig"))
         if not isinstance(data, dict):
             raise AgentProtocolError("engine adapter root must be a JSON object")
         if data.get("format") != ENGINE_ADAPTER_FORMAT:

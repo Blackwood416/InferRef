@@ -3,7 +3,20 @@
 User-facing changes belong here. Historical implementation evidence remains in
 [development status](docs/dev/status/README.md).
 
-## Unreleased
+## 0.11.0 — 2026-09-21
+
+### Added
+
+- Whole-model causal autoregressive generation scenario compilation and multi-step
+  alignment workflow (`examples/quantization/qualify_whole_model_generation.py`),
+  verifying prompt prefill and autoregressive decode steps as self-contained testcases
+  and InferRef Scenario v0.1.
+- Intel Arc A770 GPU (Level Zero / SYCL) end-to-end execution qualification with
+  Aila Qwen3 NF4 engine adapter, verifying 100% token sequence parity across multi-step
+  generation, cosine similarity > 0.9998, `inferref-sycl-device` v0.1 device evidence,
+  bug injection detection, and Alignment Orchestrator verification (`session_verified`).
+- Robust UTF-8 with BOM (`utf-8-sig`) decoding for engine adapter JSON manifests.
+
 
 ## 0.11.0rc1 — 2026-09-18
 
