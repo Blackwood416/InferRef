@@ -16,7 +16,7 @@ TENSOR_FORMAT_VERSION = 1
 PACKED_TENSOR_FORMAT_VERSION = 2
 
 #: Version of this InferRef implementation.
-INFERREF_VERSION = "0.11.0rc1"
+INFERREF_VERSION = "0.11.0"
 
 #: Format string for a testcase package (IR §54).
 TESTCASE_FORMAT = "inferref-testcase"

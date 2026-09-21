@@ -68,7 +68,7 @@ wheel/sdist builds, and release availability, see [distribution](docs/DISTRIBUTI
 
 The Trace IR represents `bool`, signed/unsigned 8/16/32/64-bit integers,
 `float16`, `bfloat16`, `float32`, `float64`, `complex64`, and `complex128`.
-The 0.11.0rc1 prerelease also supports native `float8_e4m3fn` and
+The 0.11.0 release also supports native `float8_e4m3fn` and
 `float8_e5m2` payloads, with numpy-only and dependency-free C++ decoding.
 FP8 comparison uses decoded values with exact tolerances by default; adapters
 must explicitly declare the exact FP8 dtype. This does not imply FP8 kernel or
