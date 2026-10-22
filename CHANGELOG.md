@@ -3,6 +3,99 @@
 User-facing changes belong here. Historical implementation evidence remains in
 [development status](docs/dev/status/README.md).
 
+## 0.12.0 — 2026-10-22
+
+0.12.0 completes the P0 infrastructure milestones M1–M3: native C++ consumption of
+quantized testcases, execution-grade low-bit hardware contracts, and
+hierarchical whole-model alignment with batch execution. M4 (multi-bug Agent
+benchmark and `--diagnostic-mode`) is P1 and is deferred to 0.12.x.
+
+### Added
+
+- C++ testcase `0.4` reader and quantization parameter ABI: `Testcase::Load`
+  accepts `0.1`–`0.4`, parses the top-level `quantization_parameters` list by
+  `value_id`, validates `QuantizationSpec` (`scheme`, `granularity`, nullable
+  `axis`/`group_size`/`zero_point_value_id`, NF4-only `codebook`), and fails
+  closed on path traversal, missing or duplicate parameters, header/manifest
+  mismatch, missing scale/zero-point/codebook references, and unreferenced
+  parameters. `DequantizeInputToFloat32` reproduces the Python reference
+  bit-for-bit for `affine-int8/v1`, `affine-int4/v1`, `affine-uint4/v1` and
+  `nf4/v1`; committed Python/C++ goldens compare float32 bit patterns, not
+  tolerances. No Python or numpy dependency is added to the C++ reader.
+- Runtime bridge quantized dispatch: `DebugInvokeEx`/`RunBridge` receive
+  `const Testcase &` so an adapter can query `HasInputQuantization`,
+  `InputQuantization` and `QuantizationParameter`. A legacy two-argument bridge
+  that receives a `0.4` testcase exits with `kBridgeUnsupportedQuantization` and
+  a diagnostic instead of silently ignoring scales. The adapter scaffolder emits
+  the same queries for `0.4` testcases and derives `capabilities.features` from
+  the testcase requirements.
+- Hardware quantization contracts `linear/affine-int8-bias/v1`,
+  `linear/affine-w4a16-bf16/v1` and `linear/nf4-w4a16-bf16/v1` (float32
+  dequantization and accumulation with a single nearest-even bfloat16 output
+  conversion), plus the core region contracts `swiglu/mlp/v1` and
+  `attention/sdpa-gqa/v1` with shape, dtype, rank and `heads % kv_heads`
+  validation.
+- `linear/w8a8-int32-accum/v1`: int8 activations and weights with exact int32
+  accumulation per reduction group, float32 scale epilogue, no bias in v1,
+  explicit overflow rejection, and a numpy-only reference validated against an
+  independent integer oracle.
+- W8A8 adapter feature `quantization/w8a8-int32-accum/v1` merged into derived
+  requirements. Adapter preflight fails closed before launch when an adapter
+  declares the contract but omits the W8A8 token, including adapters that
+  provide no per-contract capabilities.
+- Hierarchical step trace: `compile_step_trace` records one prefill/decode step,
+  every decoder layer, each sub-block (`input_layernorm`, `self_attn`,
+  `post_attention_layernorm`, `mlp`) and the leaf projections as deterministically
+  ordered nested regions inside a single `TracePackage`, with optional explicit
+  quantization descriptors on leaf projections.
+- Serial-prefix binary-search narrowing with the deterministic reason
+  `"binary search midpoint of failing serial chain"`; a single faulty layer in a
+  28-layer chain is isolated within the documented evaluation bound instead of
+  one evaluation per layer.
+- C++ batch manifest (`inferref-batch` `1.0`, `--batch-manifest`): ordered
+  `{id, testcase_dir, output_dir}` items execute in one bridge process, each
+  item writes its own `manifest.json`, and `batch-results.json` records every
+  outcome. A failing item is recorded and the batch continues; the process
+  exits non-zero at the end.
+- Adapter capability `batch_execution`, the `execute_adapter_batch` helper and
+  the `AlignmentRunner` batch path: `run(limit=K)` executes `K > 1` candidates
+  in one adapter launch when the adapter declares the feature, and otherwise
+  falls back to sequential execution with an explicit diagnostic.
+
+### Compatibility
+
+- Trace IR (`0.1`/`1.0`), `.irtensor` formats 1/2, testcase versions `0.1`–`0.4`
+  and Engine Adapter `0.2` are wire-compatible with 0.11.0; the new capability
+  tokens are additive.
+- The C++ testcase reader now accepts `0.4`. A native adapter that only
+  implements the legacy two-argument bridge must keep rejecting quantized
+  testcases; the bridge reports `kBridgeUnsupportedQuantization` rather than
+  dropping quantization metadata.
+- `linear/affine-w4a16/v1` and `linear/nf4-w4a16/v1` remain float16-activation
+  contracts. bfloat16 activations and outputs require the new `*-bf16/v1` IDs.
+- `linear/w8a8-int32-accum/v1` is an integer-dot-product contract, not
+  `linear/affine-int8/v1`. An adapter must declare the W8A8 token together with
+  the granularity tokens it implements; an adapter that declares only the
+  contract no longer inherits adapter-wide capabilities and is rejected during
+  preflight.
+- Batch execution is opt-in and used only for `K > 1`. One process emits every
+  item's artifacts, so an adapter's per-testcase timeout and artifact budget
+  apply per item; `execute_adapter_batch` accepts an explicit batch timeout.
+
+### Known limits
+
+- **Serial-prefix only.** The binary-search evaluation bound assumes a runner
+  that fails a serial prefix of a failing chain, as specified in
+  [SPEC §7.2](docs/spec/InferRef_0.12_Core_Infrastructure.md). With a
+  containment-only runner, which fails only the exact faulty child region, a
+  passing midpoint is not a valid prefix bound and the bound must not be
+  generalized.
+- **M4 deferred to 0.12.x.** The multi-bug Agent benchmark cases
+  (`nf4_block_scale_offset`, `kv_cache_index_stride`) and
+  `inferref agent evaluate --diagnostic-mode` are not part of 0.12.0.
+- Linux and remote CI were not available for this release; no Linux coverage is
+  claimed. See the [0.12.0 release notes](docs/releases/0.12.0.md).
+
 ## 0.11.0 — 2026-09-21
 
 ### Added
