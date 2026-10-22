@@ -424,6 +424,18 @@ def test_uint4_bf16_reference_never_rounds_through_float16():
     assert float(bfloat16_bytes_to_float32(output)[0, 0]) == 122880.0
 
 
+def test_bf16_reference_rejects_a_finite_result_above_the_bf16_range():
+    # float32 max is finite but rounds to bfloat16 infinity under nearest-even,
+    # symmetric with the float16 path's overflow rejection.
+    spec = QuantizationSpec(logical_shape=(1, 2), scale_value_id=1,
+                            scheme="affine-uint4/v1", storage_dtype="uint4")
+    params = {1: tensor(np.float32(np.finfo(np.float32).max))}
+    codes = nibble_tensor(np.array([[1, 0]], dtype=np.uint8), "uint4")
+    source = bf16(np.array([[1.0, 1.0]], dtype=np.float32))
+    with pytest.raises(QuantizationError, match="W4A16 output overflow in bfloat16"):
+        linear_int4_bf16_reference(source, codes, spec, values=params)
+
+
 def test_nf4_bf16_reference_matches_float32_dequant_and_bf16_rounding():
     spec = QuantizationSpec(logical_shape=(2, 4), scale_value_id=1, codebook_value_id=2,
                             scheme="nf4/v1", storage_dtype="uint4",

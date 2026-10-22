@@ -424,6 +424,39 @@ def test_affine_int8_bias_validator_requires_float32_bias_of_out_features() -> N
     )
 
 
+@pytest.mark.parametrize(
+    "spec",
+    [
+        QuantizationSpec(
+            logical_shape=(3, 4), scale_value_id=1, granularity="per_axis", axis=0
+        ),
+        QuantizationSpec(
+            logical_shape=(3, 4),
+            scale_value_id=1,
+            granularity="per_group",
+            axis=1,
+            group_size=2,
+        ),
+    ],
+    ids=["per-axis", "per-group"],
+)
+def test_affine_int8_bias_accepts_per_axis_and_per_group_weights(
+    spec: QuantizationSpec,
+) -> None:
+    inputs = {
+        "x": _tensor([2, 4]),
+        "weight": _quantized(spec, "int8"),
+        "bias": _tensor([3]),
+    }
+    assert contract_input_issues("linear/affine-int8-bias/v1", inputs) == []
+    assert (
+        contract_boundary_issues(
+            "linear/affine-int8-bias/v1", inputs, {"y": _tensor([2, 3])}
+        )
+        == []
+    )
+
+
 def test_affine_int8_bias_contract_is_the_biasless_contract_plus_bias() -> None:
     spec = QuantizationSpec(logical_shape=(3, 4), scale_value_id=1)
     without_bias = {"x": _tensor([2, 4]), "weight": _quantized(spec, "int8")}
@@ -504,6 +537,27 @@ def test_existing_float16_contracts_still_reject_bfloat16_activations() -> None:
         assert any("float16" in issue for issue in issues)
 
 
+@pytest.mark.parametrize(
+    ("contract_id", "spec"),
+    [
+        ("linear/affine-w4a16-bf16/v1", _affine_int4()),
+        ("linear/nf4-w4a16-bf16/v1", _nf4()),
+    ],
+)
+def test_bf16_w4a16_validator_rejects_a_quantized_activation(
+    contract_id: str, spec: QuantizationSpec
+) -> None:
+    activation = QuantizationSpec(logical_shape=(1, 4), scale_value_id=9)
+    inputs = {
+        "x": {**_tensor([1, 4], "bfloat16"), "quantization": activation.to_dict()},
+        "weight": _quantized(spec),
+    }
+    assert any(
+        "x must be ordinary bfloat16" in issue
+        for issue in contract_input_issues(contract_id, inputs)
+    )
+
+
 def _swiglu_boundary() -> dict[str, dict[str, object]]:
     return {
         "x": _tensor([2, 3, 8], "float16"),
@@ -531,7 +585,10 @@ def test_swiglu_validator_rejects_inconsistent_shapes_dtypes_and_outputs() -> No
         ({"x": _tensor([2, 3, 7], "float16")}, "x last dimension must equal gate_weight in_features"),
         ({"down_weight": _tensor([16, 8], "float16")}, "down_weight shape must be [hidden_size, intermediate_size]"),
         ({"gate_weight": _tensor([16, 8, 1], "float16")}, "gate_weight must be a non-empty rank-2 tensor"),
-        ({"down_weight": {**_tensor([8, 16], "float16"), "quantization": {}}}, "down_weight must be an ordinary tensor"),
+        (
+            {"down_weight": {**_tensor([8, 16], "float16"), "quantization": {}}},
+            "down_weight has an invalid quantization descriptor",
+        ),
         ({"up_weight": _tensor([16, 8], "float32")}, "dtypes must match"),
     ]
     for overrides, message in cases:
@@ -544,6 +601,39 @@ def test_swiglu_validator_rejects_inconsistent_shapes_dtypes_and_outputs() -> No
     ):
         issues = contract_boundary_issues("swiglu/mlp/v1", inputs, outputs)
         assert any(message in issue for issue in issues), (outputs, issues)
+
+
+def test_swiglu_validator_accepts_quantized_weights_by_logical_shape() -> None:
+    inputs = _swiglu_boundary()
+    # The record dtype of a quantized weight is its storage dtype (int8 here),
+    # so only the descriptor's logical shape joins the shape checks and the
+    # storage dtype is exempt from the activation dtype agreement.
+    quantized_down = QuantizationSpec(logical_shape=(8, 16), scale_value_id=5)
+    inputs["down_weight"] = _quantized(quantized_down, "int8")
+    assert contract_input_issues("swiglu/mlp/v1", inputs) == []
+    assert (
+        contract_boundary_issues(
+            "swiglu/mlp/v1", inputs, {"y": _tensor([2, 3, 8], "float16")}
+        )
+        == []
+    )
+
+    wrong_down = QuantizationSpec(logical_shape=(16, 8), scale_value_id=5)
+    inputs["down_weight"] = _quantized(wrong_down, "int8")
+    assert any(
+        "down_weight shape must be [hidden_size, intermediate_size]" in issue
+        for issue in contract_input_issues("swiglu/mlp/v1", inputs)
+    )
+
+
+def test_swiglu_validator_rejects_an_absent_or_shape_less_y() -> None:
+    inputs = _swiglu_boundary()
+    for outputs in ({}, {"y": {}}):
+        issues = contract_boundary_issues("swiglu/mlp/v1", inputs, outputs)
+        assert any("y must be a non-empty tensor" in issue for issue in issues), (
+            outputs,
+            issues,
+        )
 
 
 def _sdpa_inputs(kv_heads: int) -> dict[str, dict[str, object]]:
@@ -563,6 +653,32 @@ def test_sdpa_validator_accepts_mha_gqa_and_mqa(kv_heads: int) -> None:
             "attention/sdpa-gqa/v1", inputs, {"attn_output": _tensor([2, 8, 5, 4], "float16")}
         )
         == []
+    )
+
+
+def test_sdpa_validator_accepts_cross_attention_sequence_lengths() -> None:
+    # seq_q != seq_kv is ordinary cross-attention, not a GQA violation.
+    inputs = {
+        "query": _tensor([2, 8, 3, 4], "float16"),
+        "key": _tensor([2, 2, 11, 4], "float16"),
+        "value": _tensor([2, 2, 11, 4], "float16"),
+    }
+    assert contract_input_issues("attention/sdpa-gqa/v1", inputs) == []
+    assert (
+        contract_boundary_issues(
+            "attention/sdpa-gqa/v1",
+            inputs,
+            {"attn_output": _tensor([2, 8, 3, 4], "float16")},
+        )
+        == []
+    )
+
+
+def test_sdpa_validator_rejects_kv_heads_above_query_heads() -> None:
+    issues = contract_input_issues("attention/sdpa-gqa/v1", _sdpa_inputs(16))
+    assert any(
+        "query heads must be a multiple of key/value kv_heads" in issue
+        for issue in issues
     )
 
 

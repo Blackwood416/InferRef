@@ -217,8 +217,9 @@ def _linear_reduced_precision(inputs, weights, spec, *, values, dtype):
     """Accumulate in float32 and round to ``dtype`` exactly once.
 
     bfloat16 values are carried as uint16 bit patterns (see
-    ``inferref.tensor.dtype_numpy``); they share float32's exponent range, so a
-    finite float32 result stays finite and only the mantissa is rounded.
+    ``inferref.tensor.dtype_numpy``). They share float32's exponent range but
+    not its finite range: a float32 value above the largest finite bfloat16
+    rounds to bfloat16 infinity, so the encoded result is decoded and checked.
     """
     if not isinstance(inputs, np.ndarray) or inputs.dtype != numpy_dtype_for(dtype):
         raise QuantizationError(f"W4A16 inputs must be {dtype}")
@@ -228,7 +229,10 @@ def _linear_reduced_precision(inputs, weights, spec, *, values, dtype):
         source = inputs.astype(np.float32)
     result = _linear_float32(source, weights, spec, values=values)
     if dtype == "bfloat16":
-        return float32_to_bfloat16_bytes(result)
+        encoded = float32_to_bfloat16_bytes(result)
+        if np.any(np.isinf(bfloat16_bytes_to_float32(encoded))):
+            raise QuantizationError("W4A16 output overflow in bfloat16")
+        return encoded
     with np.errstate(over="raise", invalid="raise", under="ignore"):
         try:
             return result.astype(np.float16)

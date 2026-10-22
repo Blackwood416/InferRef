@@ -378,32 +378,71 @@ def _nf4_bf16_inputs(inputs) -> Sequence[str]:
     ]
 
 
+def _y_output_issues(outputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    """Shared non-empty shape/dtype check for ``y`` outputs that mirror ``x``.
+
+    Agreement with ``x`` is a boundary relation (``_y_matches_x_relation``)
+    because an output-only validator cannot see the inputs.
+    """
+    y = outputs.get("y")
+    shape = _shape(y)
+    if shape is None or _numel(shape) <= 0:
+        return ["y must be a non-empty tensor"]
+    if not isinstance(y, dict) or not isinstance(y.get("dtype"), str) or not y["dtype"]:
+        return ["y must declare a non-empty dtype"]
+    return []
+
+
+# This validator owns the y dtype check, so the registry must not repeat it.
+_y_output_issues._inferref_dtype_checked = True  # type: ignore[attr-defined]
+
+
+def _swiglu_weight_shape(
+    name: str, record: Mapping[str, Any]
+) -> tuple[list[int] | None, list[str]]:
+    """Logical shape of one SwiGLU weight plus any descriptor issue.
+
+    A weight may be ordinary or carry an explicit quantization descriptor; the
+    descriptor's logical shape is then the weight shape. Its record dtype is a
+    storage dtype, not a logical dtype, so it does not join the activation
+    dtype agreement.
+    """
+    if "quantization" not in record:
+        return _shape(record), []
+
+    from inferref.quantization.spec import QuantizationError, QuantizationSpec
+
+    try:
+        spec = QuantizationSpec.from_dict(record.get("quantization"))
+    except QuantizationError as exc:
+        return None, [f"{name} has an invalid quantization descriptor: {exc}"]
+    return list(spec.logical_shape), []
+
+
 def _swiglu_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
     x = inputs.get("x", {})
-    gate = inputs.get("gate_weight", {})
-    up = inputs.get("up_weight", {})
-    down = inputs.get("down_weight", {})
-    x_shape, gate_shape = _shape(x), _shape(gate)
-    up_shape, down_shape = _shape(up), _shape(down)
-    issues: list[str] = [
-        f"{name} must be an ordinary tensor"
-        for name, record in (
-            ("x", x),
-            ("gate_weight", gate),
-            ("up_weight", up),
-            ("down_weight", down),
-        )
-        if "quantization" in record
-    ]
+    x_shape = _shape(x)
+    issues: list[str] = []
+    if "quantization" in x:
+        issues.append("x must be an ordinary tensor")
     if x_shape is None or not x_shape or _numel(x_shape) <= 0 or x_shape[-1] <= 0:
         issues.append("x must be non-empty with a positive last dimension")
-    for name, shape in (
-        ("gate_weight", gate_shape),
-        ("up_weight", up_shape),
-        ("down_weight", down_shape),
-    ):
+
+    shapes: dict[str, list[int] | None] = {}
+    quantized: set[str] = set()
+    for name in ("gate_weight", "up_weight", "down_weight"):
+        record = inputs.get(name, {})
+        shape, descriptor_issues = _swiglu_weight_shape(name, record)
+        shapes[name] = shape
+        issues.extend(descriptor_issues)
+        if "quantization" in record:
+            quantized.add(name)
         if shape is None or len(shape) != 2 or _numel(shape) <= 0:
             issues.append(f"{name} must be a non-empty rank-2 tensor")
+
+    gate_shape = shapes["gate_weight"]
+    up_shape = shapes["up_weight"]
+    down_shape = shapes["down_weight"]
     gate_rank2 = gate_shape is not None and len(gate_shape) == 2
     if gate_rank2 and up_shape is not None and up_shape != gate_shape:
         issues.append("gate_weight and up_weight shapes must match")
@@ -413,8 +452,13 @@ def _swiglu_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
         issues.append("down_weight shape must be [hidden_size, intermediate_size]")
     dtypes = {
         record.get("dtype")
-        for record in (x, gate, up, down)
-        if record.get("dtype") is not None
+        for name, record in (
+            ("x", x),
+            ("gate_weight", inputs.get("gate_weight", {})),
+            ("up_weight", inputs.get("up_weight", {})),
+            ("down_weight", inputs.get("down_weight", {})),
+        )
+        if name not in quantized and record.get("dtype") is not None
     }
     if len(dtypes) > 1:
         issues.append("x, gate_weight, up_weight, and down_weight dtypes must match")
@@ -523,6 +567,7 @@ def _build_builtin_contracts() -> tuple[ExecutableContract, ...]:
                     inputs=("x", "gate_weight", "up_weight", "down_weight"),
                     outputs=("y",),
                     validate_inputs=_swiglu_inputs,
+                    validate_outputs=_y_output_issues,
                     validate_relation=_y_matches_x_relation,
                     description="SwiGLU MLP: down_weight @ (silu(gate_weight @ x) * (up_weight @ x)) over the last dimension",
                 ),
