@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -11,10 +12,15 @@ import numpy as np
 import pytest
 
 from inferref.agent.protocol import AdapterCapabilities, EngineAdapter
-from inferref.alignment.hashing import normalized_adapter_sha256, trace_metadata_sha256
+from inferref.alignment.hashing import (
+    normalized_adapter_sha256,
+    trace_metadata_sha256,
+    tree_sha256,
+)
 from inferref.alignment.runner import AlignmentRunner, batch_item_id
 from inferref.alignment.schema import AlignmentEvent, Evidence
 from inferref.alignment.store import AlignmentStore
+from inferref.comparison.schema import ComparisonSpec, OutputComparisonSpec
 from inferref.ir.graph import Graph
 from inferref.ir.manifest import Manifest
 from inferref.ir.module import ModuleRecord
@@ -23,7 +29,9 @@ from inferref.ir.package import TracePackage
 from inferref.ir.region import RegionRecord
 from inferref.ir.tensor_value import CaptureInfo, TensorValueRecord
 from inferref.ir.values import TensorRef
+from inferref.quantization.spec import QuantizationSpec
 from inferref.tensor.codec import write_array
+from inferref.testcase.extract import extract_region
 
 # Stand-in runtime bridge: it honours ``--batch-manifest`` the way
 # cpp/include/inferref/bridge.hpp does, appends one line per launch so a test can
@@ -34,6 +42,7 @@ FAKE_BRIDGE = """\
 import json
 import os
 import shutil
+import struct
 import sys
 from pathlib import Path
 
@@ -55,9 +64,20 @@ def run_item(testcase, output):
     if name in FAIL_NAMES:
         return name, False
     if name in MISMATCH_NAMES:
+        shutil.copytree(testcase / "reference", output, dirs_exist_ok=True)
+        perturb_output(output)
         return name, True
     shutil.copytree(testcase / "reference", output, dirs_exist_ok=True)
     return name, True
+
+
+def perturb_output(output):
+    for tensor in sorted(output.glob("*.irtensor")):
+        data = bytearray(tensor.read_bytes())
+        header_size = int.from_bytes(data[6:8], "little")
+        value = struct.unpack_from("<f", data, header_size)[0]
+        struct.pack_into("<f", data, header_size, value + 1.0)
+        tensor.write_bytes(data)
 
 
 def run_batch(manifest_path):
@@ -200,6 +220,113 @@ def _make_trace(tmp_path: Path, *, tail_dtype: str = "float32") -> TracePackage:
     return pkg
 
 
+def _make_quantized_trace(tmp_path: Path) -> TracePackage:
+    payloads = tmp_path / "payloads"
+    payloads.mkdir(parents=True, exist_ok=True)
+    write_array(payloads / "v1.irtensor", np.array([1, 2], dtype=np.int8))
+    write_array(payloads / "v2.irtensor", np.array([2, 4], dtype=np.int8))
+    write_array(payloads / "v3.irtensor", np.array(0.5, dtype=np.float32))
+    write_array(payloads / "v4.irtensor", np.array(0, dtype=np.int8))
+    write_array(payloads / "v5.irtensor", np.array([4, 8], dtype=np.int8))
+
+    spec = QuantizationSpec(
+        logical_shape=(2,), scale_value_id=3, zero_point_value_id=4
+    )
+    graph = Graph()
+    graph.values = [
+        TensorValueRecord(
+            id=1,
+            shape=(2,),
+            stride=(1,),
+            dtype="int8",
+            capture=CaptureInfo(mode="full", payload="payloads/v1.irtensor"),
+        ),
+        TensorValueRecord(
+            id=2,
+            shape=(2,),
+            stride=(1,),
+            dtype="int8",
+            producer=10,
+            capture=CaptureInfo(mode="full", payload="payloads/v2.irtensor"),
+            quantization=spec,
+        ),
+        TensorValueRecord(
+            id=3,
+            shape=(),
+            dtype="float32",
+            capture=CaptureInfo(mode="full", payload="payloads/v3.irtensor"),
+        ),
+        TensorValueRecord(
+            id=4,
+            shape=(),
+            dtype="int8",
+            capture=CaptureInfo(mode="full", payload="payloads/v4.irtensor"),
+        ),
+        TensorValueRecord(
+            id=5,
+            shape=(2,),
+            stride=(1,),
+            dtype="int8",
+            producer=20,
+            capture=CaptureInfo(mode="full", payload="payloads/v5.irtensor"),
+            quantization=spec,
+        ),
+    ]
+    graph.operators = [
+        OperatorRecord(
+            id=10,
+            execution_index=0,
+            op="requant",
+            result=TensorRef(2),
+            positional_args=(TensorRef(1),),
+            module_stack=(100,),
+        ),
+        OperatorRecord(
+            id=20,
+            execution_index=1,
+            op="requant",
+            result=TensorRef(5),
+            positional_args=(TensorRef(1),),
+            module_stack=(100,),
+        ),
+    ]
+    graph.reindex()
+    pkg = TracePackage(
+        manifest=Manifest(format_version="1.0"),
+        graph=graph,
+        modules=[ModuleRecord(id=100, path="model")],
+        regions=[
+            RegionRecord(id=1, name="first_step", node_ids=(10,), inputs=(1,), outputs=(2,)),
+            RegionRecord(id=2, name="second_step", node_ids=(20,), inputs=(1,), outputs=(5,)),
+        ],
+        root=tmp_path,
+    )
+    pkg.save(tmp_path)
+    return pkg
+
+
+def _seed_cached_testcase(
+    runner: AlignmentRunner,
+    pkg: TracePackage,
+    boundary_id: str,
+    comparison: ComparisonSpec,
+) -> None:
+    """Pre-seed the content-addressed cache so preparation reuses this testcase."""
+    boundary = runner.inventory.resolve(boundary_id)
+    assert boundary is not None
+    region = next(r for r in pkg.regions if r.id == boundary.metadata["region_id"])
+    clean_key = boundary_id.replace(":", "_")
+    staging = runner.cache.root / f".seed-{clean_key}"
+    if staging.exists():
+        shutil.rmtree(staging)
+    extract_region(pkg, region, staging, comparison=comparison, force=True)
+    tree_sha = tree_sha256(staging)
+    final = runner.cache.root / f"{clean_key}-{tree_sha[:16]}"
+    if final.exists():
+        shutil.rmtree(final)
+    staging.rename(final)
+
+
 def _bridge_script(tmp_path: Path) -> Path:
     script = tmp_path / "fake_bridge.py"
     script.write_text(FAKE_BRIDGE, encoding="utf-8")
@@ -222,13 +349,16 @@ def _batch_adapter(
     *,
     log: Path,
     dtypes: Sequence[str] = ("float32",),
+    features: Sequence[str] = (),
 ) -> EngineAdapter:
     document = {
         "format": "inferref-engine-adapter",
         "format_version": "0.2",
         "name": "fake-batch-engine",
         "target_device": "cpu",
-        "capabilities": _capabilities(features=("batch_execution",), dtypes=dtypes),
+        "capabilities": _capabilities(
+            features=("batch_execution", *features), dtypes=dtypes
+        ),
         # A batch command receives --batch-manifest, never a single testcase.
         "command": ["{python}", str(_bridge_script(tmp_path))],
         "environment": {"FAKE_LAUNCH_LOG": str(log)},
@@ -438,6 +568,16 @@ def test_batch_results_error_falls_back_to_sequential(
     notes = _events(store, "note_recorded")
     assert len(notes) == 1
     assert notes[0].data["reason"].startswith("batch fallback: results_error")
+    testcase_events = [
+        event
+        for event in store.events
+        if event.event in ("testcase_extracted", "testcase_reused")
+    ]
+    assert [event.data["boundary"] for event in testcase_events] == [
+        "region:1",
+        "region:2",
+        "region:3",
+    ]
     grouped = _evidence_by_boundary(store)
     assert all(len(items) == 1 for items in grouped.values())
     run_record = store.root / grouped["region:1"][0].provenance["run_record"]["path"]
@@ -495,6 +635,15 @@ def test_partial_failure_continues_when_continue_on_fail(
     grouped = _evidence_by_boundary(store)
     assert sorted(grouped) == ["region:1", "region:2", "region:3"]
     assert all(len(items) == 1 for items in grouped.values())
+    mismatch = grouped["region:2"][0]
+    assert mismatch.result == "fail"
+    first_failure = mismatch.observations["first_failure"]
+    assert first_failure is not None
+    assert first_failure["max_abs_error"] > 0
+    record_path = store.root / mismatch.provenance["run_record"]["path"]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["comparison"]["status"] == "fail"
+    assert record["comparison"]["first_failure"]["status"] == "fail"
 
 
 def test_partial_failure_stops_finalizing_without_continue_on_fail(
@@ -591,4 +740,181 @@ def test_mixed_capability_without_continue_on_fail_stays_sequential(
     # batch that may stop earlier is ambiguous and stays on the sequential path.
     assert [result.status for result in results] == ["pass", "pass", "unsupported"]
     assert _launches(log) == ["sequential", "sequential"]
+    assert _events(store, "note_recorded") == []
+
+
+def test_batch_evidence_matches_sequential_provenance(tmp_path: Path) -> None:
+    pkg = _make_trace(tmp_path / "trace")
+    boundary_ids = ["region:1", "region:2", "region:3"]
+
+    sequential_log = tmp_path / "sequential.txt"
+    sequential_adapter = _sequential_adapter(tmp_path, log=sequential_log)
+    sequential_store = _session(
+        tmp_path, pkg, sequential_adapter, name="sequential_session"
+    )
+    sequential_results = AlignmentRunner(
+        sequential_store, pkg, sequential_adapter
+    ).run(limit=3, boundary_ids=boundary_ids)
+    assert [result.status for result in sequential_results] == ["pass"] * 3
+    assert _launches(sequential_log) == ["sequential", "sequential", "sequential"]
+
+    batch_log = tmp_path / "batch.txt"
+    batch_adapter = _batch_adapter(tmp_path, log=batch_log)
+    batch_store = _session(tmp_path, pkg, batch_adapter, name="batch_session")
+    batch_results = AlignmentRunner(batch_store, pkg, batch_adapter).run(
+        limit=3, boundary_ids=boundary_ids
+    )
+    assert [result.status for result in batch_results] == ["pass"] * 3
+    assert _launches(batch_log) == ["batch:3"]
+
+    sequential_evidence = _evidence_by_boundary(sequential_store)
+    batch_evidence = _evidence_by_boundary(batch_store)
+    for boundary_id in boundary_ids:
+        sequential = sequential_evidence[boundary_id][0]
+        batched = batch_evidence[boundary_id][0]
+        assert batched.result == sequential.result == "pass"
+        assert batched.observations == sequential.observations
+        assert (
+            batched.provenance["effective_comparison_sha256"]
+            == sequential.provenance["effective_comparison_sha256"]
+        )
+        sequential_record_path = (
+            sequential_store.root / sequential.provenance["run_record"]["path"]
+        )
+        batch_record_path = batch_store.root / batched.provenance["run_record"]["path"]
+        sequential_record = json.loads(
+            sequential_record_path.read_text(encoding="utf-8")
+        )
+        batch_record = json.loads(batch_record_path.read_text(encoding="utf-8"))
+        assert batch_record["requirements"] == sequential_record["requirements"]
+        assert (
+            batch_record["capability_status"]
+            == sequential_record["capability_status"]
+        )
+
+
+def test_duplicate_boundary_ids_use_distinct_batch_items(tmp_path: Path) -> None:
+    pkg = _make_trace(tmp_path / "trace")
+    log = tmp_path / "launches.txt"
+    adapter = _batch_adapter(tmp_path, log=log)
+    store = _session(tmp_path, pkg, adapter, name="session")
+
+    results = AlignmentRunner(store, pkg, adapter).run(
+        limit=2, boundary_ids=["region:1", "region:1"]
+    )
+
+    assert [result.status for result in results] == ["pass", "pass"]
+    assert _launches(log) == ["batch:2"]
+    evidence = _evidence_by_boundary(store)["region:1"]
+    assert len(evidence) == 2
+    record_paths = [
+        store.root / item.provenance["run_record"]["path"] for item in evidence
+    ]
+    assert record_paths[0] != record_paths[1]
+    assert all(path.is_file() for path in record_paths)
+    records = [json.loads(path.read_text(encoding="utf-8")) for path in record_paths]
+    assert len({record["output"] for record in records}) == 2
+    manifest = json.loads(
+        Path(records[0]["execution"]["batch_manifest"]).read_text(encoding="utf-8")
+    )
+    assert [item["id"] for item in manifest["items"]] == [
+        batch_item_id(0, "region:1"),
+        batch_item_id(1, "region:1"),
+    ]
+
+
+def test_quantized_output_with_per_output_comparator_aborts_before_launch(
+    tmp_path: Path,
+) -> None:
+    pkg = _make_quantized_trace(tmp_path / "trace")
+    log = tmp_path / "launches.txt"
+    adapter = _batch_adapter(
+        tmp_path,
+        log=log,
+        dtypes=("float32", "int8"),
+        features=("quantization/affine-int8/v1/per_tensor",),
+    )
+    store = _session(tmp_path, pkg, adapter, name="session")
+    runner = AlignmentRunner(store, pkg, adapter)
+    comparison = ComparisonSpec(
+        outputs={"output_0": OutputComparisonSpec(comparator="tensor/numeric/v1")}
+    )
+    _seed_cached_testcase(runner, pkg, "region:1", comparison)
+    _seed_cached_testcase(runner, pkg, "region:2", comparison)
+
+    results = runner.run(
+        limit=2,
+        boundary_ids=["region:1", "region:2"],
+        continue_on_fail=True,
+    )
+
+    assert [result.status for result in results] == ["error", "error"]
+    assert all(result.evidence is None for result in results)
+    assert _launches(log) == []
+    assert _evidence_by_boundary(store) == {}
+    assert _events(store, "boundary_failed") == []
+    notes = _events(store, "note_recorded")
+    assert len(notes) == 1
+    assert notes[0].data["reason"].startswith("batch fallback: invalid_comparison")
+
+
+def test_batch_item_result_forwards_first_failure_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import inferref.alignment.runner as runner_module
+
+    pkg = _make_trace(tmp_path / "trace")
+    log = tmp_path / "launches.txt"
+    adapter = _batch_adapter(tmp_path, log=log)
+    store = _session(tmp_path, pkg, adapter, name="session")
+
+    captured: list[bool] = []
+    real_compare = runner_module.compare_testcase
+
+    def spy(*args: object, **kwargs: object) -> object:
+        captured.append(bool(kwargs.get("first_failure")))
+        return real_compare(*args, **kwargs)
+
+    monkeypatch.setattr(runner_module, "compare_testcase", spy)
+    results = AlignmentRunner(store, pkg, adapter).run(
+        limit=2,
+        boundary_ids=["region:1", "region:2"],
+        comparator_overrides={"first_failure": False},
+    )
+
+    assert [result.status for result in results] == ["pass", "pass"]
+    assert captured == [False, False]
+
+
+def test_external_testcase_forces_sequential_execution(tmp_path: Path) -> None:
+    pkg = _make_trace(tmp_path / "trace")
+    log = tmp_path / "launches.txt"
+    adapter = _batch_adapter(tmp_path, log=log)
+    store = _session(tmp_path, pkg, adapter, name="session")
+    external = tmp_path / "external_testcase"
+    extract_region(pkg, pkg.regions[0], external, force=True)
+
+    results = AlignmentRunner(store, pkg, adapter).run(
+        limit=3,
+        boundary_ids=["region:1", "region:2", "region:3"],
+        external_testcase=external,
+    )
+
+    assert [result.status for result in results] == ["pass", "pass", "pass"]
+    assert _launches(log) == ["sequential", "sequential", "sequential"]
+    assert _events(store, "note_recorded") == []
+
+
+def test_fewer_than_two_batchable_boundaries_stays_sequential(tmp_path: Path) -> None:
+    pkg = _make_trace(tmp_path / "trace")
+    log = tmp_path / "launches.txt"
+    adapter = _batch_adapter(tmp_path, log=log)
+    store = _session(tmp_path, pkg, adapter, name="session")
+
+    results = AlignmentRunner(store, pkg, adapter).run(
+        limit=3, boundary_ids=["region:1"]
+    )
+
+    assert [result.status for result in results] == ["pass"]
+    assert _launches(log) == ["sequential"]
     assert _events(store, "note_recorded") == []

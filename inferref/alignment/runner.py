@@ -42,7 +42,9 @@ from inferref.comparison.resolution import (
     resolve_comparison_policy,
 )
 from inferref.ir.package import TracePackage
-from inferref.testcase.validate import require_valid_testcase
+from inferref.quantization.artifacts import validate_comparison
+from inferref.testcase.requirements import testcase_requirements
+from inferref.testcase.validate import TestcaseValidationResult, require_valid_testcase
 
 # ``execute_adapter_batch`` only accepts identifier-like item ids, while a
 # boundary id is ``kind:value``. The request index keeps two boundaries apart
@@ -60,15 +62,14 @@ def batch_item_id(index: int, boundary_id: str) -> str:
 
 
 def _resolve_effective_comparison(
-    testcase_path: Path, overrides: Mapping[str, Any]
+    validation: TestcaseValidationResult, overrides: Mapping[str, Any]
 ) -> EffectiveComparison:
     """Resolve the comparison policy the sequential executor would apply.
 
     ``execute_adapter`` owns this resolution for a single launch; the batch
-    helper owns transport only, so finalization reuses the same resolution
-    function and comparator overrides for each item.
+    helper owns transport only, so both the pre-launch guard and finalization
+    reuse the same resolution and quantization check for each item.
     """
-    validation = require_valid_testcase(Path(testcase_path))
     policy = overrides.get("policy")
     cli_atol = (
         policy.override_atol
@@ -85,7 +86,7 @@ def _resolve_effective_comparison(
         if policy and policy.per_dtype != DEFAULT_TOLERANCES
         else overrides.get("tolerance")
     )
-    return resolve_comparison_policy(
+    effective = resolve_comparison_policy(
         testcase_spec=validation.manifest.get("comparison"),
         suite_spec=overrides.get("suite_spec"),
         cli_comparator=overrides.get("comparator"),
@@ -96,6 +97,8 @@ def _resolve_effective_comparison(
         cli_tolerance=cli_tolerance,
         cli_config=overrides.get("comparison_config"),
     )
+    validate_comparison(validation.manifest, effective)
+    return effective
 
 
 @dataclass
@@ -723,6 +726,30 @@ class AlignmentRunner:
                     prepared, overrides=overrides, continue_on_fail=continue_on_fail
                 )
 
+            # A comparison the sequential executor would refuse must be refused
+            # before this batch launches, not after the engine already ran. Any
+            # failure here keeps the prepared candidates and replays them one at
+            # a time so each reports the same pre-launch error as run_candidate.
+            comparison_errors: list[str] = []
+            for bid, item in batch_candidates:
+                try:
+                    _resolve_effective_comparison(
+                        require_valid_testcase(item.testcase_path), overrides
+                    )
+                except Exception as exc:
+                    comparison_errors.append(f"{bid}: {exc}")
+            if comparison_errors:
+                self._record_batch_fallback(
+                    {
+                        "status": "invalid_comparison",
+                        "error": "; ".join(comparison_errors),
+                    },
+                    [bid for bid, _ in batch_candidates],
+                )
+                return self._finalize_prepared_sequence(
+                    prepared, overrides=overrides, continue_on_fail=continue_on_fail
+                )
+
             items = [
                 (batch_item_id(index, bid), item.testcase_path)
                 for index, (bid, item) in enumerate(batch_candidates)
@@ -734,15 +761,16 @@ class AlignmentRunner:
                     prepared, overrides=overrides, continue_on_fail=continue_on_fail
                 )
 
-            batch_position = {
-                bid: index for index, (bid, _) in enumerate(batch_candidates)
-            }
+            # The batch results are ordered like the requests. Walk them with
+            # the prepared candidates instead of keying by boundary id, because
+            # one call may legitimately select the same boundary twice.
+            batch_items = iter(batch["results"])
             results: list[RunResult] = []
-            for bid, item in prepared:
+            for _, item in prepared:
                 if isinstance(item, RunResult):
                     result = item
                 else:
-                    batch_item = batch["results"][batch_position[bid]]
+                    batch_item = next(batch_items)
                     execution_result = self._batch_item_result(
                         item, batch_item, batch, overrides
                     )
@@ -820,16 +848,22 @@ class AlignmentRunner:
             "effective_comparison": None,
         }
         try:
-            effective_comparison = _resolve_effective_comparison(
-                prepared.testcase_path, overrides
-            )
+            validation = require_valid_testcase(prepared.testcase_path)
+            effective_comparison = _resolve_effective_comparison(validation, overrides)
             effective_comparison.validate()
+            requirements = testcase_requirements(validation.manifest)
         except Exception as exc:
             # A sequential launch would refuse this candidate before starting and
             # the runner reports an error, so the batch item reports one too.
             result["status"] = "error"
             execution["error"] = str(exc)
             return result
+        result["requirements"] = requirements
+        result["capability_status"] = (
+            self.adapter.capabilities.assessment(requirements)
+            if self.adapter.capabilities is not None
+            else "unchecked"
+        )
         result["effective_comparison"] = effective_comparison.to_dict()
         if item["status"] != "passed" or item["exit_code"] != 0:
             result["status"] = "execution_error"
@@ -839,7 +873,7 @@ class AlignmentRunner:
                 prepared.testcase_path,
                 item["output_dir"],
                 effective_comparison=effective_comparison,
-                first_failure=True,
+                first_failure=bool(overrides.get("first_failure", True)),
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             result.update(
