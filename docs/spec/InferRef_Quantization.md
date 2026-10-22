@@ -1,6 +1,9 @@
 # Native FP8 and quantization development plan
 
-Status: incremental implementation on the unreleased development branch.
+Status: 0.11.0 shipped the Q1–Q4 milestones below. Historical acceptance
+sections are preserved as dated evidence; see the [0.11.0 release notes](../releases/0.11.0.md)
+and the [2026-10-22 release audit](../dev/status/2026-10-22-v0110-release-audit.md).
+C++ execution of quantized testcases remains 0.12 scope.
 This document distinguishes shipped code from planned work; it does not claim
 that an FP8-capable reader can execute an FP8 kernel or a quantized model.
 
@@ -626,4 +629,7 @@ and PyTorch 2.13.0 + bitsandbytes 0.50.1 / Aila native SYCL engine:
   confirming execution on 'Intel(R) Arc(TM) A770 Graphics' (backend 'ext_oneapi_level_zero').
 - Relocation, Agent, Suite (3/3 passed) and Alignment Orchestrator verification
   passed; injected bug (`--inject-bug`) was detected immediately.
-  Detailed report: '.scratch/whole-model-qwen3-gpu-qual-final/report.json'.
+  Detailed report: '.scratch/whole-model-qwen3-gpu-qual-5/report.json'.
+The earlier `whole-model-qwen3-gpu-qual-final` run was an intermediate attempt
+whose decode comparisons failed (Suite 1/3); it must not be cited as
+qualification evidence. The final `qual-5` run passed Suite 3/3 and Alignment.

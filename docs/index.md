@@ -22,6 +22,9 @@
 
 - [Trace IR and frozen wire types](spec/InferRef_Trace_IR_v0.1.md)
 - [Overall specification and roadmap](spec/InferRef_SPEC.md)
+- [0.12 core infrastructure plan](spec/InferRef_0.12_Core_Infrastructure.md),
+  [execution plan](spec/InferRef_0.12_Execution_Plan.md), and
+  [W8A8 contract freeze](spec/InferRef_0.12_W8A8_Contract.md)
 - [Changelog](../CHANGELOG.md) and [contribution guide](../CONTRIBUTING.md)
 - [Dated development status](dev/status/README.md)
 
