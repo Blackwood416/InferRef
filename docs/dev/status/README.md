@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-10-22 | [0.12.0 M1–M3 progress](2026-10-22-v0120-m3.md) | P0 M1–M3 implemented; 1253 tests; C++ 6/6; M4 P1 open; Linux/remote/A770 pending |
 | 2026-10-22 | [v0.11.0 release audit and 0.12 readiness](2026-10-22-v0110-release-audit.md) | 0.11.0 evidence audit; Windows 1088 tests and C++ 5/5 green; Linux/remote unverified; 3 evidence/docs defects assigned; 0.12 prerequisites |
 | 2026-09-03 | [v0.10.0 Alignment Orchestrator](2026-09-03-v0100-alignment-orchestrator.md) | Persistent alignment planning, execution, evidence, narrowing, classification, CLI/Agent/MCP integration; 814 tests |
 | 2026-08-21 | [v0.9.2 core-linux lint gate fix](2026-08-21-v092-core-linux-lint-fix.md) | Ruff policy + lint fixes; core-linux green; 749 tests |
