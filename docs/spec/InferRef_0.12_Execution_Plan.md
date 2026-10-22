@@ -1,6 +1,6 @@
 # InferRef 0.12.0 execution plan (PM)
 
-- Status: approved 2026-10-22; scope locked; W8A8 formula pending sign-off
+- Status: approved 2026-10-22; scope locked; W8A8 formula approved 2026-10-22
 - Source scope: [InferRef_0.12_Core_Infrastructure.md](InferRef_0.12_Core_Infrastructure.md)
 - W8A8 details: [InferRef_0.12_W8A8_Contract.md](InferRef_0.12_W8A8_Contract.md)
 - 0.11 baseline audit: [2026-10-22 release audit](../dev/status/2026-10-22-v0110-release-audit.md)
@@ -132,7 +132,8 @@ Owner: same Python core developer as I3a, separate branch
 use [InferRef_0.12_W8A8_Contract.md](InferRef_0.12_W8A8_Contract.md) as the
 implemented semantics.
 
-Exclusive files: same set as I3a, plus `tests/core/test_w8a8_reference.py`.
+Exclusive files: same set as I3a, plus `tests/core/test_w8a8_reference.py`
+and `tests/core/test_w8a8_contract.py` (approved deviation).
 
 Deliverables:
 
@@ -152,14 +153,21 @@ shape/descriptor violations fail closed; full core suite green.
 
 Owner: C++/adapter developer. Branch `feat/0.12-i2-bridge-batch`.
 
+Execution split (2026-10-22): I2a delivered quantized bridge dispatch and
+scaffolder 0.4 support; I2b-1 owns C++ batch-manifest; I2b-2 owns executor /
+AlignmentRunner batch integration plus the shared-preflight fallback fix.
+
 Depends on I1 merged. Exclusive files:
 
 - `cpp/include/inferref/bridge.hpp`
 - `cpp/examples/bridge_selftest/main.cpp`
 - `inferref/adapter/scaffold.py`
 - `inferref/agent/executor.py`
+- `inferref/agent/protocol.py` (approved deviation: shared-preflight fallback)
+- `inferref/alignment/runner.py`
 - `tests/core/test_adapter_scaffold.py`
 - `tests/core/test_bridge_batch.py` (new)
+- `tests/core/test_w8a8_contract.py` (preflight regression only)
 
 Deliverables:
 
@@ -179,6 +187,13 @@ Deliverables:
 6. Adapter feature `batch_execution`; `AlignmentRunner.run(limit=K)` uses batch
    only when `K > 1` and the adapter declares the feature; otherwise sequential
    fallback is explicit.
+7. Fix the shared-preflight fail-open found by the I3b review:
+   `AdapterCapabilities.contract_incompatibilities()` must fall back to the
+   adapter-wide `features`/`dtypes`/`max_rank` when a declared contract has no
+   `contract_capabilities` entry, instead of returning `[]`. Add a regression
+   where an adapter declares the W8A8 contract but omits the W8A8 token and no
+   per-contract capability; preflight must return `unsupported` without
+   launching the engine.
 
 Acceptance gate:
 
@@ -191,13 +206,14 @@ Acceptance gate:
 
 Owner: alignment/trace developer. Branch `feat/0.12-i4-hierarchical-align`.
 
-Depends on I3a/I3b for contract-aware testcases. Exclusive files:
+Depends on I3a/I3b for contract-aware testcases. I4a (done 2026-10-22) owns
+`inferref/frontend/pytorch/hierarchical.py` and
+`tests/frontend/test_hierarchical_trace.py`; I4b must not edit those files.
+I4b exclusive files:
 
-- `inferref/frontend/pytorch/hierarchical.py` (new; or an equivalent module)
 - `inferref/alignment/planner.py`
 - `inferref/alignment/narrowing.py`
 - `examples/quantization/qualify_whole_model_generation.py`
-- `tests/core/test_hierarchical_trace.py` (new)
 - `tests/core/test_alignment_planner.py`
 - `tests/core/test_alignment_e2e.py`
 

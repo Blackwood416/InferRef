@@ -160,8 +160,9 @@ ExecutableContract(
 )
 ```
 
-- `_w8a8_inputs` performs the descriptor/shape/axis/group checks in §2 and
-  verifies that the parameter tensors exist and have the exact shapes.
+- `_w8a8_inputs` performs the descriptor/shape/axis/group checks in §2. It
+  does not read parameter payload values; testcase validation owns scale/zero
+  shape, dtype and value checks (`inferref/testcase/validate.py`).
 - `_w8a8_relation` requires `y` to be ordinary `float32` with shape `(M, N)`.
 - The contract feature token is merged into testcase requirements by the
   contract registry. Add the token to the quantization feature vocabulary so
