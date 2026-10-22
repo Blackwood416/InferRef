@@ -98,6 +98,8 @@ Exclusive files:
 - `inferref/testcase/requirements.py` (only if feature derivation needs it)
 - `tests/core/test_contracts.py`
 - `tests/core/test_quantization.py`
+- `tests/core/test_contract_registry.py` (approved deviation: only the minimal
+  builtin-ID expectation-list edits required by the new contracts)
 
 Deliverables:
 
