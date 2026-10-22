@@ -33,6 +33,9 @@ target_link_libraries(inferref_packed_selftest PRIVATE inferref_headers)
 add_executable(inferref_testcase_selftest examples/testcase_selftest/main.cpp)
 target_link_libraries(inferref_testcase_selftest PRIVATE inferref_headers)
 
+add_executable(inferref_quantization_selftest examples/quantization_selftest/main.cpp)
+target_link_libraries(inferref_quantization_selftest PRIVATE inferref_headers)
+
 add_executable(inferref_bridge examples/runtime_bridge/main.cpp)
 target_link_libraries(inferref_bridge PRIVATE inferref_headers)
 
@@ -62,4 +65,5 @@ add_test(NAME irtensor_selftest COMMAND inferref_selftest)
 add_test(NAME fp8_selftest COMMAND inferref_fp8_selftest)
 add_test(NAME packed_selftest COMMAND inferref_packed_selftest)
 add_test(NAME testcase_selftest COMMAND inferref_testcase_selftest)
+add_test(NAME quantization_selftest COMMAND inferref_quantization_selftest)
 add_test(NAME bridge_selftest COMMAND inferref_bridge_selftest)

@@ -5,8 +5,14 @@
 // manifest once, read named input tensors, write named output tensors, and
 // emit the optional output manifest.
 //
-// Header-only and dependency-free, like irtensor.hpp and json.hpp: it uses
-// only the C++ standard library and those two InferRef headers.
+// Testcase format 0.4 adds explicit quantization: a value carries a
+// QuantizationSpec and references immutable parameter tensors (scale,
+// zero point, codebook) by value ID.  Load() validates that metadata
+// fail-closed before any engine kernel runs, and exposes the descriptors plus
+// a float32 reference dequantizer for quantized input roles.
+//
+// Header-only and dependency-free, like irtensor.hpp, json.hpp, and
+// quantization.hpp: it uses only the C++ standard library and those headers.
 //
 // Usage:
 //
@@ -15,16 +21,26 @@
 //     auto outputs = RunYourEngine(testcase.RegionName(), inputs);
 //     testcase.WriteOutputs(outputs, "RunYourEngine");
 //     testcase.Finish();
+//
+//     if (testcase.HasInputQuantization("weight"))
+//     {
+//         const auto &spec = testcase.InputQuantization("weight");
+//         auto scale = testcase.QuantizationParameter(spec.scale_value_id);
+//         auto logical = testcase.DequantizeInputToFloat32("weight");
+//     }
 
 #ifndef INFERREF_TESTCASE_HPP
 #define INFERREF_TESTCASE_HPP
 
 #include <inferref/irtensor.hpp>
 #include <inferref/json.hpp>
+#include <inferref/quantization.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -62,18 +78,28 @@ public:
         if (!root.Has("format_version") || !root.At("format_version").IsString() ||
             (root.At("format_version").string != "0.1" &&
              root.At("format_version").string != "0.2" &&
-             root.At("format_version").string != "0.3"))
+             root.At("format_version").string != "0.3" &&
+             root.At("format_version").string != "0.4"))
         {
             throw TestcaseError(
-                "unsupported testcase format_version; this build reads 0.1, 0.2, and 0.3");
+                "unsupported testcase format_version; this build reads 0.1, 0.2, "
+                "0.3, and 0.4");
         }
+        const std::string version = root.At("format_version").string;
+        const bool quantized_format = version == "0.4";
+        RejectQuantizationMetadataBefore04(root, quantized_format);
 
         Testcase result;
         result.dir_ = testcase_dir;
+        result.format_version_ = version;
         result.region_name_ = ResolveRegionName(root);
         result.input_names_ = ParseRoles(root, "inputs");
         result.output_names_ = ParseRoles(root, "outputs");
         result.input_payloads_ = ParsePayloads(root, "inputs", result.input_names_);
+        result.output_payloads_ =
+            ParsePayloads(root, "outputs", result.output_names_);
+        if (quantized_format)
+            result.LoadQuantization(root);
         return result;
     }
 
@@ -81,13 +107,19 @@ public:
     // empty.  The runtime bridge treats an empty key as missing_region.
     std::string RegionName() const { return region_name_; }
 
+    std::string FormatVersion() const { return format_version_; }
+
     std::vector<std::string> InputNames() const { return input_names_; }
     std::vector<std::string> OutputNames() const { return output_names_; }
 
     // Load one input by role name.  Throws TestcaseError for an unknown role
-    // or a role without a runnable payload.
+    // or a role without a runnable payload.  A quantized input was already
+    // loaded and validated by Load(); this returns the cached copy.
     IRTensor Input(const std::string &name) const
     {
+        const auto cached = quantized_inputs_.find(name);
+        if (cached != quantized_inputs_.end())
+            return cached->second;
         const std::string payload =
             PayloadFor(input_payloads_, input_names_, name, "input");
         return ReadIRTensor(dir_ + "/" + payload);
@@ -102,6 +134,69 @@ public:
             result.emplace(name, Input(name));
         }
         return result;
+    }
+
+    // True when this input role carries an explicit quantization descriptor.
+    bool HasInputQuantization(const std::string &name) const
+    {
+        RequireInputRole(name);
+        return input_quantizations_.count(name) != 0;
+    }
+
+    // Descriptor for a quantized input role.  Throws for an unknown or
+    // unquantized role.
+    const QuantizationSpec &InputQuantization(const std::string &name) const
+    {
+        RequireInputRole(name);
+        const auto found = input_quantizations_.find(name);
+        if (found == input_quantizations_.end())
+            throw TestcaseError("input role '" + name + "' is not quantized");
+        return found->second;
+    }
+
+    // Referenced quantization parameter IDs in ascending order.
+    std::vector<std::int64_t> QuantizationParameterIds() const
+    {
+        std::vector<std::int64_t> ids;
+        ids.reserve(quantization_parameters_.size());
+        for (const auto &entry : quantization_parameters_)
+            ids.push_back(entry.first);
+        return ids;
+    }
+
+    // One parameter tensor by value ID.  Throws for an unreferenced ID.
+    IRTensor QuantizationParameter(std::int64_t value_id) const
+    {
+        const auto found = quantization_parameters_.find(value_id);
+        if (found == quantization_parameters_.end())
+        {
+            throw TestcaseError("no quantization parameter with value ID " +
+                                std::to_string(value_id));
+        }
+        return found->second;
+    }
+
+    std::map<std::int64_t, IRTensor> QuantizationParameters() const
+    {
+        return quantization_parameters_;
+    }
+
+    // Reconstruct the logical float32 values of a quantized input role.
+    // Bit-identical to inferref/quantization/reference.py and nf4.py.
+    std::vector<float> DequantizeInputToFloat32(const std::string &name) const
+    {
+        const QuantizationSpec &spec = InputQuantization(name);
+        const IRTensor codes = Input(name);
+        try
+        {
+            return DequantizeQuantizationFloat32(spec, codes,
+                                                 quantization_parameters_);
+        }
+        catch (const QuantizationError &error)
+        {
+            throw TestcaseError("input role '" + name +
+                                "' dequantization failed: " + error.what());
+        }
     }
 
     // Redirect output tensors and manifest.json to an explicit output
@@ -201,14 +296,527 @@ public:
     }
 
 private:
+    // One `values` registry record: enough metadata to validate descriptors
+    // and parameter dependencies without loading every value payload.
+    struct ValueRecord
+    {
+        std::string dtype;
+        std::vector<std::int64_t> shape;
+        bool has_quantization = false;
+        QuantizationSpec spec;
+    };
+
     std::string dir_;
     std::string output_dir_;
+    std::string format_version_;
     std::string region_name_;
     std::vector<std::string> input_names_;
     std::vector<std::string> output_names_;
     std::map<std::string, std::string> input_payloads_;
+    std::map<std::string, std::string> output_payloads_;
     std::map<std::string, std::string> written_outputs_;
+    std::map<std::string, QuantizationSpec> input_quantizations_;
+    std::map<std::int64_t, IRTensor> quantization_parameters_;
+    std::map<std::string, IRTensor> quantized_inputs_;
     bool finished_ = false;
+
+    // Formats before 0.4 cannot carry embedded quantization.  Rejecting here
+    // keeps an explicit quantized tensor from being silently read as an
+    // ordinary integer tensor.
+    static void RejectQuantizationMetadataBefore04(const json::Value &root,
+                                                   bool quantized_format)
+    {
+        if (quantized_format)
+            return;
+        if (root.Has("quantization_parameters"))
+        {
+            throw TestcaseError(
+                "quantization metadata requires testcase format_version '0.4'");
+        }
+        for (const char *field : {"inputs", "outputs", "values"})
+        {
+            if (!root.Has(field) || !root.At(field).IsArray())
+                continue;
+            for (const json::Value &entry : root.At(field).array)
+            {
+                if (entry.IsObject() && entry.Has("quantization"))
+                {
+                    throw TestcaseError(
+                        "quantization metadata requires testcase format_version '0.4'");
+                }
+            }
+        }
+    }
+
+    // Parse and cross-check every quantization descriptor, parameter payload,
+    // and dependency reference.  Any inconsistency fails the whole Load().
+    void LoadQuantization(const json::Value &root)
+    {
+        try
+        {
+            LoadQuantizationChecked(root);
+        }
+        catch (const QuantizationError &error)
+        {
+            throw TestcaseError(std::string("invalid quantization metadata: ") +
+                                error.what());
+        }
+    }
+
+    void LoadQuantizationChecked(const json::Value &root)
+    {
+        const std::map<std::int64_t, ValueRecord> values =
+            ParseValueRegistry(root);
+        const std::map<std::string, QuantizationSpec> role_specs =
+            ParseRoleQuantizations(root, values);
+
+        // Validate the whole registry, like the Python reference: every
+        // quantized value's dependencies must be present and unquantized.
+        std::vector<std::int64_t> parameter_ids;
+        for (const auto &entry : values)
+        {
+            if (!entry.second.has_quantization)
+                continue;
+            for (const std::int64_t dependency : entry.second.spec.Dependencies())
+            {
+                const auto parameter = values.find(dependency);
+                if (parameter == values.end())
+                {
+                    throw QuantizationError(
+                        "value " + std::to_string(entry.first) +
+                        " references missing parameter value ID " +
+                        std::to_string(dependency));
+                }
+                if (parameter->second.has_quantization)
+                {
+                    throw QuantizationError(
+                        "nested quantized parameters are unsupported at value ID " +
+                        std::to_string(dependency));
+                }
+                parameter_ids.push_back(dependency);
+            }
+        }
+        std::sort(parameter_ids.begin(), parameter_ids.end());
+        parameter_ids.erase(
+            std::unique(parameter_ids.begin(), parameter_ids.end()),
+            parameter_ids.end());
+
+        const std::map<std::int64_t, IRTensor> parameters =
+            ParseQuantizationParameters(root, values, parameter_ids);
+
+        // The referenced parameter set and the top-level collection must
+        // agree exactly: no missing, extra, or duplicate entries.
+        for (const auto &entry : values)
+        {
+            if (!entry.second.has_quantization)
+                continue;
+            const QuantizationSpec &spec = entry.second.spec;
+            for (const std::int64_t dependency : spec.Dependencies())
+            {
+                const ValueRecord &record = values.at(dependency);
+                const DataType expected_dtype = dependency == spec.scale_value_id
+                    ? DataType::kFloat32
+                    : dependency == spec.codebook_value_id
+                        ? DataType::kFloat32
+                        : (spec.storage_dtype == "uint4" ? DataType::kUInt8
+                                                         : DataType::kInt8);
+                const std::vector<std::int64_t> expected_shape =
+                    dependency == spec.codebook_value_id
+                        ? std::vector<std::int64_t>({16})
+                        : spec.ParameterShape();
+                if (record.dtype != DataTypeName(expected_dtype) ||
+                    record.shape != expected_shape)
+                {
+                    throw QuantizationError(
+                        "parameter " + std::to_string(dependency) +
+                        " must have dtype " + DataTypeName(expected_dtype) +
+                        " and shape " +
+                        detail::ShapeText(expected_shape) + " for " +
+                        spec.scheme);
+                }
+            }
+        }
+
+        // Eagerly validate quantized input payloads and keep them for the
+        // dequantization helper so metadata and header cannot disagree later.
+        for (const std::string &name : input_names_)
+        {
+            const auto spec = role_specs.find(name);
+            if (spec == role_specs.end())
+                continue;
+            const auto payload = input_payloads_.find(name);
+            if (payload == input_payloads_.end())
+                continue;  // declared role without a runnable payload
+            const IRTensor tensor = ReadIRTensor(dir_ + "/" + payload->second);
+            const json::Value &entry = RoleEntry(root, "inputs", name);
+            ValidatePayloadMetadata(entry, tensor,
+                                    "input role '" + name + "'");
+            const std::int64_t value_id = RoleValueId(entry, "inputs", name);
+            const auto record = values.find(value_id);
+            if (record == values.end())
+            {
+                throw QuantizationError("input role '" + name + "' value_id " +
+                                        std::to_string(value_id) +
+                                        " is not in values");
+            }
+            ValidateQuantizedValueMetadata(tensor, spec->second, record->second,
+                                           "input role '" + name + "'");
+            quantized_inputs_[name] = tensor;
+        }
+
+        input_quantizations_ = role_specs;
+        quantization_parameters_ = parameters;
+    }
+
+    static std::map<std::int64_t, Testcase::ValueRecord> ParseValueRegistry(
+        const json::Value &root)
+    {
+        std::map<std::int64_t, ValueRecord> values;
+        if (!root.Has("values"))
+            return values;
+        if (!root.At("values").IsArray())
+            throw QuantizationError("testcase manifest 'values' must be an array");
+        for (const json::Value &entry : root.At("values").array)
+        {
+            if (!entry.IsObject())
+                throw QuantizationError("testcase manifest 'values' entries must be objects");
+            if (!entry.Has("id") || !detail::IsIntegerValue(entry.At("id")))
+            {
+                throw QuantizationError(
+                    "testcase manifest 'values' entry requires an integer id");
+            }
+            const std::int64_t id =
+                static_cast<std::int64_t>(entry.At("id").number);
+            if (id < 0)
+                throw QuantizationError("value id must be non-negative");
+            if (values.count(id) != 0)
+                throw QuantizationError("duplicate value ID " + std::to_string(id));
+            ValueRecord record;
+            if (entry.Has("dtype") && entry.At("dtype").IsString())
+                record.dtype = entry.At("dtype").string;
+            if (entry.Has("shape"))
+                record.shape = detail::ShapeField(entry.At("shape"), "value shape");
+            if (entry.Has("quantization"))
+            {
+                record.has_quantization = true;
+                record.spec = ParseQuantizationSpec(
+                    entry.At("quantization"),
+                    "value " + std::to_string(id) + " quantization");
+            }
+            values.emplace(id, std::move(record));
+        }
+        return values;
+    }
+
+    static std::map<std::string, QuantizationSpec> ParseRoleQuantizations(
+        const json::Value &root,
+        const std::map<std::int64_t, ValueRecord> &values)
+    {
+        std::map<std::string, QuantizationSpec> specs;
+        for (const char *field : {"inputs", "outputs"})
+        {
+            if (!root.Has(field) || !root.At(field).IsArray())
+                continue;
+            for (const json::Value &entry : root.At(field).array)
+            {
+                if (!entry.IsObject() || !entry.Has("quantization"))
+                    continue;
+                const std::string boundary =
+                    std::string(field) == "inputs" ? "input" : "output";
+                if (!entry.Has("name") || !entry.At("name").IsString() ||
+                    entry.At("name").string.empty())
+                {
+                    throw QuantizationError(std::string("quantized ") + boundary +
+                                            " role requires a non-empty name");
+                }
+                const std::string name = entry.At("name").string;
+                const std::int64_t value_id = RoleValueId(entry, field, name);
+                const QuantizationSpec spec = ParseQuantizationSpec(
+                    entry.At("quantization"),
+                    boundary + " role '" + name + "' quantization");
+                const auto record = values.find(value_id);
+                if (record == values.end())
+                {
+                    throw QuantizationError(
+                        boundary + " role '" + name + "' value_id " +
+                        std::to_string(value_id) + " is not in values");
+                }
+                if (!record->second.has_quantization ||
+                    !QuantizationSpecsEqual(record->second.spec, spec))
+                {
+                    throw QuantizationError(
+                        boundary + " role '" + name +
+                        "' quantization metadata disagrees with its values record");
+                }
+                if (boundary == "input")
+                    specs[name] = spec;
+            }
+        }
+        return specs;
+    }
+
+    static std::int64_t RoleValueId(const json::Value &entry,
+                                    const std::string &field,
+                                    const std::string &name)
+    {
+        if (!entry.Has("value_id") || !detail::IsIntegerValue(entry.At("value_id")))
+        {
+            throw QuantizationError(std::string("quantized ") +
+                                    (field == "inputs" ? "input" : "output") +
+                                    " role '" + name +
+                                    "' requires an integer value_id");
+        }
+        const double number = entry.At("value_id").number;
+        if (number < 0)
+            throw QuantizationError("value_id must be non-negative");
+        return static_cast<std::int64_t>(number);
+    }
+
+    static const json::Value &RoleEntry(const json::Value &root,
+                                        const std::string &field,
+                                        const std::string &name)
+    {
+        for (const json::Value &entry : root.At(field).array)
+        {
+            if (entry.IsObject() && entry.Has("name") &&
+                entry.At("name").IsString() && entry.At("name").string == name)
+                return entry;
+        }
+        throw QuantizationError("missing '" + field + "' role '" + name + "'");
+    }
+
+    static void ValidatePayloadMetadata(const json::Value &entry,
+                                        const IRTensor &tensor,
+                                        const std::string &context)
+    {
+        if (!entry.Has("dtype") || !entry.At("dtype").IsString())
+            throw QuantizationError(context + " requires a manifest dtype");
+        if (entry.At("dtype").string != DataTypeName(tensor.dtype))
+        {
+            throw QuantizationError(
+                context + " manifest dtype '" + entry.At("dtype").string +
+                "' differs from payload header dtype '" +
+                DataTypeName(tensor.dtype) + "'");
+        }
+        if (!entry.Has("shape"))
+            throw QuantizationError(context + " requires a manifest shape");
+        const std::vector<std::int64_t> shape =
+            detail::ShapeField(entry.At("shape"), context + " shape");
+        if (shape != tensor.shape)
+        {
+            throw QuantizationError(
+                context + " manifest shape " + detail::ShapeText(shape) +
+                " differs from payload header shape " + tensor.ShapeString());
+        }
+        if (entry.Has("stride"))
+        {
+            const std::vector<std::int64_t> stride = detail::IntegerArrayField(
+                entry.At("stride"), context + " stride",
+                std::numeric_limits<std::int64_t>::min());
+            if (stride != tensor.stride)
+                throw QuantizationError(context +
+                                        " manifest stride differs from payload header");
+        }
+        if (entry.Has("storage_offset"))
+        {
+            const std::int64_t offset = detail::IntegerValue(
+                entry.At("storage_offset"), context + " storage_offset", 0);
+            if (offset != tensor.storage_offset)
+            {
+                throw QuantizationError(
+                    context + " manifest storage_offset differs from payload header");
+            }
+        }
+        const std::uint64_t expected_nbytes = PayloadSize(
+            tensor.dtype, static_cast<std::uint64_t>(tensor.Numel()));
+        if (expected_nbytes != tensor.data.size())
+        {
+            throw QuantizationError(
+                context + " payload nbytes differs from its header dtype/shape");
+        }
+        if (entry.Has("nbytes"))
+        {
+            const std::int64_t nbytes = detail::IntegerValue(
+                entry.At("nbytes"), context + " nbytes", 0);
+            if (static_cast<std::uint64_t>(nbytes) != expected_nbytes)
+            {
+                throw QuantizationError(
+                    context + " manifest nbytes differs from payload header nbytes");
+            }
+        }
+    }
+
+    static void ValidateQuantizedValueMetadata(
+        const IRTensor &tensor, const QuantizationSpec &spec,
+        const ValueRecord &record, const std::string &context)
+    {
+        const DataType expected_dtype = spec.storage_dtype == "int8"
+            ? DataType::kInt8
+            : spec.storage_dtype == "int4" ? DataType::kInt4 : DataType::kUInt4;
+        if (tensor.dtype != expected_dtype || tensor.shape != spec.logical_shape)
+        {
+            throw QuantizationError(
+                context + " storage dtype/shape differs from its quantization "
+                "descriptor");
+        }
+        if (record.dtype != spec.storage_dtype || record.shape != spec.logical_shape)
+        {
+            throw QuantizationError(
+                context + " values record dtype/shape differs from its "
+                "quantization descriptor");
+        }
+    }
+
+    std::map<std::int64_t, IRTensor> ParseQuantizationParameters(
+        const json::Value &root,
+        const std::map<std::int64_t, ValueRecord> &values,
+        const std::vector<std::int64_t> &parameter_ids) const
+    {
+        std::map<std::int64_t, IRTensor> parameters;
+        if (!root.Has("quantization_parameters"))
+        {
+            if (!parameter_ids.empty())
+            {
+                throw QuantizationError(
+                    "testcase manifest is missing quantization_parameters");
+            }
+            return parameters;
+        }
+        if (!root.At("quantization_parameters").IsArray())
+        {
+            throw QuantizationError(
+                "testcase manifest 'quantization_parameters' must be an array");
+        }
+
+        // First pass: validate every declared ID, reference, and payload path
+        // without touching payload bytes.  A malformed collection must fail
+        // with its own diagnosis even when a payload file is absent.
+        struct Declaration
+        {
+            std::int64_t value_id;
+            std::string payload;
+            const json::Value *entry;
+        };
+        std::vector<Declaration> declarations;
+        std::map<std::int64_t, bool> declared;
+        for (const json::Value &entry : root.At("quantization_parameters").array)
+        {
+            if (!entry.IsObject())
+            {
+                throw QuantizationError(
+                    "'quantization_parameters' entries must be objects");
+            }
+            // The schema key is value_id; an `id`-only entry would silently
+            // drop the parameter reference.
+            if (!entry.Has("value_id"))
+            {
+                throw QuantizationError(
+                    "quantization parameter entries must use the 'value_id' key");
+            }
+            if (!detail::IsIntegerValue(entry.At("value_id")))
+            {
+                throw QuantizationError(
+                    "quantization parameter value_id must be an integer");
+            }
+            const double number = entry.At("value_id").number;
+            if (number < 0)
+            {
+                throw QuantizationError(
+                    "quantization parameter value_id must be non-negative");
+            }
+            const std::int64_t value_id = static_cast<std::int64_t>(number);
+            if (declared.count(value_id) != 0)
+            {
+                throw QuantizationError(
+                    "duplicate quantization parameter value_id " +
+                    std::to_string(value_id));
+            }
+            declared[value_id] = true;
+            const auto record = values.find(value_id);
+            if (record == values.end())
+            {
+                throw QuantizationError(
+                    "quantization parameter value_id " + std::to_string(value_id) +
+                    " is not in values");
+            }
+            if (record->second.has_quantization)
+            {
+                throw QuantizationError(
+                    "nested quantized parameters are unsupported at value ID " +
+                    std::to_string(value_id));
+            }
+            if (!entry.Has("payload") || entry.At("payload").IsNull())
+            {
+                throw QuantizationError(
+                    "quantization parameter " + std::to_string(value_id) +
+                    " has no payload");
+            }
+            if (!entry.At("payload").IsString())
+            {
+                throw QuantizationError(
+                    "quantization parameter payload must be a string");
+            }
+            const std::string payload = entry.At("payload").string;
+            if (!IsSafeRelativePath(payload))
+            {
+                throw QuantizationError(
+                    "quantization parameter payload for value " +
+                    std::to_string(value_id) +
+                    " is not a safe relative path");
+            }
+            declarations.push_back({value_id, payload, &entry});
+        }
+
+        std::vector<std::int64_t> declared_ids;
+        declared_ids.reserve(declared.size());
+        for (const auto &item : declared)
+            declared_ids.push_back(item.first);
+        if (declared_ids != parameter_ids)
+        {
+            std::string missing;
+            for (const std::int64_t id : parameter_ids)
+            {
+                if (declared.count(id) == 0)
+                    missing += (missing.empty() ? "" : ", ") + std::to_string(id);
+            }
+            std::string unreferenced;
+            for (const std::int64_t id : declared_ids)
+            {
+                if (!std::binary_search(parameter_ids.begin(),
+                                        parameter_ids.end(), id))
+                {
+                    unreferenced +=
+                        (unreferenced.empty() ? "" : ", ") + std::to_string(id);
+                }
+            }
+            throw QuantizationError(
+                "quantization_parameters must contain each referenced parameter "
+                "exactly once (missing: " + (missing.empty() ? "none" : missing) +
+                "; unreferenced: " +
+                (unreferenced.empty() ? "none" : unreferenced) + ")");
+        }
+
+        // Second pass: load and cross-check each payload against its manifest
+        // metadata and the value registry record.
+        for (const Declaration &declaration : declarations)
+        {
+            const IRTensor tensor = ReadIRTensor(dir_ + "/" + declaration.payload);
+            const std::string context =
+                "quantization parameter '" + std::to_string(declaration.value_id) +
+                "'";
+            ValidatePayloadMetadata(*declaration.entry, tensor, context);
+            const ValueRecord &record = values.at(declaration.value_id);
+            if (record.dtype != DataTypeName(tensor.dtype) ||
+                record.shape != tensor.shape)
+            {
+                throw QuantizationError(context +
+                                        " values record dtype/shape differs from "
+                                        "the payload header");
+            }
+            parameters.emplace(declaration.value_id, tensor);
+        }
+        return parameters;
+    }
 
     static std::string ReadFile(const std::string &path)
     {
@@ -332,6 +940,15 @@ private:
             throw TestcaseError("unknown " + boundary + " role '" + name + "'");
         }
         return found->second;
+    }
+
+    void RequireInputRole(const std::string &name) const
+    {
+        if (std::find(input_names_.begin(), input_names_.end(), name) ==
+            input_names_.end())
+        {
+            throw TestcaseError("unknown input role '" + name + "'");
+        }
     }
 
     static std::string ResolveRegionName(const json::Value &root)

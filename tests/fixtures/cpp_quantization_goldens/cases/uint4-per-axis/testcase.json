@@ -1,0 +1,215 @@
+{
+  "format": "inferref-testcase",
+  "format_version": "0.4",
+  "name": "uint4-per-axis",
+  "origin": {
+    "region": "quantization/reference/v1"
+  },
+  "reproducible": true,
+  "inputs": [
+    {
+      "name": "weight",
+      "value_id": 100,
+      "payload": "inputs/weight.irtensor",
+      "role": "parameter",
+      "qualified_name": "weight",
+      "dtype": "uint4",
+      "shape": [
+        4,
+        5
+      ],
+      "stride": [
+        5,
+        1
+      ],
+      "storage_offset": 0,
+      "contiguous": true,
+      "runtime_object_id": null,
+      "storage_id": 100,
+      "storage_version": 0,
+      "quantization": {
+        "format": "inferref-quantization",
+        "format_version": "1.0",
+        "scheme": "affine-uint4/v1",
+        "storage_dtype": "uint4",
+        "logical_shape": [
+          4,
+          5
+        ],
+        "scale_value_id": 10,
+        "zero_point_value_id": 11,
+        "granularity": "per_axis",
+        "axis": 1,
+        "group_size": null,
+        "compute_dtype": "float32",
+        "rounding": "nearest_even",
+        "saturation": "clamp"
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "name": "y",
+      "value_id": 101,
+      "payload": "reference/y.irtensor",
+      "dtype": "float32",
+      "shape": [
+        4,
+        5
+      ],
+      "stride": [
+        5,
+        1
+      ],
+      "storage_offset": 0,
+      "contiguous": true,
+      "runtime_object_id": null,
+      "storage_id": 101,
+      "storage_version": 0
+    }
+  ],
+  "nodes": [],
+  "values": [
+    {
+      "id": 100,
+      "dtype": "uint4",
+      "shape": [
+        4,
+        5
+      ],
+      "stride": [
+        5,
+        1
+      ],
+      "storage_offset": 0,
+      "contiguous": true,
+      "runtime_object_id": null,
+      "storage_id": 100,
+      "storage_version": 0,
+      "quantization": {
+        "format": "inferref-quantization",
+        "format_version": "1.0",
+        "scheme": "affine-uint4/v1",
+        "storage_dtype": "uint4",
+        "logical_shape": [
+          4,
+          5
+        ],
+        "scale_value_id": 10,
+        "zero_point_value_id": 11,
+        "granularity": "per_axis",
+        "axis": 1,
+        "group_size": null,
+        "compute_dtype": "float32",
+        "rounding": "nearest_even",
+        "saturation": "clamp"
+      },
+      "role": "parameter",
+      "qualified_name": "weight",
+      "producer": null
+    },
+    {
+      "id": 101,
+      "dtype": "float32",
+      "shape": [
+        4,
+        5
+      ],
+      "stride": [
+        5,
+        1
+      ],
+      "storage_offset": 0,
+      "contiguous": true,
+      "runtime_object_id": null,
+      "storage_id": 101,
+      "storage_version": 0,
+      "role": "output",
+      "qualified_name": "y",
+      "producer": null
+    },
+    {
+      "id": 10,
+      "dtype": "float32",
+      "shape": [
+        5
+      ],
+      "stride": [
+        1
+      ],
+      "storage_offset": 0,
+      "contiguous": true,
+      "runtime_object_id": null,
+      "storage_id": 10,
+      "storage_version": 0,
+      "role": "parameter",
+      "qualified_name": "v10",
+      "producer": null
+    },
+    {
+      "id": 11,
+      "dtype": "uint8",
+      "shape": [
+        5
+      ],
+      "stride": [
+        1
+      ],
+      "storage_offset": 0,
+      "contiguous": true,
+      "runtime_object_id": null,
+      "storage_id": 11,
+      "storage_version": 0,
+      "role": "parameter",
+      "qualified_name": "v11",
+      "producer": null
+    }
+  ],
+  "quantization_parameters": [
+    {
+      "value_id": 10,
+      "name": "v10",
+      "payload": "quantization_parameters/v10.irtensor",
+      "dtype": "float32",
+      "shape": [
+        5
+      ],
+      "stride": [
+        1
+      ],
+      "storage_offset": 0,
+      "contiguous": true,
+      "runtime_object_id": null,
+      "storage_id": 10,
+      "storage_version": 0
+    },
+    {
+      "value_id": 11,
+      "name": "v11",
+      "payload": "quantization_parameters/v11.irtensor",
+      "dtype": "uint8",
+      "shape": [
+        5
+      ],
+      "stride": [
+        1
+      ],
+      "storage_offset": 0,
+      "contiguous": true,
+      "runtime_object_id": null,
+      "storage_id": 11,
+      "storage_version": 0
+    }
+  ],
+  "requirements": {
+    "dtypes": [
+      "float32",
+      "uint4",
+      "uint8"
+    ],
+    "max_rank": 2,
+    "features": [
+      "quantization/affine-uint4/v1/per_axis"
+    ]
+  }
+}
