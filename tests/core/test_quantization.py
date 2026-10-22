@@ -21,11 +21,19 @@ from inferref.quantization import (
     QuantizationError,
     QuantizationSpec,
     dequantize_affine,
+    linear_int4_bf16_reference,
+    linear_int4_reference,
     linear_int8_reference,
+    linear_nf4_bf16_reference,
     quantization_fingerprint,
     quantize_affine,
 )
+from inferref.quantization.nf4 import NF4_CODEBOOK
 from inferref.tensor import codec
+from inferref.tensor.dtype_numpy import (
+    bfloat16_bytes_to_float32,
+    float32_to_bfloat16_bytes,
+)
 from inferref.testcase.validate import TestcaseValidationError as ValidationError
 from inferref.testcase.validate import validate_testcase
 
@@ -35,6 +43,19 @@ def tensor(data, dtype="float32"):
     return codec.decode(codec.encode(dtype=dtype, shape=array.shape,
                                     stride=codec.contiguous_stride(array.shape),
                                     payload=array.tobytes()))
+
+
+def nibble_tensor(data, dtype="int4"):
+    array = np.asarray(data, dtype="int8" if dtype == "int4" else "uint8")
+    return codec.decode(codec.encode(dtype=dtype, shape=array.shape,
+                                    stride=codec.contiguous_stride(array.shape),
+                                    payload=codec.pack_nibbles(array, dtype)))
+
+
+def bf16(values):
+    """bfloat16 carrier (uint16 bit patterns) for explicit float32 values."""
+
+    return float32_to_bfloat16_bytes(np.asarray(values, dtype=np.float32))
 
 
 def test_descriptor_roundtrip_is_explicit_and_immutable():
@@ -372,3 +393,82 @@ def test_documented_example_is_torch_free_and_deterministic():
     assert document["decoded_weights"] == [[1., 2., 1.5], [-2., 0., 4.]]
     assert document["example_scope"] == "standalone_reference_api"
     assert len(document["fingerprint"]) == 64
+
+
+def test_int4_bf16_reference_accumulates_in_float32_and_rounds_once():
+    spec = QuantizationSpec(logical_shape=(1, 2), scale_value_id=1,
+                            scheme="affine-int4/v1", storage_dtype="int4")
+    params = {1: tensor(np.float32(1 / 256))}
+    codes = nibble_tensor(np.array([[3, 5]], dtype=np.int8), "int4")
+    source = bf16(np.array([[0.1, 0.2], [4.0, 8.0]], dtype=np.float32))
+    output = linear_int4_bf16_reference(source, codes, spec, values=params)
+    assert output.dtype == np.uint16 and output.shape == (2, 1)
+    decoded_weights = np.array([[3, 5]], dtype=np.float32) / np.float32(256)
+    expected_float32 = bfloat16_bytes_to_float32(source) @ decoded_weights.T
+    # 4*3/256 + 8*5/256 is exact; 0.1*3/256 + 0.2*5/256 needs bf16 rounding.
+    assert expected_float32[1, 0] == np.float32(52 / 256)
+    np.testing.assert_array_equal(output, float32_to_bfloat16_bytes(expected_float32))
+    assert not np.array_equal(bfloat16_bytes_to_float32(output), expected_float32)
+    np.testing.assert_array_equal(output[1], np.array([bf16(52 / 256)[0]], np.uint16))
+
+
+def test_uint4_bf16_reference_never_rounds_through_float16():
+    spec = QuantizationSpec(logical_shape=(1, 2), scale_value_id=1,
+                            scheme="affine-uint4/v1", storage_dtype="uint4")
+    params = {1: tensor(np.float32(1.0))}
+    codes = nibble_tensor(np.array([[15, 15]], dtype=np.uint8), "uint4")
+    source = bf16(np.array([[4096.0, 4096.0]], dtype=np.float32))
+    output = linear_int4_bf16_reference(source, codes, spec, values=params)
+    # 15*4096 + 15*4096 = 122880 overflows float16 but is a finite bf16 value.
+    np.testing.assert_array_equal(output, bf16([[122880.0]]))
+    assert float(bfloat16_bytes_to_float32(output)[0, 0]) == 122880.0
+
+
+def test_nf4_bf16_reference_matches_float32_dequant_and_bf16_rounding():
+    spec = QuantizationSpec(logical_shape=(2, 4), scale_value_id=1, codebook_value_id=2,
+                            scheme="nf4/v1", storage_dtype="uint4",
+                            codebook="bitsandbytes-nf4/v1", granularity="per_block",
+                            group_size=4, rounding="none", saturation="none")
+    indices = np.array([[15, 15, 15, 15], [0, 15, 7, 15]], dtype=np.uint8)
+    scales = np.array([1 / 3, 1.0], dtype=np.float32)
+    params = {1: tensor(scales),
+              2: tensor(np.asarray(NF4_CODEBOOK, dtype=np.float32))}
+    source = bf16(np.array([[1.0, 1.0, 1.0, 1.0], [1.5, 2.0, -0.5, 4.0]], np.float32))
+    output = linear_nf4_bf16_reference(
+        source, nibble_tensor(indices, "uint4"), spec, values=params
+    )
+    decoded_weights = np.asarray(NF4_CODEBOOK, dtype=np.float32)[indices] * scales[:, None]
+    expected_float32 = bfloat16_bytes_to_float32(source) @ decoded_weights.T
+    np.testing.assert_array_equal(output, float32_to_bfloat16_bytes(expected_float32))
+    # Block 0 averages four 1/3 terms in float32; bf16 cannot hold that mantissa.
+    assert not np.array_equal(bfloat16_bytes_to_float32(output), expected_float32)
+
+
+def test_bf16_reference_rejects_wrong_carrier_and_weight_family():
+    spec = QuantizationSpec(logical_shape=(1, 2), scale_value_id=1,
+                            scheme="affine-int4/v1", storage_dtype="int4")
+    params = {1: tensor(np.float32(1.0))}
+    codes = nibble_tensor(np.array([[1, 2]], dtype=np.int8), "int4")
+    bf16_source = bf16(np.array([[1.0, 2.0]], dtype=np.float32))
+    for wrong in (np.array([[1.0, 2.0]], np.float32),
+                  np.array([[1.0, 2.0]], np.float16)):
+        with pytest.raises(QuantizationError, match="bfloat16"):
+            linear_int4_bf16_reference(wrong, codes, spec, values=params)
+    # The 0.11 float16 contracts still reject the bf16 carrier.
+    with pytest.raises(QuantizationError, match="float16"):
+        linear_int4_reference(bf16_source, codes, spec, values=params)
+
+    nf4_spec = QuantizationSpec(logical_shape=(1, 4), scale_value_id=1,
+                                codebook_value_id=2, scheme="nf4/v1",
+                                storage_dtype="uint4", codebook="bitsandbytes-nf4/v1",
+                                granularity="per_block", group_size=4,
+                                rounding="none", saturation="none")
+    nf4_params = {1: tensor(np.ones(1, dtype=np.float32)),
+                  2: tensor(np.asarray(NF4_CODEBOOK, dtype=np.float32))}
+    with pytest.raises(QuantizationError, match="affine int4 or uint4"):
+        linear_int4_bf16_reference(
+            bf16(np.ones((1, 4), np.float32)),
+            nibble_tensor(np.zeros((1, 4), dtype=np.uint8), "uint4"),
+            nf4_spec, values=nf4_params)
+    with pytest.raises(QuantizationError, match="nf4/v1"):
+        linear_nf4_bf16_reference(bf16_source, codes, spec, values=params)

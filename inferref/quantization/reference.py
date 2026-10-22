@@ -14,7 +14,11 @@ import numpy as np
 
 from inferref.quantization.spec import QuantizationError, QuantizationSpec
 from inferref.tensor.codec import TensorView, encode
-from inferref.tensor.dtype_numpy import numpy_dtype_for
+from inferref.tensor.dtype_numpy import (
+    bfloat16_bytes_to_float32,
+    float32_to_bfloat16_bytes,
+    numpy_dtype_for,
+)
 
 
 def _tensor(value: TensorView, dtype: str, shape: tuple[int, ...], label: str) -> np.ndarray:
@@ -182,20 +186,49 @@ def linear_int4_reference(
     """W4A16: float16 inputs, float32 dequant/matmul, final float16 rounding."""
     if spec.storage_dtype not in {"int4", "uint4"} or spec.scheme == "nf4/v1":
         raise QuantizationError("W4A16 requires explicit affine int4 or uint4 weights")
-    return _linear_16(inputs, weights, spec, values=values)
+    return _linear_reduced_precision(inputs, weights, spec, values=values, dtype="float16")
 
 
 def linear_nf4_reference(inputs, weights, spec, *, values):
     """NF4 W4A16 with float32 dequantization/accumulation and float16 output."""
     if spec.scheme != "nf4/v1":
         raise QuantizationError("NF4 Linear requires nf4/v1")
-    return _linear_16(inputs, weights, spec, values=values)
+    return _linear_reduced_precision(inputs, weights, spec, values=values, dtype="float16")
 
 
-def _linear_16(inputs, weights, spec, *, values):
-    if not isinstance(inputs, np.ndarray) or inputs.dtype != np.dtype("float16"):
-        raise QuantizationError("W4A16 inputs must be float16")
-    result = _linear_float32(inputs.astype(np.float32), weights, spec, values=values)
+def linear_int4_bf16_reference(
+    inputs: np.ndarray, weights: TensorView, spec: QuantizationSpec, *,
+    values: Mapping[int, TensorView],
+) -> np.ndarray:
+    """W4A16 bf16 I/O: float32 dequant/matmul, one nearest-even bf16 conversion."""
+    if spec.storage_dtype not in {"int4", "uint4"} or spec.scheme == "nf4/v1":
+        raise QuantizationError("W4A16 bf16 requires explicit affine int4 or uint4 weights")
+    return _linear_reduced_precision(inputs, weights, spec, values=values, dtype="bfloat16")
+
+
+def linear_nf4_bf16_reference(inputs, weights, spec, *, values):
+    """NF4 W4A16 bf16 I/O with float32 dequant/accum and one nearest-even bf16 output."""
+    if spec.scheme != "nf4/v1":
+        raise QuantizationError("NF4 Linear requires nf4/v1")
+    return _linear_reduced_precision(inputs, weights, spec, values=values, dtype="bfloat16")
+
+
+def _linear_reduced_precision(inputs, weights, spec, *, values, dtype):
+    """Accumulate in float32 and round to ``dtype`` exactly once.
+
+    bfloat16 values are carried as uint16 bit patterns (see
+    ``inferref.tensor.dtype_numpy``); they share float32's exponent range, so a
+    finite float32 result stays finite and only the mantissa is rounded.
+    """
+    if not isinstance(inputs, np.ndarray) or inputs.dtype != numpy_dtype_for(dtype):
+        raise QuantizationError(f"W4A16 inputs must be {dtype}")
+    if dtype == "bfloat16":
+        source = bfloat16_bytes_to_float32(inputs)
+    else:
+        source = inputs.astype(np.float32)
+    result = _linear_float32(source, weights, spec, values=values)
+    if dtype == "bfloat16":
+        return float32_to_bfloat16_bytes(result)
     with np.errstate(over="raise", invalid="raise", under="ignore"):
         try:
             return result.astype(np.float16)

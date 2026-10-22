@@ -1,9 +1,10 @@
 """Built-in executable contracts, including explicit quantized Linear profiles.
 
-These are migrated unchanged from the old hardcoded table in
+The core profiles were migrated unchanged from the old hardcoded table in
 ``inferref/testcase/contracts.py``: same IDs, role names, validators, issue
-messages and derived requirements. They are registered through the same
-registry as third-party plugin contracts.
+messages and derived requirements. 0.12 adds explicit bias, bfloat16, SwiGLU
+and SDPA profiles next to them. They are registered through the same registry
+as third-party plugin contracts.
 """
 
 from __future__ import annotations
@@ -119,7 +120,7 @@ def _rmsnorm_outputs(outputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
     return []
 
 
-def _rmsnorm_relation(
+def _y_matches_x_relation(
     inputs: Mapping[str, dict[str, Any]], outputs: Mapping[str, dict[str, Any]]
 ) -> Sequence[str]:
     x = _shape(inputs.get("x"))
@@ -246,55 +247,231 @@ def _int8_linear_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
     return issues
 
 
-def _int8_linear_relation(inputs, outputs) -> Sequence[str]:
+def _linear_out_features(weight: Mapping[str, Any]) -> int | None:
+    """Weight out_features from a valid rank-2 descriptor; None when unusable."""
+
+    from inferref.quantization.spec import QuantizationError, QuantizationSpec
+
+    try:
+        spec = QuantizationSpec.from_dict(weight.get("quantization"))
+    except QuantizationError:
+        return None
+    return spec.logical_shape[0] if len(spec.logical_shape) == 2 else None
+
+
+def _int8_bias_linear_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    issues = list(_int8_linear_inputs(inputs))
+    bias = inputs.get("bias", {})
+    if bias.get("dtype") != "float32" or "quantization" in bias:
+        issues.append("bias must be an ordinary float32 tensor")
+        return issues
+    shape = _shape(bias)
+    if shape is None or len(shape) != 1:
+        issues.append("bias must have rank 1 with shape [out_features]")
+        return issues
+    out_features = _linear_out_features(inputs.get("weight", {}))
+    if out_features is not None and shape[0] != out_features:
+        issues.append("bias length must equal weight out_features")
+    return issues
+
+
+def _linear_output_shape_issues(
+    inputs: Mapping[str, dict[str, Any]], outputs: Mapping[str, dict[str, Any]]
+) -> list[str]:
     x, weight, y = inputs.get("x", {}), inputs.get("weight", {}), outputs.get("y", {})
-    if y.get("dtype") != "float32" or "quantization" in y:
-        return ["y must be an ordinary float32 tensor"]
     if _shape(x) and _shape(weight) and y.get("shape") != x["shape"][:-1] + weight["shape"][:1]:
         return ["y shape must equal x leading dimensions plus weight out_features"]
     return []
 
 
-def _w4a16_inputs(inputs) -> Sequence[str]:
+def _int8_linear_relation(inputs, outputs) -> Sequence[str]:
+    y = outputs.get("y", {})
+    if y.get("dtype") != "float32" or "quantization" in y:
+        return ["y must be an ordinary float32 tensor"]
+    return _linear_output_shape_issues(inputs, outputs)
+
+
+def _affine_w4_weight_issues(
+    weight: Mapping[str, Any], x_shape: list[int] | None
+) -> list[str]:
+    """Affine INT4/UINT4 weight checks shared by the float16 and bf16 profiles."""
+
     from inferref.quantization.spec import QuantizationError, QuantizationSpec
 
-    x, weight = inputs.get("x", {}), inputs.get("weight", {})
-    issues = []
-    if x.get("dtype") != "float16" or not _shape(x) or "quantization" in x:
-        issues.append("W4A16 x must be ordinary float16 with rank >= 1")
     try:
         spec = QuantizationSpec.from_dict(weight.get("quantization"))
         if spec.scheme == "nf4/v1" or spec.storage_dtype not in {"int4", "uint4"} or len(spec.logical_shape) != 2 or weight.get("dtype") != spec.storage_dtype:
-            issues.append("weight must be affine INT4/UINT4 [out_features, in_features]")
-        elif _shape(x) and x["shape"][-1] != spec.logical_shape[1]:
-            issues.append("x last dimension must equal weight in_features")
+            return ["weight must be affine INT4/UINT4 [out_features, in_features]"]
+        if x_shape and x_shape[-1] != spec.logical_shape[1]:
+            return ["x last dimension must equal weight in_features"]
     except QuantizationError as exc:
-        issues.append(str(exc))
-    return issues
+        return [str(exc)]
+    return []
+
+
+def _nf4_weight_issues(
+    weight: Mapping[str, Any], x_shape: list[int] | None
+) -> list[str]:
+    """NF4 weight checks shared by the float16 and bf16 profiles."""
+
+    from inferref.quantization.spec import QuantizationError, QuantizationSpec
+
+    try:
+        spec = QuantizationSpec.from_dict(weight.get("quantization"))
+        if spec.scheme != "nf4/v1" or len(spec.logical_shape) != 2 or weight.get("dtype") != "uint4":
+            return ["weight must be NF4 [out_features, in_features]"]
+        if x_shape and x_shape[-1] != spec.logical_shape[1]:
+            return ["x last dimension must equal weight in_features"]
+    except QuantizationError as exc:
+        return [str(exc)]
+    return []
+
+
+def _w4a16_activation_issues(
+    inputs: Mapping[str, dict[str, Any]], *, dtype: str, label: str
+) -> list[str]:
+    x = inputs.get("x", {})
+    if x.get("dtype") != dtype or not _shape(x) or "quantization" in x:
+        return [f"{label} x must be ordinary {dtype} with rank >= 1"]
+    return []
+
+
+def _w4a16_inputs(inputs) -> Sequence[str]:
+    return [
+        *_w4a16_activation_issues(inputs, dtype="float16", label="W4A16"),
+        *_affine_w4_weight_issues(inputs.get("weight", {}), _shape(inputs.get("x"))),
+    ]
+
+
+def _w4a16_bf16_inputs(inputs) -> Sequence[str]:
+    return [
+        *_w4a16_activation_issues(inputs, dtype="bfloat16", label="W4A16 bf16"),
+        *_affine_w4_weight_issues(inputs.get("weight", {}), _shape(inputs.get("x"))),
+    ]
 
 
 def _w4a16_relation(inputs, outputs) -> Sequence[str]:
     y = outputs.get("y", {})
     if y.get("dtype") != "float16" or "quantization" in y:
         return ["W4A16 y must be ordinary float16"]
-    return _int8_linear_relation(inputs, {"y": {**y, "dtype": "float32"}})
+    return _linear_output_shape_issues(inputs, outputs)
+
+
+def _w4a16_bf16_relation(inputs, outputs) -> Sequence[str]:
+    y = outputs.get("y", {})
+    if y.get("dtype") != "bfloat16" or "quantization" in y:
+        return ["W4A16 bf16 y must be ordinary bfloat16"]
+    return _linear_output_shape_issues(inputs, outputs)
 
 
 def _nf4_inputs(inputs) -> Sequence[str]:
-    from inferref.quantization.spec import QuantizationError, QuantizationSpec
+    return [
+        *_w4a16_activation_issues(inputs, dtype="float16", label="NF4"),
+        *_nf4_weight_issues(inputs.get("weight", {}), _shape(inputs.get("x"))),
+    ]
 
-    x, weight = inputs.get("x", {}), inputs.get("weight", {})
-    issues = []
-    if x.get("dtype") != "float16" or not _shape(x) or "quantization" in x:
-        issues.append("NF4 x must be ordinary float16 with rank >= 1")
-    try:
-        spec = QuantizationSpec.from_dict(weight.get("quantization"))
-        if spec.scheme != "nf4/v1" or len(spec.logical_shape) != 2 or weight.get("dtype") != "uint4":
-            issues.append("weight must be NF4 [out_features, in_features]")
-        elif _shape(x) and x["shape"][-1] != spec.logical_shape[1]:
-            issues.append("x last dimension must equal weight in_features")
-    except QuantizationError as exc:
-        issues.append(str(exc))
+
+def _nf4_bf16_inputs(inputs) -> Sequence[str]:
+    return [
+        *_w4a16_activation_issues(inputs, dtype="bfloat16", label="NF4 bf16"),
+        *_nf4_weight_issues(inputs.get("weight", {}), _shape(inputs.get("x"))),
+    ]
+
+
+def _swiglu_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    x = inputs.get("x", {})
+    gate = inputs.get("gate_weight", {})
+    up = inputs.get("up_weight", {})
+    down = inputs.get("down_weight", {})
+    x_shape, gate_shape = _shape(x), _shape(gate)
+    up_shape, down_shape = _shape(up), _shape(down)
+    issues: list[str] = [
+        f"{name} must be an ordinary tensor"
+        for name, record in (
+            ("x", x),
+            ("gate_weight", gate),
+            ("up_weight", up),
+            ("down_weight", down),
+        )
+        if "quantization" in record
+    ]
+    if x_shape is None or not x_shape or _numel(x_shape) <= 0 or x_shape[-1] <= 0:
+        issues.append("x must be non-empty with a positive last dimension")
+    for name, shape in (
+        ("gate_weight", gate_shape),
+        ("up_weight", up_shape),
+        ("down_weight", down_shape),
+    ):
+        if shape is None or len(shape) != 2 or _numel(shape) <= 0:
+            issues.append(f"{name} must be a non-empty rank-2 tensor")
+    gate_rank2 = gate_shape is not None and len(gate_shape) == 2
+    if gate_rank2 and up_shape is not None and up_shape != gate_shape:
+        issues.append("gate_weight and up_weight shapes must match")
+    if gate_rank2 and x_shape and x_shape[-1] != gate_shape[1]:
+        issues.append("x last dimension must equal gate_weight in_features")
+    if gate_rank2 and down_shape is not None and down_shape != [gate_shape[1], gate_shape[0]]:
+        issues.append("down_weight shape must be [hidden_size, intermediate_size]")
+    dtypes = {
+        record.get("dtype")
+        for record in (x, gate, up, down)
+        if record.get("dtype") is not None
+    }
+    if len(dtypes) > 1:
+        issues.append("x, gate_weight, up_weight, and down_weight dtypes must match")
+    return issues
+
+
+def _sdpa_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    query = inputs.get("query", {})
+    key = inputs.get("key", {})
+    value = inputs.get("value", {})
+    q_shape, k_shape, v_shape = _shape(query), _shape(key), _shape(value)
+    if q_shape is None or len(q_shape) != 4 or _numel(q_shape) <= 0:
+        return ["query must be a non-empty rank-4 [batch, heads, seq, head_dim] tensor"]
+    issues: list[str] = [
+        f"{name} must be a non-empty rank-4 [batch, kv_heads, seq, head_dim] tensor"
+        for name, shape in (("key", k_shape), ("value", v_shape))
+        if shape is None or len(shape) != 4 or _numel(shape) <= 0
+    ]
+    if issues:
+        return issues
+    if k_shape[0] != q_shape[0] or v_shape[0] != q_shape[0]:
+        issues.append("query, key, and value batch dimensions must match")
+    if k_shape != v_shape:
+        issues.append("key and value shapes must match")
+    if k_shape[3] != q_shape[3] or v_shape[3] != q_shape[3]:
+        issues.append("query, key, and value head dimensions must match")
+    if q_shape[1] % k_shape[1]:
+        issues.append(
+            "query heads must be a multiple of key/value kv_heads (MHA, GQA, or MQA)"
+        )
+    dtypes = {
+        record.get("dtype")
+        for record in (query, key, value)
+        if record.get("dtype") is not None
+    }
+    if len(dtypes) > 1:
+        issues.append("query, key, and value dtypes must match")
+    return issues
+
+
+def _sdpa_outputs(outputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    shape = _shape(outputs.get("attn_output"))
+    if shape is None or len(shape) != 4 or _numel(shape) <= 0:
+        return ["attn_output must be a non-empty rank-4 [batch, heads, seq, head_dim] tensor"]
+    return []
+
+
+def _sdpa_relation(
+    inputs: Mapping[str, dict[str, Any]], outputs: Mapping[str, dict[str, Any]]
+) -> Sequence[str]:
+    query = inputs.get("query", {})
+    attn_output = outputs.get("attn_output", {})
+    issues: list[str] = []
+    if _shape(query) and _shape(attn_output) and _shape(attn_output) != _shape(query):
+        issues.append("attn_output.shape must equal query.shape")
+    if query.get("dtype") is not None and attn_output.get("dtype") != query.get("dtype"):
+        issues.append("attn_output.dtype must equal query.dtype")
     return issues
 
 
@@ -308,9 +485,19 @@ def _build_builtin_contracts() -> tuple[ExecutableContract, ...]:
                     description="Float32 x @ dequantized INT8 weight.T; no bias or integer accumulation",
                 ),
                 ExecutableContract(
+                    id="linear/affine-int8-bias/v1", inputs=("x", "weight", "bias"), outputs=("y",),
+                    validate_inputs=_int8_bias_linear_inputs, validate_relation=_int8_linear_relation,
+                    description="Float32 x @ dequantized INT8 weight.T + float32 bias; no integer accumulation",
+                ),
+                ExecutableContract(
                     id="linear/affine-w4a16/v1", inputs=("x", "weight"), outputs=("y",),
                     validate_inputs=_w4a16_inputs, validate_relation=_w4a16_relation,
                     description="Float16 x, affine INT4/UINT4 weight, float32 dequant/matmul, float16 y; no bias",
+                ),
+                ExecutableContract(
+                    id="linear/affine-w4a16-bf16/v1", inputs=("x", "weight"), outputs=("y",),
+                    validate_inputs=_w4a16_bf16_inputs, validate_relation=_w4a16_bf16_relation,
+                    description="Bfloat16 x, affine INT4/UINT4 weight, float32 dequant/matmul, one nearest-even bfloat16 y; no bias",
                 ),
                 ExecutableContract(
                     id="linear/nf4-w4a16/v1", inputs=("x", "weight"), outputs=("y",),
@@ -318,13 +505,35 @@ def _build_builtin_contracts() -> tuple[ExecutableContract, ...]:
                     description="Float16 x, explicit NF4 codebook/block scales, float32 dequant/matmul, float16 y",
                 ),
                 ExecutableContract(
+                    id="linear/nf4-w4a16-bf16/v1", inputs=("x", "weight"), outputs=("y",),
+                    validate_inputs=_nf4_bf16_inputs, validate_relation=_w4a16_bf16_relation,
+                    description="Bfloat16 x, explicit NF4 codebook/block scales, float32 dequant/matmul, one nearest-even bfloat16 y",
+                ),
+                ExecutableContract(
                     id="rmsnorm/last-dim/v1",
                     inputs=("x", "weight", "epsilon"),
                     outputs=("y",),
                     validate_inputs=_rmsnorm_inputs,
                     validate_outputs=_rmsnorm_outputs,
-                    validate_relation=_rmsnorm_relation,
+                    validate_relation=_y_matches_x_relation,
                     description="RMSNorm over the last dimension with weight and scalar epsilon",
+                ),
+                ExecutableContract(
+                    id="swiglu/mlp/v1",
+                    inputs=("x", "gate_weight", "up_weight", "down_weight"),
+                    outputs=("y",),
+                    validate_inputs=_swiglu_inputs,
+                    validate_relation=_y_matches_x_relation,
+                    description="SwiGLU MLP: down_weight @ (silu(gate_weight @ x) * (up_weight @ x)) over the last dimension",
+                ),
+                ExecutableContract(
+                    id="attention/sdpa-gqa/v1",
+                    inputs=("query", "key", "value"),
+                    outputs=("attn_output",),
+                    validate_inputs=_sdpa_inputs,
+                    validate_outputs=_sdpa_outputs,
+                    validate_relation=_sdpa_relation,
+                    description="Scaled dot-product attention over rank-4 tensors with MHA, GQA, or MQA head grouping",
                 ),
                 ExecutableContract(
                     id="rope/rotate-half/v1",
