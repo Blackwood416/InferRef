@@ -1,7 +1,9 @@
 // Self-test for the generic runtime bridge (cpp/include/inferref/bridge.hpp).
 //
 // Covers end-to-end dispatch with a KV-append stub engine, missing-region
-// failure, missing-output-role failure, and output-directory redirection.
+// failure, missing-output-role failure, output-directory redirection, and
+// batch-manifest execution: validation, ordered dispatch in one process,
+// partial failure, per-item manifests, and batch-results.json.
 // With one argument it also loads the committed 0.4 quantization goldens
 // directory and checks that the Testcase-aware callback can read the
 // descriptor, parameters, and dequantized values, that the legacy callback
@@ -10,6 +12,8 @@
 // With two arguments it loads the given testcase directory and writes engine
 // outputs to the given output directory, which is how the fixture
 // cross-language comparison is exercised in development.
+// With `--batch-manifest FILE` it runs that manifest through the KV stub,
+// which is how the Python batch test drives a real engine.
 
 #include <inferref/bridge.hpp>
 
@@ -266,6 +270,323 @@ void WriteKvTestcase(const std::string &dir)
         "}\n");
 }
 
+std::string JsonQuote(const std::string &value)
+{
+    std::string out = "\"";
+    for (const char ch : value)
+    {
+        if (ch == '"' || ch == '\\')
+            out += '\\';
+        out += ch;
+    }
+    out += "\"";
+    return out;
+}
+
+// One testcase whose region the KV stub does not implement: the item is
+// loaded and dispatched, then fails inside the callback.
+void WriteUnsupportedRegionTestcase(const std::string &dir)
+{
+    std::filesystem::create_directories(dir + "/inputs");
+    inferref::WriteIRTensor(dir + "/inputs/x.irtensor",
+                            MakeFloat32({1}, {1.0f}));
+    WriteFile(dir + "/testcase.json",
+              "{\"format\": \"inferref-testcase\","
+              " \"format_version\": \"0.2\","
+              " \"origin\": {\"region\": \"unsupported/region/v1\"},"
+              " \"inputs\": [{\"name\": \"x\","
+              " \"payload\": \"inputs/x.irtensor\"}],"
+              " \"outputs\": [{\"name\": \"y\"}]}");
+}
+
+void WriteBatchManifest(const std::string &path,
+                        const std::vector<inferref::BatchItem> &items)
+{
+    std::string text =
+        "{\n  \"format\": \"inferref-batch\",\n"
+        "  \"format_version\": \"1.0\",\n  \"items\": [\n";
+    for (std::size_t i = 0; i < items.size(); ++i)
+    {
+        text += "    {\"id\": " + JsonQuote(items[i].id) +
+                ", \"testcase_dir\": " + JsonQuote(items[i].testcase_dir) +
+                ", \"output_dir\": " + JsonQuote(items[i].output_dir) + "}";
+        text += i + 1 == items.size() ? "\n" : ",\n";
+    }
+    text += "  ]\n}\n";
+    WriteFile(path, text);
+}
+
+inferref::json::Value LoadBatchResults(const std::string &manifest_dir)
+{
+    return inferref::json::Parse(ReadFile(manifest_dir +
+                                          "/batch-results.json"));
+}
+
+void TestBatchManifestValidation(const std::string &base)
+{
+    std::printf("batch manifest validation\n");
+    const std::string dir = base + "/batch-manifest";
+    std::filesystem::create_directories(dir);
+
+    // A valid manifest resolves relative item paths against its own directory
+    // and keeps manifest order.
+    const std::string valid_path = dir + "/valid.json";
+    WriteBatchManifest(valid_path, {{"first", "cases/first", "out/first"},
+                                    {"second", "cases/second", "out/second"}});
+    const std::vector<inferref::BatchItem> items =
+        inferref::LoadBatchManifest(valid_path);
+    Check(items.size() == 2 && items[0].id == "first" &&
+              items[1].id == "second",
+          "valid manifest keeps item order and ids");
+    Check(items[0].testcase_dir ==
+              std::filesystem::path(dir + "/cases/first").generic_string(),
+          "relative testcase_dir resolves against the manifest directory");
+    Check(items[1].output_dir ==
+              std::filesystem::path(dir + "/out/second").generic_string(),
+          "relative output_dir resolves against the manifest directory");
+
+    struct InvalidCase
+    {
+        const char *name;
+        const char *text;
+        const char *fragment;
+    };
+    const InvalidCase cases[] = {
+        {"not-json", "{", "not valid JSON"},
+        {"wrong-format",
+         "{\"format\": \"inferref-other\", \"format_version\": \"1.0\","
+         " \"items\": [{\"id\": \"a\", \"testcase_dir\": \"a\","
+         " \"output_dir\": \"b\"}]}",
+         "format must be 'inferref-batch'"},
+        {"wrong-version",
+         "{\"format\": \"inferref-batch\", \"format_version\": \"2.0\","
+         " \"items\": [{\"id\": \"a\", \"testcase_dir\": \"a\","
+         " \"output_dir\": \"b\"}]}",
+         "format_version"},
+        {"empty-items",
+         "{\"format\": \"inferref-batch\", \"format_version\": \"1.0\","
+         " \"items\": []}",
+         "must not be empty"},
+        {"missing-id",
+         "{\"format\": \"inferref-batch\", \"format_version\": \"1.0\","
+         " \"items\": [{\"testcase_dir\": \"a\","
+         " \"output_dir\": \"b\"}]}",
+         "missing 'id'"},
+        {"missing-output-dir",
+         "{\"format\": \"inferref-batch\", \"format_version\": \"1.0\","
+         " \"items\": [{\"id\": \"a\", \"testcase_dir\": \"a\"}]}",
+         "missing 'output_dir'"},
+        {"duplicate-id",
+         "{\"format\": \"inferref-batch\", \"format_version\": \"1.0\","
+         " \"items\": [{\"id\": \"a\", \"testcase_dir\": \"a\","
+         " \"output_dir\": \"b\"}, {\"id\": \"a\","
+         " \"testcase_dir\": \"c\", \"output_dir\": \"d\"}]}",
+         "duplicate batch item id"},
+        {"traversal",
+         "{\"format\": \"inferref-batch\", \"format_version\": \"1.0\","
+         " \"items\": [{\"id\": \"a\","
+         " \"testcase_dir\": \"../escape\", \"output_dir\": \"b\"}]}",
+         "'..' path segments"},
+    };
+    for (const InvalidCase &invalid : cases)
+    {
+        const std::string path = dir + "/" + invalid.name + ".json";
+        WriteFile(path, invalid.text);
+        try
+        {
+            inferref::LoadBatchManifest(path);
+            Check(false, std::string("rejects ") + invalid.name);
+        }
+        catch (const inferref::BatchManifestError &error)
+        {
+            Check(std::string(error.what()).find(invalid.fragment) !=
+                      std::string::npos,
+                  std::string("rejects ") + invalid.name + " (" +
+                      error.what() + ")");
+        }
+    }
+
+    // A rejected manifest runs no item and publishes no results file.
+    const inferref::DebugInvoke invoke =
+        [](const std::string &,
+           const std::map<std::string, inferref::IRTensor> &)
+        -> std::map<std::string, inferref::IRTensor>
+    { throw std::runtime_error("callback must not run"); };
+    const int code =
+        inferref::RunBridgeBatch(dir + "/traversal.json", invoke);
+    Check(code == inferref::kBridgeError,
+          "invalid batch manifest returns kBridgeError");
+    Check(!std::filesystem::exists(dir + "/batch-results.json"),
+          "invalid batch manifest writes no batch-results.json");
+}
+
+void TestBatchExecution(const std::string &base)
+{
+    std::printf("batch manifest with one failing item\n");
+    const std::string dir = base + "/batch-mixed";
+    WriteKvTestcase(dir + "/case-a");
+    WriteUnsupportedRegionTestcase(dir + "/case-b");
+    WriteKvTestcase(dir + "/case-c");
+    const std::string manifest_path = dir + "/batch.json";
+    WriteBatchManifest(manifest_path, {{"step-a", "case-a", "out-a"},
+                                       {"step-b", "case-b", "out-b"},
+                                       {"step-c", "case-c", "out-c"}});
+
+    std::vector<std::string> regions;
+    int calls = 0;
+    const inferref::DebugInvoke invoke =
+        [&](const std::string &region_name,
+            const std::map<std::string, inferref::IRTensor> &inputs)
+    {
+        ++calls;
+        regions.push_back(region_name);
+        return KVInvoke(region_name, inputs);
+    };
+    const int code = inferref::RunBridgeBatch(manifest_path, invoke);
+    Check(code == inferref::kBridgeError,
+          "a batch with a failing item exits non-zero");
+    Check(calls == 3, "one callback invocation per item in one process");
+    Check(regions == std::vector<std::string>({"kv-cache/append/v1",
+                                               "unsupported/region/v1",
+                                               "kv-cache/append/v1"}),
+          "items dispatch in manifest order");
+    Check(std::filesystem::exists(dir + "/out-a/manifest.json"),
+          "first item writes its manifest.json");
+    Check(!std::filesystem::exists(dir + "/out-b/manifest.json"),
+          "failing item writes no manifest.json");
+    Check(std::filesystem::exists(dir + "/out-c/manifest.json"),
+          "execution continues after a failing item");
+
+    const inferref::json::Value results = LoadBatchResults(dir);
+    Check(results.At("format").string == inferref::kBatchResultsFormat,
+          "batch-results.json format is inferref-batch-results");
+    Check(results.At("format_version").string == "1.0",
+          "batch-results.json format_version is 1.0");
+    const inferref::json::Array &recorded = results.At("items").array;
+    Check(recorded.size() == 3,
+          "batch-results.json records every item in order");
+    Check(recorded[0].At("id").string == "step-a" &&
+              recorded[1].At("id").string == "step-b" &&
+              recorded[2].At("id").string == "step-c",
+          "batch-results.json keeps item ids in manifest order");
+    Check(recorded[0].At("status").string == "passed" &&
+              recorded[2].At("status").string == "passed",
+          "passing items are recorded as passed");
+    Check(recorded[1].At("status").string == "failed" &&
+              static_cast<int>(recorded[1].At("exit_code").number) ==
+                  inferref::kBridgeError,
+          "the failing item records status and exit code");
+    Check(recorded[1].At("error").IsString() &&
+              recorded[1].At("error").string.find("unknown region") !=
+                  std::string::npos,
+          "the failing item records its diagnostic");
+    Check(recorded[0].At("error").IsNull(),
+          "passing items record a null error");
+    Check(recorded[0].At("testcase_dir").string ==
+              std::filesystem::path(dir + "/case-a").generic_string() &&
+              recorded[0].At("output_dir").string ==
+                  std::filesystem::path(dir + "/out-a").generic_string(),
+          "batch-results.json records resolved item paths");
+    const inferref::json::Value &counts = results.At("counts");
+    Check(static_cast<int>(counts.At("total").number) == 3 &&
+              static_cast<int>(counts.At("passed").number) == 2 &&
+              static_cast<int>(counts.At("failed").number) == 1,
+          "batch-results.json counts total, passed, and failed");
+}
+
+void TestBatchAllPass(const std::string &base)
+{
+    std::printf("batch manifest with every item passing\n");
+    const std::string dir = base + "/batch-pass";
+    WriteKvTestcase(dir + "/case-1");
+    WriteKvTestcase(dir + "/case-2");
+    const std::string manifest_path = dir + "/batch.json";
+    WriteBatchManifest(manifest_path, {{"step-1", "case-1", "out-1"},
+                                       {"step-2", "case-2", "out-2"}});
+
+    int calls = 0;
+    bool saw_testcase = false;
+    const inferref::DebugInvokeEx invoke =
+        [&](const inferref::Testcase &testcase, const std::string &region_name,
+            const std::map<std::string, inferref::IRTensor> &inputs)
+        -> std::map<std::string, inferref::IRTensor>
+    {
+        ++calls;
+        saw_testcase = testcase.FormatVersion() == "0.2";
+        return KVInvoke(region_name, inputs);
+    };
+    const int code = inferref::RunBridgeBatch(manifest_path, invoke);
+    Check(code == inferref::kBridgeOk,
+          "an all-passing batch exits zero");
+    Check(calls == 2, "testcase-aware callback runs once per item");
+    Check(saw_testcase, "batch callback receives the loaded Testcase");
+    Check(std::filesystem::exists(dir + "/out-1/manifest.json") &&
+              std::filesystem::exists(dir + "/out-2/manifest.json"),
+          "every passing item writes its manifest.json");
+
+    const inferref::json::Value results = LoadBatchResults(dir);
+    const inferref::json::Array &recorded = results.At("items").array;
+    Check(recorded.size() == 2 &&
+              recorded[0].At("status").string == "passed" &&
+              recorded[1].At("status").string == "passed",
+          "every item is recorded as passed");
+    Check(static_cast<int>(results.At("counts").At("passed").number) == 2 &&
+              static_cast<int>(results.At("counts").At("failed").number) == 0,
+          "counts report no failures");
+}
+
+// The legacy batch callback must refuse a quantized item exactly like the
+// single-testcase legacy path (exit code 4) and still run later items.
+void TestBatchQuantizationGuard(const std::string &base,
+                                const std::string &goldens_dir)
+{
+    std::printf("batch legacy callback refuses a quantized item\n");
+    const std::string dir = base + "/batch-quantized";
+    WriteKvTestcase(dir + "/case-plain");
+    const std::string quantized_dir =
+        std::filesystem::absolute(std::filesystem::path(goldens_dir) /
+                                  "cases/int8-per-group")
+            .generic_string();
+    Check(std::filesystem::exists(quantized_dir + "/testcase.json"),
+          "committed int8-per-group 0.4 fixture is present");
+    // Absolute paths are taken as given; the plain item stays relative.
+    const std::string manifest_path = dir + "/batch.json";
+    WriteBatchManifest(manifest_path,
+                       {{"quantized", quantized_dir, dir + "/out-quantized"},
+                        {"plain", "case-plain", "out-plain"}});
+
+    int calls = 0;
+    const inferref::DebugInvoke invoke =
+        [&](const std::string &region_name,
+            const std::map<std::string, inferref::IRTensor> &inputs)
+    {
+        ++calls;
+        return KVInvoke(region_name, inputs);
+    };
+    const int code = inferref::RunBridgeBatch(manifest_path, invoke);
+    Check(code == inferref::kBridgeError,
+          "a refused quantized item fails the batch");
+    Check(calls == 1,
+          "the quantized item never reaches the legacy callback");
+    Check(!std::filesystem::exists(dir + "/out-quantized/manifest.json"),
+          "a refused quantized item writes no manifest.json");
+    Check(std::filesystem::exists(dir + "/out-plain/manifest.json"),
+          "the batch continues after a refused quantized item");
+
+    const inferref::json::Value results = LoadBatchResults(dir);
+    const inferref::json::Array &recorded = results.At("items").array;
+    Check(recorded[0].At("status").string == "failed" &&
+              static_cast<int>(recorded[0].At("exit_code").number) ==
+                  inferref::kBridgeUnsupportedQuantization,
+          "the quantized item records kBridgeUnsupportedQuantization (4)");
+    Check(recorded[0].At("error").IsString() &&
+              recorded[0].At("error").string.find("unsupported_quantization") !=
+                  std::string::npos,
+          "the quantized item records the legacy diagnostic");
+    Check(recorded[1].At("status").string == "passed",
+          "the later plain item passes");
+}
+
 void TestEndToEnd(const std::string &base)
 {
     std::printf("end-to-end KV dispatch through RunBridge\n");
@@ -504,6 +825,14 @@ int main(int argc, char **argv)
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("InferRef bridge.hpp C++ self-test\n\n");
 
+    if (argc > 2 && std::string(argv[1]) == "--batch-manifest")
+    {
+        // External batch mode: run every manifest item through the KV stub in
+        // this one process.
+        std::printf("bridge batch: %s\n", argv[2]);
+        return inferref::RunBridgeBatch(argv[2], KVInvoke);
+    }
+
     if (argc > 2)
     {
         // External mode: run the KV stub against a real testcase directory and
@@ -522,10 +851,16 @@ int main(int argc, char **argv)
         TestMissingOutputRole(base);
         TestExtraOutputRole(base);
         TestUnquantizedTestcaseAwareDispatch(base);
+        TestBatchManifestValidation(base);
+        TestBatchExecution(base);
+        TestBatchAllPass(base);
         if (goldens_dir.empty())
             std::printf("quantization fixtures not provided; skipping\n");
         else
+        {
             TestQuantizedDispatch(goldens_dir);
+            TestBatchQuantizationGuard(base, goldens_dir);
+        }
     }
     catch (const std::exception &error)
     {

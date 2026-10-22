@@ -5,6 +5,11 @@
 // another adapter:
 //
 //     inferref-bridge --testcase testcase/ --output output/
+//     inferref-bridge --batch-manifest batch.json
+//
+// Batch mode (InferRef 0.12 section 7.3) dispatches every manifest item
+// through the one registered callback in this process, so the engine is
+// initialized once.  batch-results.json is written next to the manifest.
 
 #include <inferref/bridge.hpp>
 
@@ -17,6 +22,7 @@ int main(int argc, char **argv)
 {
     std::string testcase_dir;
     std::string output_dir;
+    std::string batch_manifest;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
@@ -24,10 +30,22 @@ int main(int argc, char **argv)
             testcase_dir = argv[++i];
         else if (arg == "--output" && i + 1 < argc)
             output_dir = argv[++i];
+        else if (arg == "--batch-manifest" && i + 1 < argc)
+            batch_manifest = argv[++i];
     }
-    if (testcase_dir.empty() || output_dir.empty())
+    if (!batch_manifest.empty())
     {
-        std::cerr << "usage: inferref-bridge --testcase DIR --output DIR\n";
+        if (!testcase_dir.empty() || !output_dir.empty())
+        {
+            std::cerr << "inferref-bridge: --batch-manifest cannot be combined "
+                         "with --testcase/--output\n";
+            return inferref::kBridgeUsage;
+        }
+    }
+    else if (testcase_dir.empty() || output_dir.empty())
+    {
+        std::cerr << "usage: inferref-bridge --testcase DIR --output DIR\n"
+                     "       inferref-bridge --batch-manifest FILE\n";
         return inferref::kBridgeUsage;
     }
 
@@ -45,6 +63,9 @@ int main(int argc, char **argv)
         throw std::runtime_error(
             "inferref-bridge: no DebugInvoke registered by the runtime");
     };
+
+    if (!batch_manifest.empty())
+        return inferref::RunBridgeBatch(batch_manifest, invoke);
 
     return inferref::RunBridge(testcase_dir, output_dir, invoke);
 }
