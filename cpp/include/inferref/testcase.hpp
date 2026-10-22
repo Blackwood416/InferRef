@@ -349,7 +349,10 @@ private:
     }
 
     // Parse and cross-check every quantization descriptor, parameter payload,
-    // and dependency reference.  Any inconsistency fails the whole Load().
+    // and dependency reference: the structural and header rules of the Python
+    // validate_testcase.  Any inconsistency fails the whole Load().  Numeric
+    // validity (for example a strictly positive scale) is enforced later, by
+    // dequantization, matching the Python reference.
     void LoadQuantization(const json::Value &root)
     {
         try
@@ -447,7 +450,8 @@ private:
             const auto payload = input_payloads_.find(name);
             if (payload == input_payloads_.end())
                 continue;  // declared role without a runnable payload
-            const IRTensor tensor = ReadIRTensor(dir_ + "/" + payload->second);
+            const IRTensor tensor = ReadPayloadTensor(
+                payload->second, "input role '" + name + "'");
             const json::Value &entry = RoleEntry(root, "inputs", name);
             ValidatePayloadMetadata(entry, tensor,
                                     "input role '" + name + "'");
@@ -667,6 +671,24 @@ private:
         }
     }
 
+    // Payload read failures (absent file, truncated header, ...) are reported
+    // as TestcaseError so Load() exposes one error class for an invalid
+    // testcase directory.  The context names the offending value ID or role;
+    // the message also carries the payload path.
+    IRTensor ReadPayloadTensor(const std::string &payload,
+                               const std::string &context) const
+    {
+        try
+        {
+            return ReadIRTensor(dir_ + "/" + payload);
+        }
+        catch (const IRTensorError &error)
+        {
+            throw TestcaseError(context + " payload '" + payload +
+                                "' is unreadable: " + error.what());
+        }
+    }
+
     std::map<std::int64_t, IRTensor> ParseQuantizationParameters(
         const json::Value &root,
         const std::map<std::int64_t, ValueRecord> &values,
@@ -800,10 +822,11 @@ private:
         // metadata and the value registry record.
         for (const Declaration &declaration : declarations)
         {
-            const IRTensor tensor = ReadIRTensor(dir_ + "/" + declaration.payload);
             const std::string context =
                 "quantization parameter '" + std::to_string(declaration.value_id) +
                 "'";
+            const IRTensor tensor =
+                ReadPayloadTensor(declaration.payload, context);
             ValidatePayloadMetadata(*declaration.entry, tensor, context);
             const ValueRecord &record = values.at(declaration.value_id);
             if (record.dtype != DataTypeName(tensor.dtype) ||

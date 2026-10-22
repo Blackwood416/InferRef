@@ -680,6 +680,24 @@ void TestFailClosedRules(const std::string &base)
                            "missing quantization_parameters");
     }
     {
+        // A declared parameter whose payload file is absent must surface as a
+        // TestcaseError, never as a raw IRTensorError from the payload reader.
+        const std::string dir = BeginCase(base, "missing-parameter-payload");
+        WriteTensor(dir + "/inputs/weight.irtensor",
+                    MakeInt8({2, 3}, {-128, -3, 0, 1, 5, 127}));
+        WriteTensor(dir + "/quantization_parameters/v11.irtensor", MakeInt8({}, {3}));
+        WriteManifest(dir, Manifest(
+            InputRole("weight", 100, "inputs/weight.irtensor", "int8", {2, 3},
+                      affine_descriptor),
+            affine_values,
+            ParameterEntry(10, "quantization_parameters/v10.irtensor", "float32", {}) +
+                ", " + ParameterEntry(11, "quantization_parameters/v11.irtensor",
+                                      "int8", {})));
+        ExpectLoadRejected(dir, "an absent parameter payload is rejected",
+                           "payload 'quantization_parameters/v10.irtensor' is"
+                           " unreadable");
+    }
+    {
         const std::string dir = BeginCase(base, "duplicate-value-ids");
         WriteManifest(dir, Manifest(
             InputRole("weight", 100, "inputs/weight.irtensor", "int8", {2, 3},

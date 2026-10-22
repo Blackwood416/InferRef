@@ -65,5 +65,12 @@ add_test(NAME irtensor_selftest COMMAND inferref_selftest)
 add_test(NAME fp8_selftest COMMAND inferref_fp8_selftest)
 add_test(NAME packed_selftest COMMAND inferref_packed_selftest)
 add_test(NAME testcase_selftest COMMAND inferref_testcase_selftest)
-add_test(NAME quantization_selftest COMMAND inferref_quantization_selftest)
+# The committed Python goldens are the reference for the 0.4 quantization ABI;
+# passing the fixture directory makes `ctest` alone prove Python/C++ bit
+# agreement instead of only the self-contained cases.
+get_filename_component(INFERREF_QUANTIZATION_GOLDENS_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/cpp_quantization_goldens" ABSOLUTE)
+add_test(NAME quantization_selftest
+    COMMAND inferref_quantization_selftest
+            ${INFERREF_QUANTIZATION_GOLDENS_DIR})
 add_test(NAME bridge_selftest COMMAND inferref_bridge_selftest)
