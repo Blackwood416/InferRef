@@ -257,7 +257,12 @@ class AdapterCapabilities:
 
         capability = self.contract_capabilities.get(contract)
         if capability is None:
-            return []
+            # A declared contract without a refinement entry must still satisfy
+            # its role-derived requirements, so check them against the
+            # adapter-wide declaration instead of accepting it unchecked.
+            capability = ContractCapability(
+                dtypes=self.dtypes, max_rank=self.max_rank, features=self.features
+            )
         issues: list[dict[str, Any]] = []
         for dtype in requirements.get("dtypes", []):
             if capability.dtypes is not None and dtype not in capability.dtypes:

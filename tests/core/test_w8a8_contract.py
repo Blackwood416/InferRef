@@ -415,22 +415,25 @@ def _w8a8_case(tmp_path: Path) -> Path:
     ).path
 
 
-def _adapter(path: Path, features: list[str]) -> Path:
+def _adapter(
+    path: Path, features: list[str], *, with_contract_capabilities: bool = True
+) -> Path:
     """Probe adapter whose engine command must never do real work."""
-    capabilities = {
+    capabilities: dict[str, object] = {
         "device_types": ["cpu"],
         "dtypes": ["float32", "int8"],
         "max_rank": 2,
         "features": features,
         "contracts": [CONTRACT],
-        "contract_capabilities": {
+    }
+    if with_contract_capabilities:
+        capabilities["contract_capabilities"] = {
             CONTRACT: {
                 "dtypes": ["float32", "int8"],
                 "max_rank": 2,
                 "features": list(features),
             }
-        },
-    }
+        }
     path.write_text(
         json.dumps(
             {
@@ -467,6 +470,37 @@ def test_preflight_rejects_a_missing_w8a8_feature_token(tmp_path: Path) -> None:
 def test_preflight_accepts_a_declared_w8a8_feature_token(tmp_path: Path) -> None:
     case = _w8a8_case(tmp_path)
     adapter = _adapter(tmp_path / "adapter.json", [PER_TENSOR, W8A8_FEATURE])
+    result = execute_adapter(case, EngineAdapter.load(adapter), tmp_path / "runs")
+    assert "unsupported" not in result
+    # The probe command declines to run, so reaching execution proves preflight passed.
+    assert result["status"] == "execution_error"
+    assert result["execution"] is not None
+
+
+def test_preflight_rejects_a_missing_w8a8_token_without_a_refinement(
+    tmp_path: Path,
+) -> None:
+    case = _w8a8_case(tmp_path)
+    adapter = _adapter(
+        tmp_path / "adapter.json", [PER_TENSOR], with_contract_capabilities=False
+    )
+    result = execute_adapter(case, EngineAdapter.load(adapter), tmp_path / "runs")
+    assert result["status"] == "unsupported"
+    assert result["execution"] is None
+    assert result["unsupported"] == [
+        {"kind": "contract_feature", "contract": CONTRACT, "required": W8A8_FEATURE}
+    ]
+
+
+def test_preflight_accepts_an_adapter_wide_w8a8_token_without_a_refinement(
+    tmp_path: Path,
+) -> None:
+    case = _w8a8_case(tmp_path)
+    adapter = _adapter(
+        tmp_path / "adapter.json",
+        [PER_TENSOR, W8A8_FEATURE],
+        with_contract_capabilities=False,
+    )
     result = execute_adapter(case, EngineAdapter.load(adapter), tmp_path / "runs")
     assert "unsupported" not in result
     # The probe command declines to run, so reaching execution proves preflight passed.
