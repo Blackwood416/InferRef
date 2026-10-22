@@ -123,19 +123,23 @@ Add to `inferref/quantization/reference.py`:
 
 ```python
 def linear_w8a8_int32_reference(
-    inputs,
-    weights,
+    inputs,            # TensorView carrying int8 x codes
+    input_spec,        # QuantizationSpec for x
+    weights,           # TensorView carrying int8 weight codes
+    weight_spec,       # QuantizationSpec for weight
     *,
-    values,
+    values,            # parameter value_id -> TensorView
     bias=None,
 ) -> np.ndarray:
     """int8 x int8 -> int32 group accumulation -> float32 scaled output."""
 ```
 
-- `inputs`, `weights`, and `values` follow the existing `TensorView` conventions.
+- `inputs` and `weights` are quantized code `TensorView`s (int8), while
+  `input_spec` and `weight_spec` are their explicit descriptors.
+- `values` follows the existing `TensorView` parameter convention.
 - `bias` must be `None`; a non-`None` bias raises `QuantizationError`.
-- Validate both `QuantizationSpec` descriptors, parameter closure, shapes, axes,
-  group compatibility, scales, and zero points before allocating `y`.
+- Validate both descriptors, parameter closure, shapes, axes, group
+  compatibility, scales, and zero points before allocating `y`.
 - Return a C-contiguous `float32` array of shape `(M, N)`.
 
 Export it from `inferref/quantization/__init__.py`.
