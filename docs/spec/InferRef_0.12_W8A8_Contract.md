@@ -1,6 +1,7 @@
 # InferRef 0.12 W8A8 INT32 accumulation contract — design freeze
 
-- Status: **pending user sign-off**; I3b must not start before sign-off
+- Status: **approved 2026-10-22** — user confirmed all recommended defaults;
+  I3b starts from the merged Wave 1 baseline
 - Scope: `linear/w8a8-int32-accum/v1` reference semantics, validation, and tests
 - Related: [0.12 scope](InferRef_0.12_Core_Infrastructure.md) §6.2,
   [execution plan](InferRef_0.12_Execution_Plan.md) I3b
@@ -228,6 +229,10 @@ Injected-bug tests (must fail the comparison, not silently pass):
 - Group order reversed in the epilogue.
 
 ## 9. Open questions for sign-off
+
+**Approval:** on 2026-10-22 the user confirmed all recommended defaults below.
+The freeze is closed; I3b implements these semantics without further scope
+questions. Any later change requires a new freeze revision.
 
 Recommended defaults are marked **[R]**.
 

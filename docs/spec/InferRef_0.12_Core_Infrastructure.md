@@ -1,8 +1,8 @@
 # InferRef 0.12.0: Native Quantized Testcase ABI, Hardware Quantization Contracts, and Hierarchical Alignment Infrastructure
 
 > **Status:** Scope locked 2026-10-22. M1–M3 are the 0.12.0 release gate;
-> M4 is P1 and may ship in 0.12.0 or a later 0.12.x. The W8A8 formula must be
-> signed off before I3b starts. See the
+> M4 is P1 and may ship in 0.12.0 or a later 0.12.x. The W8A8 formula was
+> signed off on 2026-10-22; I3b starts from the merged Wave 1 baseline. See the
 > [execution plan](InferRef_0.12_Execution_Plan.md) and
 > [W8A8 contract freeze](InferRef_0.12_W8A8_Contract.md).
 > Linux verification is deferred until WSL is enabled by the user; Windows and

@@ -125,10 +125,12 @@ Acceptance gate:
 - Full core suite green; no frontend regressions.
 - numpy-only; no Torch import in core paths.
 
-### I3b — W8A8 INT32 accumulation (Wave 1b, P0; after sign-off)
+### I3b — W8A8 INT32 accumulation (Wave 1b, P0; approved 2026-10-22)
 
 Owner: same Python core developer as I3a, separate branch
-`feat/0.12-i3b-w8a8`.
+`feat/0.12-i3b-w8a8`, based on the merged Wave 1 commit. The freeze is approved;
+use [InferRef_0.12_W8A8_Contract.md](InferRef_0.12_W8A8_Contract.md) as the
+implemented semantics.
 
 Exclusive files: same set as I3a, plus `tests/core/test_w8a8_reference.py`.
 
