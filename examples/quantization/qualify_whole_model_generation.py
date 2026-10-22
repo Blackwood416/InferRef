@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 
 from inferref.agent.executor import execute_adapter
 from inferref.agent.protocol import EngineAdapter
@@ -65,6 +64,7 @@ def run_reference_generation(
     max_new_tokens: int = 4,
     device: str = "cpu",
 ) -> WholeModelGenerationReference:
+    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(str(model_path))
@@ -336,6 +336,49 @@ def make_trace_package(root: Path, ref: WholeModelGenerationReference) -> TraceP
     return package
 
 
+def derive_report_status(
+    *,
+    adapter_used: bool,
+    steps: list[dict[str, Any]],
+    workflows: dict[str, Any] | None = None,
+) -> str:
+    """Return the report status derived from the executed comparisons.
+
+    A hard-coded ``pass`` is unsafe: the 0.11 report kept reporting success
+    even when a step comparison or a suite case failed.  With no engine adapter
+    the report is explicitly ``reference_only`` rather than a qualification
+    pass.
+    """
+
+    if not adapter_used:
+        return "reference_only"
+    if not steps:
+        return "fail"
+    for step in steps:
+        if step.get("adapter_status") != "pass":
+            return "fail"
+        if step.get("compare_pass") is not True:
+            return "fail"
+        if step.get("token_match") is False:
+            return "fail"
+
+    checks = workflows or {}
+    if checks.get("relocation_valid") is False:
+        return "fail"
+    if "agent" in checks and checks.get("agent") != "pass":
+        return "fail"
+    if checks.get("injected_error_detected") is False:
+        return "fail"
+    total = checks.get("suite_total")
+    if isinstance(total, (int, float)) and total and checks.get("suite_passed") != total:
+        return "fail"
+    if checks.get("alignment_status") not in (None, "pass"):
+        return "fail"
+    if checks.get("plan_run_agree") is False:
+        return "fail"
+    return "pass"
+
+
 def qualify_generation(
     output_dir: Path,
     model_path: Path,
@@ -360,9 +403,9 @@ def qualify_generation(
     package = make_trace_package(trace_dir, ref)
 
     result: dict[str, Any] = {
-        "status": "pass",
+        "status": "reference_only",
         "model": str(model_path),
-        "device": device,
+        "reference_device": device,
         "prompt": ref.prompt_text,
         "prompt_tokens": ref.prompt_tokens,
         "generated_tokens": ref.generated_tokens,
@@ -371,6 +414,7 @@ def qualify_generation(
     }
 
     adapter = EngineAdapter.load(adapter_path) if adapter_path else None
+    result["engine_device"] = adapter.target_device if adapter else None
     cases_dir = scenario_dir / "cases"
 
     for step in ref.steps:
@@ -452,6 +496,20 @@ def qualify_generation(
         result["plan_run_agree"] = runs[0].boundary == plan.candidates[0].boundary
 
     report_path = output_dir / "report.json"
+    workflow_keys = (
+        "relocation_valid",
+        "agent",
+        "injected_error_detected",
+        "suite_passed",
+        "suite_total",
+        "alignment_status",
+        "plan_run_agree",
+    )
+    result["status"] = derive_report_status(
+        adapter_used=adapter is not None,
+        steps=result["steps"],
+        workflows={key: result[key] for key in workflow_keys if key in result},
+    )
     report_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(f"Report written to {report_path}")
     return result

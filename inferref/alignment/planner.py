@@ -26,6 +26,10 @@ from inferref.alignment.boundaries import (
     inventory_boundaries,
     select_causal_descendants,
 )
+from inferref.alignment.narrowing import (
+    BINARY_SEARCH_REASON,
+    binary_search_probe,
+)
 from inferref.ir.operator import Annotation
 from inferref.ir.package import TracePackage
 from inferref.ir.region import RegionRecord
@@ -38,6 +42,9 @@ LARGE_BOUNDARY_PENALTY = 10
 IMMEDIATE_CHILD_BONUS = 40
 CAUSAL_CONE_BONUS = 20
 REUSABLE_TESTCASE_BONUS = 20
+# A midpoint probe must outrank the recommender's bounded heuristic score and
+# the causal/reuse bonuses; otherwise coarse-to-fine order is not deterministic.
+BINARY_SEARCH_BONUS = 1000
 
 
 @dataclass(frozen=True)
@@ -747,10 +754,36 @@ def plan_alignment(
     immediate_ids = set(inventory.child_ids(failure_id)) if failure_id is not None else set()
     causal_immediate = immediate_ids.intersection(causal_ids)
     selected_fixture_kind = _fixture_kind(session, fixture_kind)
+    boundary_states = {
+        boundary.id: _boundary_state(session, boundary, inventory)
+        for boundary in inventory.boundaries
+    }
+    binary_probe: str | None = None
+    if failure_id is not None:
+        parent = inventory.resolve(failure_id)
+        parent_state = boundary_states.get(failure_id) if parent is not None else None
+        if parent is not None and parent_state in {None, "failing"}:
+            probe = binary_search_probe(
+                inventory,
+                failure_id,
+                verified=tuple(
+                    boundary_id
+                    for boundary_id, state in boundary_states.items()
+                    if state == "verified"
+                ),
+                failing=tuple(
+                    boundary_id
+                    for boundary_id, state in boundary_states.items()
+                    if state == "failing"
+                ),
+                graph=package.graph,
+            )
+            if probe is not None:
+                binary_probe = inventory.resolve_id(probe)
 
     candidates: list[PlanCandidate] = []
     for boundary in inventory.boundaries:
-        state = _boundary_state(session, boundary, inventory)
+        state = boundary_states.get(boundary.id)
         if state in {"verified", "unsupported"}:
             continue
 
@@ -783,6 +816,10 @@ def plan_alignment(
         elif boundary.id in causal_ids:
             score += CAUSAL_CONE_BONUS
             reasons.append(f"+{CAUSAL_CONE_BONUS}: on reverse dependency cone of first failing output")
+
+        if binary_probe is not None and boundary.id == binary_probe:
+            score += BINARY_SEARCH_BONUS
+            reasons.append(BINARY_SEARCH_REASON)
 
         if _reusable_testcase(session, boundary, inventory):
             score += REUSABLE_TESTCASE_BONUS
@@ -878,6 +915,8 @@ class AlignmentPlanner:
 
 
 __all__ = [
+    "BINARY_SEARCH_BONUS",
+    "BINARY_SEARCH_REASON",
     "CAUSAL_CONE_BONUS",
     "DEFAULT_FIXTURE_KIND",
     "IMMEDIATE_CHILD_BONUS",

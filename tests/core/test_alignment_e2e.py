@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+import pytest
 
 from inferref.alignment import (
     AlignmentRunner,
@@ -231,3 +233,104 @@ def test_alignment_orchestrator_e2e(tmp_path: Path) -> None:
     assert sidecar["format"] == "inferref-alignment-report"
     assert "prefill" in md_text
     assert "decode" in md_text
+
+
+def test_whole_model_report_status_cannot_pass_after_failed_comparison(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    example = pytest.importorskip(
+        "examples.quantization.qualify_whole_model_generation"
+    )
+    prompt_tokens = [1, 2]
+    ref = example.WholeModelGenerationReference(
+        prompt_text="prompt",
+        prompt_tokens=prompt_tokens,
+        generated_tokens=[3],
+        generated_text="x",
+        steps=[
+            example.StepResult(
+                step_id="prefill",
+                input_tokens=prompt_tokens,
+                next_token_id=3,
+                next_token_text="x",
+                logits=np.zeros((1, 4), dtype=np.float32),
+            )
+        ],
+    )
+    monkeypatch.setattr(example, "run_reference_generation", lambda *a, **k: ref)
+    monkeypatch.setattr(
+        example,
+        "create_whole_model_scenario",
+        lambda scenario_dir, reference: scenario_dir,
+    )
+    monkeypatch.setattr(
+        example,
+        "make_trace_package",
+        lambda trace_dir, reference: SimpleNamespace(root=trace_dir),
+    )
+    monkeypatch.setattr(
+        example,
+        "execute_adapter",
+        lambda *a, **k: {
+            "status": "fail",
+            "comparison": {"status": "fail", "first_failure": {"output": "logits"}},
+            "run_id": None,
+        },
+    )
+    adapter_path = tmp_path / "adapter.json"
+    adapter_path.write_text(
+        json.dumps(
+            {
+                "format": "inferref-engine-adapter",
+                "format_version": "0.2",
+                "name": "fake-engine",
+                "target_device": "xpu",
+                "capabilities": {
+                    "device_types": ["xpu"],
+                    "dtypes": ["float32"],
+                    "max_rank": 4,
+                },
+                "command": ["{python}", "-c", "pass", "{testcase}", "{output}"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = example.qualify_generation(
+        tmp_path / "out",
+        tmp_path / "model",
+        adapter_path=adapter_path,
+        workflows=False,
+    )
+
+    assert result["status"] == "fail"
+    assert result["reference_device"] == "cpu"
+    assert result["engine_device"] == "xpu"
+    assert result["steps"][0]["compare_pass"] is False
+    report = json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+
+
+def test_whole_model_report_status_requires_comparisons_and_suite() -> None:
+    example = pytest.importorskip(
+        "examples.quantization.qualify_whole_model_generation"
+    )
+    passing = {"adapter_status": "pass", "compare_pass": True}
+
+    assert example.derive_report_status(adapter_used=True, steps=[passing]) == "pass"
+    assert (
+        example.derive_report_status(
+            adapter_used=True,
+            steps=[{**passing, "compare_pass": False}],
+        )
+        == "fail"
+    )
+    assert (
+        example.derive_report_status(
+            adapter_used=True,
+            steps=[passing],
+            workflows={"suite_passed": 1, "suite_total": 2},
+        )
+        == "fail"
+    )
+    assert example.derive_report_status(adapter_used=False, steps=[]) == "reference_only"
