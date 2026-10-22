@@ -62,6 +62,14 @@ benchmark and `--diagnostic-mode`) is P1 and is deferred to 0.12.x.
   in one adapter launch when the adapter declares the feature, and otherwise
   falls back to sequential execution with an explicit diagnostic.
 
+### Fixed
+
+- Guard the batch alignment path with the same quantized-comparison validation
+  as sequential execution. An unevaluable comparator now aborts before launch
+  and is reported as an error without false `fail` evidence.
+- Map batch results by request order so duplicate boundary ids cannot share a
+  run record or output directory, and honor `first_failure` overrides.
+
 ### Compatibility
 
 - Trace IR (`0.1`/`1.0`), `.irtensor` formats 1/2, testcase versions `0.1`–`0.4`

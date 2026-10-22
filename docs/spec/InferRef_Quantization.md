@@ -1,9 +1,10 @@
 # Native FP8 and quantization development plan
 
-Status: 0.11.0 shipped the Q1–Q4 milestones below. Historical acceptance
-sections are preserved as dated evidence; see the [0.11.0 release notes](../releases/0.11.0.md)
+Status: 0.11.0 shipped the Q1–Q4 milestones below; 0.12.0 ships the C++
+testcase `0.4` reader and reference dequantization (not GPU low-bit/fused
+kernels). Historical acceptance sections are preserved as dated evidence; see
+the [0.12.0 release notes](../releases/0.12.0.md)
 and the [2026-10-22 release audit](../dev/status/2026-10-22-v0110-release-audit.md).
-C++ execution of quantized testcases remains 0.12 scope.
 This document distinguishes shipped code from planned work; it does not claim
 that an FP8-capable reader can execute an FP8 kernel or a quantized model.
 

@@ -68,7 +68,7 @@ wheel/sdist builds, and release availability, see [distribution](docs/DISTRIBUTI
 
 The Trace IR represents `bool`, signed/unsigned 8/16/32/64-bit integers,
 `float16`, `bfloat16`, `float32`, `float64`, `complex64`, and `complex128`.
-The 0.11.0 release also supports native `float8_e4m3fn` and
+The 0.12.0 release also supports native `float8_e4m3fn` and
 `float8_e5m2` payloads, with numpy-only and dependency-free C++ decoding.
 FP8 comparison uses decoded values with exact tolerances by default; adapters
 must explicitly declare the exact FP8 dtype. This does not imply FP8 kernel or
@@ -88,10 +88,12 @@ accumulation or automatic capture of framework quantized tensors.
 See the [quantization implementation plan and FP8 API](docs/spec/InferRef_Quantization.md)
 for supported behavior, staged tasks, and acceptance criteria.
 
-**0.11.0 scope:** CPU artifact/reference workflows, whole-model causal generation,
-and Intel Arc GPU execution (Level Zero / SYCL) are qualified. Vendor fused
-low-bit kernels and optional AVX512 repacking remain outside this scope.
-See [release notes](docs/releases/0.11.0.md).
+**0.12.0 scope:** CPU artifact/reference workflows, native C++ testcase `0.4`
+consumption, hardware quantization contracts, hierarchical alignment with batch
+execution, and Intel Arc GPU execution (Level Zero / SYCL) are qualified. Vendor
+fused low-bit kernels and optional AVX512 repacking remain outside this scope.
+M4 Agent benchmarks and `--diagnostic-mode` are deferred to 0.12.x.
+See [release notes](docs/releases/0.12.0.md).
 
 The development version provides a standalone, numpy-only affine INT8 reference
 API (`inferref.quantization`) for per-tensor/per-axis/per-group quantization,
