@@ -179,6 +179,118 @@ def _linear_float32(inputs, weights, spec, *, values, bias=None):
     return result
 
 
+_INT32_MIN = -(1 << 31)
+_INT32_MAX = (1 << 31) - 1
+
+
+def _validate_w8a8_descriptor(spec, label: str) -> None:
+    """Require the affine INT8 descriptor and the W8A8 row/reduction axes.
+
+    ``QuantizationSpec`` stores non-negative axes only, so the frozen ``-2``
+    activation axis already arrives normalized to the row axis ``0``.
+    """
+    if not isinstance(spec, QuantizationSpec):
+        raise QuantizationError(f"{label} requires an explicit QuantizationSpec")
+    if spec.scheme != "affine-int8/v1" or spec.storage_dtype != "int8":
+        raise QuantizationError(f"{label} must be affine-int8/v1 with int8 storage")
+    if len(spec.logical_shape) != 2:
+        raise QuantizationError(f"{label} must be rank 2 [rows, K]")
+    if spec.granularity == "per_axis" and spec.axis != 0:
+        raise QuantizationError(f"{label} per_axis requires the row axis 0")
+    if spec.granularity == "per_group" and spec.axis != 1:
+        raise QuantizationError(f"{label} per_group requires the reduction axis 1")
+
+
+def _w8a8_group_size(input_spec, weight_spec, k_size: int) -> int:
+    """Reduction group size, ``K`` (one group) when neither side is grouped."""
+    x_group = input_spec.group_size if input_spec.granularity == "per_group" else None
+    w_group = weight_spec.group_size if weight_spec.granularity == "per_group" else None
+    if x_group is not None and w_group is not None and x_group != w_group:
+        raise QuantizationError(
+            f"W8A8 per-group requires equal group sizes, got {x_group} and {w_group}"
+        )
+    for declared in (x_group, w_group):
+        if declared is not None:
+            return declared
+    return max(k_size, 1)
+
+
+def _w8a8_parameters(
+    spec: QuantizationSpec, values: Mapping[int, TensorView], label: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Unquantized float32 scale and int64 zero point in the declared shape."""
+    scale = _parameter(values, spec.scale_value_id, "float32", spec.parameter_shape,
+                       f"{label} scale")
+    if not np.all(np.isfinite(scale) & (scale > 0)):
+        raise QuantizationError(f"{label} scale must be finite and strictly positive")
+    if spec.zero_point_value_id is None:
+        return scale, np.zeros(spec.parameter_shape, dtype=np.int64)
+    zero = _parameter(values, spec.zero_point_value_id, spec.zero_point_dtype,
+                      spec.parameter_shape, f"{label} zero point")
+    low, high = spec.code_range
+    if np.any(zero < low) or np.any(zero > high):
+        raise QuantizationError(f"{label} zero point outside int8 code range")
+    return scale, zero.astype(np.int64)
+
+
+def _w8a8_group_parameters(spec, scale, zero, rows: int, group: int):
+    """Per-row scale and zero point that apply to one reduction group."""
+    if spec.granularity == "per_group":
+        return scale[:, group], zero[:, group]
+    if spec.granularity == "per_axis":
+        return scale, zero
+    return (np.broadcast_to(scale.reshape(()), (rows,)),
+            np.broadcast_to(zero.reshape(()), (rows,)))
+
+
+def linear_w8a8_int32_reference(
+    inputs: TensorView, input_spec: QuantizationSpec,
+    weights: TensorView, weight_spec: QuantizationSpec, *,
+    values: Mapping[int, TensorView], bias: np.ndarray | None = None,
+) -> np.ndarray:
+    """int8 x int8 -> int32 group accumulation -> float32 scaled output.
+
+    ``inputs`` is ``[M, K]`` and ``weights`` is ``[N, K]``; the result is
+    ``[M, N]`` float32. Each reduction group is summed exactly in int64 and must
+    fit int32. The epilogue applies ``float32(scale_x * scale_w)`` one group at
+    a time in ascending group order. There is no bias in v1.
+    """
+    if bias is not None:
+        raise QuantizationError("linear_w8a8_int32_reference has no bias in v1")
+    _validate_w8a8_descriptor(input_spec, "W8A8 input")
+    _validate_w8a8_descriptor(weight_spec, "W8A8 weight")
+    x_codes = _tensor(inputs, "int8", input_spec.logical_shape, "W8A8 input codes")
+    w_codes = _tensor(weights, "int8", weight_spec.logical_shape, "W8A8 weight codes")
+    m_size, k_size = input_spec.logical_shape
+    n_size, w_k_size = weight_spec.logical_shape
+    if k_size != w_k_size:
+        raise QuantizationError(
+            f"W8A8 reduction size mismatch: input K={k_size}, weight K={w_k_size}"
+        )
+    group_size = _w8a8_group_size(input_spec, weight_spec, k_size)
+    x_scale, x_zero = _w8a8_parameters(input_spec, values, "W8A8 input")
+    w_scale, w_zero = _w8a8_parameters(weight_spec, values, "W8A8 weight")
+    y = np.zeros((m_size, n_size), dtype=np.float32)
+    for group in range(-(-k_size // group_size)):
+        start = group * group_size
+        stop = min(k_size, start + group_size)
+        xs, xz = _w8a8_group_parameters(input_spec, x_scale, x_zero, m_size, group)
+        ws, wz = _w8a8_group_parameters(weight_spec, w_scale, w_zero, n_size, group)
+        acc = ((x_codes[:, start:stop].astype(np.int64) - xz[:, None])
+               @ (w_codes[:, start:stop].astype(np.int64) - wz[:, None]).T)
+        if np.any(acc < _INT32_MIN) or np.any(acc > _INT32_MAX):
+            raise QuantizationError(f"int32 accumulation overflow in group {group}")
+        try:
+            with np.errstate(over="raise", invalid="raise", under="ignore"):
+                scale = xs[:, None] * ws[None, :]
+                y += acc.astype(np.float32) * scale
+        except FloatingPointError:
+            raise QuantizationError("non-finite W8A8 output") from None
+    if not np.all(np.isfinite(y)):
+        raise QuantizationError("non-finite W8A8 output")
+    return y
+
+
 def linear_int4_reference(
     inputs: np.ndarray, weights: TensorView, spec: QuantizationSpec, *,
     values: Mapping[int, TensorView],

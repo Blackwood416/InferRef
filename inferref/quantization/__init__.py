@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         linear_int8_reference,
         linear_nf4_bf16_reference,
         linear_nf4_reference,
+        linear_w8a8_int32_reference,
         quantization_fingerprint,
         quantize_affine,
     )
@@ -39,6 +40,7 @@ def __getattr__(name: str):
         return value
     if name in {"dequantize", "dequantize_affine", "linear_nf4_reference", "linear_int8_reference", "linear_int4_reference",
                 "linear_nf4_bf16_reference", "linear_int4_bf16_reference",
+                "linear_w8a8_int32_reference",
                 "quantization_fingerprint", "quantize_affine"}:
         from inferref.quantization import reference
 
@@ -61,6 +63,7 @@ __all__ = [
     "linear_int8_reference",
     "linear_nf4_bf16_reference",
     "linear_nf4_reference",
+    "linear_w8a8_int32_reference",
     "quantization_fingerprint",
     "quantize_affine",
 ]
