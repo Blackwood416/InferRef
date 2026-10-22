@@ -20,15 +20,40 @@ ENGINE_ADAPTER_VERSION = "0.2"
 ENGINE_ADAPTER_READ_VERSIONS = ("0.1", "0.2")
 
 _ADAPTER_PLACEHOLDERS = frozenset({"testcase", "output", "adapter_dir", "python"})
+# The placeholders that name one testcase, so a command containing them cannot
+# also receive a multi-item batch manifest.
+_PER_TESTCASE_PLACEHOLDERS = frozenset({"testcase", "output"})
 
 
 class AgentProtocolError(ValueError):
     """Raised when an Agent or adapter request violates its wire contract."""
 
 
+BATCH_EXECUTION_FEATURE = "batch_execution"
+
 ADAPTER_FEATURES = frozenset(
-    {"multiple_outputs", "strided_inputs", "alias_effects", "mutation_effects"} | QUANTIZATION_FEATURES
+    {
+        "multiple_outputs",
+        "strided_inputs",
+        "alias_effects",
+        "mutation_effects",
+        BATCH_EXECUTION_FEATURE,
+    }
+    | QUANTIZATION_FEATURES
 )
+
+
+def _placeholder_fields(value: str, formatter: string.Formatter) -> set[str]:
+    try:
+        fields = {field for _, field, _, _ in formatter.parse(value) if field}
+    except ValueError as exc:
+        raise AgentProtocolError(f"invalid adapter placeholder syntax: {exc}") from exc
+    unknown = fields - _ADAPTER_PLACEHOLDERS
+    if unknown:
+        raise AgentProtocolError(
+            "unsupported adapter placeholder(s): " + ", ".join(sorted(unknown))
+        )
+    return fields
 
 
 def _string_array(value: Any, where: str) -> tuple[str, ...]:
@@ -466,6 +491,12 @@ class EngineAdapter:
     def directory(self) -> Path:
         return self.source.parent if self.source is not None else Path.cwd()
 
+    @property
+    def supports_batch_execution(self) -> bool:
+        return bool(
+            self.capabilities and BATCH_EXECUTION_FEATURE in self.capabilities.features
+        )
+
     def working_directory(self) -> Path:
         if self.cwd is None:
             return self.directory
@@ -511,22 +542,26 @@ class EngineAdapter:
         }
 
     def _validate_placeholders(self) -> None:
-        observed: set[str] = set()
         formatter = string.Formatter()
-        for value in (*self.command, *self.environment.values()):
-            try:
-                fields = [field for _, field, _, _ in formatter.parse(value) if field]
-            except ValueError as exc:
+        command_fields: set[str] = set()
+        for value in self.command:
+            command_fields.update(_placeholder_fields(value, formatter))
+        observed = set(command_fields)
+        for value in self.environment.values():
+            observed.update(_placeholder_fields(value, formatter))
+        if self.supports_batch_execution:
+            # One batch launch receives --batch-manifest, so its command cannot
+            # also substitute a single testcase; the manifest names every item.
+            per_testcase = command_fields & _PER_TESTCASE_PLACEHOLDERS
+            if per_testcase:
                 raise AgentProtocolError(
-                    f"invalid adapter placeholder syntax: {exc}"
-                ) from exc
-            unknown = set(fields) - _ADAPTER_PLACEHOLDERS
-            if unknown:
-                raise AgentProtocolError(
-                    "unsupported adapter placeholder(s): " + ", ".join(sorted(unknown))
+                    "adapter declaring batch_execution must not reference "
+                    "per-testcase command placeholder(s): "
+                    + ", ".join(sorted(per_testcase))
+                    + "; a batch command receives --batch-manifest instead"
                 )
-            observed.update(fields)
-        missing = {"testcase", "output"} - observed
+            return
+        missing = _PER_TESTCASE_PLACEHOLDERS - observed
         if missing:
             raise AgentProtocolError(
                 "adapter command/environment must reference placeholder(s): "
