@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -9,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from inferref.agent.executor import execute_adapter
+from inferref.agent.executor import execute_adapter, execute_adapter_batch
 from inferref.agent.protocol import EngineAdapter
 from inferref.agent.run_record import write_run_record
 from inferref.alignment.boundaries import (
@@ -33,7 +35,67 @@ from inferref.alignment.planner import boundary_requirements, plan_alignment
 from inferref.alignment.schema import Evidence, utc_now
 from inferref.alignment.store import AlignmentStore
 from inferref.alignment.testcase_cache import TestcaseCache
+from inferref.compare.compare import compare_testcase
+from inferref.compare.tolerance import DEFAULT_TOLERANCES
+from inferref.comparison.resolution import (
+    EffectiveComparison,
+    resolve_comparison_policy,
+)
 from inferref.ir.package import TracePackage
+from inferref.testcase.validate import require_valid_testcase
+
+# ``execute_adapter_batch`` only accepts identifier-like item ids, while a
+# boundary id is ``kind:value``. The request index keeps two boundaries apart
+# even when their slugs collide (InferRef 0.12 section 7.3).
+_BATCH_ITEM_ID_UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
+# A batch report is only usable when the helper mapped every requested item; any
+# other status (unsupported, results_error, execution_error, or a failed process
+# such as timeout/crash) leaves no per-item report to finalize from.
+_BATCH_TRUSTED_STATUSES = frozenset({"pass", "failed"})
+
+
+def batch_item_id(index: int, boundary_id: str) -> str:
+    """Return the ordered, pattern-safe batch item id for one boundary."""
+    return f"{index}-{_BATCH_ITEM_ID_UNSAFE.sub('-', boundary_id)}"
+
+
+def _resolve_effective_comparison(
+    testcase_path: Path, overrides: Mapping[str, Any]
+) -> EffectiveComparison:
+    """Resolve the comparison policy the sequential executor would apply.
+
+    ``execute_adapter`` owns this resolution for a single launch; the batch
+    helper owns transport only, so finalization reuses the same resolution
+    function and comparator overrides for each item.
+    """
+    validation = require_valid_testcase(Path(testcase_path))
+    policy = overrides.get("policy")
+    cli_atol = (
+        policy.override_atol
+        if policy and policy.override_atol is not None
+        else overrides.get("atol")
+    )
+    cli_rtol = (
+        policy.override_rtol
+        if policy and policy.override_rtol is not None
+        else overrides.get("rtol")
+    )
+    cli_tolerance = (
+        policy.per_dtype
+        if policy and policy.per_dtype != DEFAULT_TOLERANCES
+        else overrides.get("tolerance")
+    )
+    return resolve_comparison_policy(
+        testcase_spec=validation.manifest.get("comparison"),
+        suite_spec=overrides.get("suite_spec"),
+        cli_comparator=overrides.get("comparator"),
+        cli_atol=cli_atol,
+        cli_rtol=cli_rtol,
+        cli_strict_layout=overrides.get("strict_layout") or None,
+        cli_ignore_stride=overrides.get("ignore_stride") or None,
+        cli_tolerance=cli_tolerance,
+        cli_config=overrides.get("comparison_config"),
+    )
 
 
 @dataclass
@@ -197,8 +259,17 @@ class AlignmentRunner:
         )
         if isinstance(prepared, RunResult):
             return prepared
+        return self._execute_prepared(
+            prepared, comparator_overrides=comparator_overrides
+        )
 
-        # 3. Execute adapter
+    def _execute_prepared(
+        self,
+        prepared: PreparedCandidate,
+        *,
+        comparator_overrides: Mapping[str, Any] | None = None,
+    ) -> RunResult:
+        """Launch one prepared candidate and finalize its output."""
         overrides = dict(comparator_overrides or {})
         try:
             exec_result = execute_adapter(
@@ -298,10 +369,7 @@ class AlignmentRunner:
             rel_tc = str(tc_path).replace("\\", "/")
 
         # 2. Capability assessment
-        requirements = boundary_requirements(self.package, boundary)
-        incompatible: list[str] = []
-        if self.adapter.capabilities is not None:
-            incompatible = list(self.adapter.capabilities.incompatibilities(requirements))
+        incompatible = list(self._capability_incompatibilities(boundary))
 
         prepared = PreparedCandidate(
             boundary=boundary,
@@ -331,6 +399,18 @@ class AlignmentRunner:
             "unsupported": incompatible,
         }
         return self._finalize_candidate(prepared, unsupported_result, output_dir)
+
+    def _capability_incompatibilities(self, boundary: Boundary) -> tuple[str, ...]:
+        """Reasons the declared adapter capabilities cannot run this boundary."""
+        if self.adapter.capabilities is None:
+            return ()
+        requirements = boundary_requirements(self.package, boundary)
+        return tuple(self.adapter.capabilities.incompatibilities(requirements))
+
+    def _boundary_runnable(self, boundary_id: str) -> bool:
+        """Whether the adapter can execute this boundary at all."""
+        boundary = self.inventory.resolve(boundary_id)
+        return boundary is not None and not self._capability_incompatibilities(boundary)
 
     def run_candidate_from_output(
         self,
@@ -553,15 +633,32 @@ class AlignmentRunner:
         engine_revision: str | None = None,
         comparator_overrides: Mapping[str, Any] | None = None,
     ) -> list[RunResult]:
-        """Run up to limit boundaries."""
-        results: list[RunResult] = []
+        """Run up to limit boundaries.
 
+        When the adapter declares ``batch_execution`` and more than one selected
+        boundary is runnable, the boundaries share one adapter process
+        (InferRef 0.12 section 7.3). Every other case keeps the sequential
+        launch-per-boundary path.
+        """
         if boundary_ids:
             selected_ids = list(boundary_ids)[:limit]
         else:
             plan = plan_alignment(self.package, session=self.store.snapshot, adapter=self.adapter)
             selected_ids = [c.boundary for c in plan.candidates if c.runnability.eligible][:limit]
 
+        if limit > 1 and self.adapter.supports_batch_execution and external_testcase is None:
+            batched = self._run_selected_batch(
+                selected_ids,
+                continue_on_fail=continue_on_fail,
+                fixture_kind=fixture_kind,
+                fixture_tags=fixture_tags,
+                engine_revision=engine_revision,
+                comparator_overrides=comparator_overrides,
+            )
+            if batched is not None:
+                return batched
+
+        results: list[RunResult] = []
         for bid in selected_ids:
             with self.store.lock():
                 res = self.run_candidate(
@@ -577,6 +674,189 @@ class AlignmentRunner:
                 break
 
         return results
+
+    def _run_selected_batch(
+        self,
+        selected_ids: Sequence[str],
+        *,
+        continue_on_fail: bool,
+        fixture_kind: str,
+        fixture_tags: Sequence[str],
+        engine_revision: str | None,
+        comparator_overrides: Mapping[str, Any] | None,
+    ) -> list[RunResult] | None:
+        """Run the selected boundaries in one adapter process.
+
+        Returns ``None`` when the batch is not usable, so the caller keeps the
+        unchanged sequential path.
+        """
+        batchable_ids = [bid for bid in selected_ids if self._boundary_runnable(bid)]
+        if len(batchable_ids) < 2:
+            return None
+        if len(batchable_ids) < len(selected_ids) and not continue_on_fail:
+            # ``_prepare_candidate`` finalizes an unsupported boundary on the
+            # spot, so a failure earlier in the batch could commit evidence the
+            # sequential contract stops before. That mix is ambiguous.
+            return None
+
+        overrides = dict(comparator_overrides or {})
+        with self.store.lock():
+            prepared: list[tuple[str, PreparedCandidate | RunResult]] = [
+                (
+                    bid,
+                    self._prepare_candidate(
+                        bid,
+                        fixture_kind=fixture_kind,
+                        fixture_tags=fixture_tags,
+                        engine_revision=engine_revision,
+                    ),
+                )
+                for bid in selected_ids
+            ]
+            batch_candidates = [
+                (bid, item)
+                for bid, item in prepared
+                if isinstance(item, PreparedCandidate)
+            ]
+            if len(batch_candidates) < 2:
+                return self._finalize_prepared_sequence(
+                    prepared, overrides=overrides, continue_on_fail=continue_on_fail
+                )
+
+            items = [
+                (batch_item_id(index, bid), item.testcase_path)
+                for index, (bid, item) in enumerate(batch_candidates)
+            ]
+            batch = execute_adapter_batch(items, self.adapter, self.store.root / "runs")
+            if batch["status"] not in _BATCH_TRUSTED_STATUSES:
+                self._record_batch_fallback(batch, [bid for bid, _ in batch_candidates])
+                return self._finalize_prepared_sequence(
+                    prepared, overrides=overrides, continue_on_fail=continue_on_fail
+                )
+
+            batch_position = {
+                bid: index for index, (bid, _) in enumerate(batch_candidates)
+            }
+            results: list[RunResult] = []
+            for bid, item in prepared:
+                if isinstance(item, RunResult):
+                    result = item
+                else:
+                    batch_item = batch["results"][batch_position[bid]]
+                    execution_result = self._batch_item_result(
+                        item, batch_item, batch, overrides
+                    )
+                    result = self.run_candidate_from_output(
+                        item, execution_result, batch_item["output_dir"]
+                    )
+                results.append(result)
+                if not continue_on_fail and result.status in ("fail", "error"):
+                    break
+            return results
+
+    def _finalize_prepared_sequence(
+        self,
+        prepared: Sequence[tuple[str, PreparedCandidate | RunResult]],
+        *,
+        overrides: Mapping[str, Any],
+        continue_on_fail: bool,
+    ) -> list[RunResult]:
+        """Finish already-prepared boundaries one adapter launch at a time."""
+        results: list[RunResult] = []
+        for _, item in prepared:
+            result = (
+                item
+                if isinstance(item, RunResult)
+                else self._execute_prepared(item, comparator_overrides=overrides)
+            )
+            results.append(result)
+            if not continue_on_fail and result.status in ("fail", "error"):
+                break
+        return results
+
+    def _record_batch_fallback(
+        self, batch: Mapping[str, Any], boundary_ids: Sequence[str]
+    ) -> None:
+        """Note why a batched launch was abandoned for sequential execution."""
+        note = f"batch fallback: {batch.get('status')}"
+        detail = str(batch.get("error") or "").strip()
+        if detail:
+            note += f" ({detail[:300]})"
+        self.store.commit_event(
+            {
+                "event": "note_recorded",
+                "data": {
+                    "category": "external-blocker",
+                    "reason": note,
+                    "boundaries": list(boundary_ids),
+                },
+            }
+        )
+
+    def _batch_item_result(
+        self,
+        prepared: PreparedCandidate,
+        item: Mapping[str, Any],
+        batch: Mapping[str, Any],
+        overrides: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Build the run-result mapping finalization expects for one batch item."""
+        execution: dict[str, Any] = {
+            "status": "completed",
+            "exit_code": item["exit_code"],
+            "batch_manifest": batch["manifest"],
+            "batch_output": batch["batch_output"],
+            "output_dir": item["output_dir"],
+        }
+        if item.get("error"):
+            execution["error"] = item["error"]
+        result: dict[str, Any] = {
+            "run_id": prepared.run_id,
+            "adapter": self.adapter.to_dict(),
+            "testcase": str(prepared.testcase_path),
+            "output": item["output_dir"],
+            "execution": execution,
+            "comparison": None,
+            "effective_comparison": None,
+        }
+        try:
+            effective_comparison = _resolve_effective_comparison(
+                prepared.testcase_path, overrides
+            )
+            effective_comparison.validate()
+        except Exception as exc:
+            # A sequential launch would refuse this candidate before starting and
+            # the runner reports an error, so the batch item reports one too.
+            result["status"] = "error"
+            execution["error"] = str(exc)
+            return result
+        result["effective_comparison"] = effective_comparison.to_dict()
+        if item["status"] != "passed" or item["exit_code"] != 0:
+            result["status"] = "execution_error"
+            return result
+        try:
+            report = compare_testcase(
+                prepared.testcase_path,
+                item["output_dir"],
+                effective_comparison=effective_comparison,
+                first_failure=True,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            result.update(
+                status="comparison_error",
+                comparison={"status": "error", "message": str(exc)},
+            )
+            return result
+        report_dict = report.to_dict()
+        result["comparison"] = report_dict
+        if report_dict.get("comparator"):
+            result["comparator"] = report_dict["comparator"]
+        result["status"] = (
+            "pass"
+            if report.status == "pass"
+            else ("error" if report.status == "error" else "mismatch")
+        )
+        return result
 
 
 def hashlib_sha256(data: bytes) -> str:
