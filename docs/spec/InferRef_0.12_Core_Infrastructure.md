@@ -163,7 +163,7 @@ Add two explicit contract families and optional `bias` support across `inferref/
 | `linear/affine-w4a16/v1` | `x`, `weight` | `y` | Existing: `float16` `x` & `y`, `float32` dequant/accum |
 | `linear/affine-w4a16-bf16/v1` | `x`, `weight` | `y` | `bfloat16` `x` & `y`, affine `int4`/`uint4` `weight`, `float32` dequant/accum, nearest-even `bfloat16` output |
 | `linear/nf4-w4a16/v1` | `x`, `weight` | `y` | Existing: `float16` `x` & `y`, `nf4/v1` `weight`, `float32` dequant/accum |
-| `linear/nf4-bf16/v1` | `x`, `weight` | `y` | `bfloat16` `x` & `y`, `nf4/v1` `weight`, `float32` dequant/accum, nearest-even `bfloat16` output |
+| `linear/nf4-w4a16-bf16/v1` | `x`, `weight` | `y` | `bfloat16` `x` & `y`, `nf4/v1` `weight`, `float32` dequant/accum, nearest-even `bfloat16` output |
 | `linear/w8a8-int32-accum/v1` | `x`, `weight` | `y` | Both `x` (`per_tensor`, `per_axis`, or `per_group`) and `weight` are `affine-int8/v1` with matching group structure; integer dot product accumulates in `int32` per group before multiplying by `float32(scale_x * scale_w)` into `float32` `y` |
 
 ### 6.2 `linear/w8a8-int32-accum/v1` Specification
@@ -270,7 +270,7 @@ Add `--diagnostic-mode {full,status_only}` to `inferref agent evaluate` so the M
 - [ ] `inferref adapter scaffold` on a `0.4` testcase produces a compilable C++ project that passes `ctest` in CI.
 
 ### 10.2 Hardware Quantization & Transformer Contracts (M2)
-- [ ] `linear/affine-int8-bias/v1`, `linear/affine-w4a16-bf16/v1`, `linear/nf4-bf16/v1`, and `linear/w8a8-int32-accum/v1` are registered in `inferref contract list` and covered by positive and negative validator tests.
+- [ ] `linear/affine-int8-bias/v1`, `linear/affine-w4a16-bf16/v1`, `linear/nf4-w4a16-bf16/v1`, and `linear/w8a8-int32-accum/v1` are registered in `inferref contract list` and covered by positive and negative validator tests.
 - [ ] `linear_w8a8_int32_reference` matches exact `int32` per-group accumulation and detects injected accumulator/scale bugs.
 - [ ] `swiglu/mlp/v1` and `attention/sdpa-gqa/v1` validate MHA, GQA, and MQA shapes and dtypes.
 
