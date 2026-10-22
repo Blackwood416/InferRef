@@ -79,6 +79,7 @@ def test_registry_covers_builtin_engine_contracts() -> None:
         "linear/affine-w4a16-bf16/v1",
         "linear/nf4-w4a16/v1",
         "linear/nf4-w4a16-bf16/v1",
+        "linear/w8a8-int32-accum/v1",
         "swiglu/mlp/v1",
     }
     assert get_contract("rmsnorm/last-dim/v1").inputs == ("x", "weight", "epsilon")
@@ -97,6 +98,8 @@ def test_registry_covers_builtin_engine_contracts() -> None:
     )
     assert get_contract("kv-cache/append/v1").inputs == ("cache", "update")
     assert get_contract("linear/affine-int8-bias/v1").inputs == ("x", "weight", "bias")
+    assert get_contract("linear/w8a8-int32-accum/v1").inputs == ("x", "weight")
+    assert get_contract("linear/w8a8-int32-accum/v1").outputs == ("y",)
     assert get_contract("swiglu/mlp/v1").inputs == (
         "x",
         "gate_weight",
@@ -117,6 +120,7 @@ def test_contract_list_cli_reports_new_0_12_ids(capsys: pytest.CaptureFixture[st
         "linear/affine-int8-bias/v1",
         "linear/affine-w4a16-bf16/v1",
         "linear/nf4-w4a16-bf16/v1",
+        "linear/w8a8-int32-accum/v1",
         "swiglu/mlp/v1",
         "attention/sdpa-gqa/v1",
     } <= ids

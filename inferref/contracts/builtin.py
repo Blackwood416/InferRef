@@ -2,9 +2,9 @@
 
 The core profiles were migrated unchanged from the old hardcoded table in
 ``inferref/testcase/contracts.py``: same IDs, role names, validators, issue
-messages and derived requirements. 0.12 adds explicit bias, bfloat16, SwiGLU
-and SDPA profiles next to them. They are registered through the same registry
-as third-party plugin contracts.
+messages and derived requirements. 0.12 adds explicit bias, bfloat16, SwiGLU,
+SDPA and W8A8 int32 accumulation profiles next to them. They are registered
+through the same registry as third-party plugin contracts.
 """
 
 from __future__ import annotations
@@ -378,6 +378,89 @@ def _nf4_bf16_inputs(inputs) -> Sequence[str]:
     ]
 
 
+def _w8a8_operand(
+    record: Mapping[str, Any], label: str
+) -> tuple[Any, list[str]]:
+    """Validated ``QuantizationSpec`` for one W8A8 operand plus its issues.
+
+    Returns ``(None, issues)`` when the operand cannot join the cross-operand
+    checks. Only the descriptor is validated here (freeze §2); the scale and
+    zero-point payloads belong to testcase validation.
+    """
+
+    from inferref.quantization.spec import QuantizationError, QuantizationSpec
+
+    if record.get("dtype") != "int8":
+        return None, [f"{label} must be an int8 code tensor"]
+    try:
+        spec = QuantizationSpec.from_dict(record.get("quantization"))
+    except QuantizationError as exc:
+        return None, [f"{label} quantization descriptor is invalid: {exc}"]
+    if spec.scheme != "affine-int8/v1":
+        return None, [f"{label} must use the affine-int8/v1 scheme, got {spec.scheme!r}"]
+    if len(spec.logical_shape) != 2:
+        return None, [f"{label} must be rank 2 [rows, K]"]
+    issues: list[str] = []
+    shape = _shape(record)
+    if shape is not None and shape != list(spec.logical_shape):
+        issues.append(f"{label} shape must equal its quantization logical_shape")
+    # QuantizationSpec stores non-negative axes, so the frozen per-token axis
+    # ``-2`` already arrives normalized to the row axis 0 for both operands.
+    if spec.granularity == "per_axis" and spec.axis != 0:
+        issues.append(f"{label} per_axis must use axis 0")
+    elif spec.granularity == "per_group" and spec.axis != 1:
+        issues.append(f"{label} per_group must use the reduction axis 1")
+    return (None if issues else spec), issues
+
+
+def _w8a8_inputs(inputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
+    """W8A8 freeze §2: int8 codes, rank-2 shapes, allowed axes, group sizes."""
+
+    records = {label: inputs.get(label) for label in ("x", "weight")}
+    missing = [
+        f"{label} must be a tensor"
+        for label, record in records.items()
+        if not isinstance(record, dict)
+    ]
+    if missing:
+        return missing
+    x_spec, x_issues = _w8a8_operand(records["x"], "x")
+    weight_spec, weight_issues = _w8a8_operand(records["weight"], "weight")
+    issues = [*x_issues, *weight_issues]
+    if x_spec is None or weight_spec is None:
+        return issues
+    if x_spec.logical_shape[1] != weight_spec.logical_shape[1]:
+        issues.append("x and weight must agree on the reduction size K")
+    elif (
+        x_spec.granularity == "per_group"
+        and weight_spec.granularity == "per_group"
+        and x_spec.group_size != weight_spec.group_size
+    ):
+        issues.append("both per_group operands must declare the same group_size")
+    return issues
+
+
+# This validator owns the operand dtype checks, so the registry must not repeat them.
+_w8a8_inputs._inferref_dtype_checked = True  # type: ignore[attr-defined]
+
+
+def _w8a8_relation(inputs, outputs) -> Sequence[str]:
+    y = outputs.get("y", {})
+    if y.get("dtype") != "float32" or "quantization" in y:
+        return ["W8A8 y must be an ordinary float32 tensor"]
+    x_shape = _shape(inputs.get("x"))
+    weight_shape = _shape(inputs.get("weight"))
+    if (
+        x_shape is not None
+        and len(x_shape) == 2
+        and weight_shape is not None
+        and len(weight_shape) == 2
+        and _shape(y) != [x_shape[0], weight_shape[0]]
+    ):
+        return ["W8A8 y shape must equal [M, N]"]
+    return []
+
+
 def _y_output_issues(outputs: Mapping[str, dict[str, Any]]) -> Sequence[str]:
     """Shared non-empty shape/dtype check for ``y`` outputs that mirror ``x``.
 
@@ -552,6 +635,12 @@ def _build_builtin_contracts() -> tuple[ExecutableContract, ...]:
                     id="linear/nf4-w4a16-bf16/v1", inputs=("x", "weight"), outputs=("y",),
                     validate_inputs=_nf4_bf16_inputs, validate_relation=_w4a16_bf16_relation,
                     description="Bfloat16 x, explicit NF4 codebook/block scales, float32 dequant/matmul, one nearest-even bfloat16 y",
+                ),
+                ExecutableContract(
+                    id="linear/w8a8-int32-accum/v1", inputs=("x", "weight"), outputs=("y",),
+                    validate_inputs=_w8a8_inputs, validate_relation=_w8a8_relation,
+                    features=("quantization/w8a8-int32-accum/v1",),
+                    description="int8xint8 per-group int32 accumulation, float32 epilogue, no bias",
                 ),
                 ExecutableContract(
                     id="rmsnorm/last-dim/v1",

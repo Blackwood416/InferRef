@@ -416,6 +416,7 @@ def test_builtins_are_always_registered_in_sorted_order() -> None:
         "linear/affine-w4a16/v1",
         "linear/nf4-w4a16-bf16/v1",
         "linear/nf4-w4a16/v1",
+        "linear/w8a8-int32-accum/v1",
         "rmsnorm/last-dim/v1",
         "rope/rotate-half/v1",
         "swiglu/mlp/v1",
@@ -430,6 +431,7 @@ def test_builtins_are_always_registered_in_sorted_order() -> None:
         "linear/affine-w4a16/v1",
         "linear/nf4-w4a16-bf16/v1",
         "linear/nf4-w4a16/v1",
+        "linear/w8a8-int32-accum/v1",
         "rmsnorm/last-dim/v1",
         "rope/rotate-half/v1",
         "swiglu/mlp/v1",
@@ -460,7 +462,7 @@ def test_plugin_discovery_loads_and_lists_deterministically(
     assert get_contract("swiglu/fused/v1").inputs == ("x", "gate")
     assert get_contract("gated-deltanet/step/v1").outputs == ("state_out",)
     entries = contract_list()
-    assert [entry.id for entry in entries][:12] == [
+    assert [entry.id for entry in entries][:13] == [
         "attention/sdpa-gqa/v1",
         "kv-cache/append/v1",
         "kv-cache/indexed-update/v1",
@@ -470,11 +472,12 @@ def test_plugin_discovery_loads_and_lists_deterministically(
         "linear/affine-w4a16/v1",
         "linear/nf4-w4a16-bf16/v1",
         "linear/nf4-w4a16/v1",
+        "linear/w8a8-int32-accum/v1",
         "rmsnorm/last-dim/v1",
         "rope/rotate-half/v1",
         "swiglu/mlp/v1",
     ]
-    assert [entry.id for entry in entries][12:] == [
+    assert [entry.id for entry in entries][13:] == [
         "gated-deltanet/step/v1",
         "swiglu/fused/v1",
     ]
@@ -489,6 +492,7 @@ def test_plugin_discovery_loads_and_lists_deterministically(
         "linear/affine-w4a16/v1",
         "linear/nf4-w4a16-bf16/v1",
         "linear/nf4-w4a16/v1",
+        "linear/w8a8-int32-accum/v1",
         "rmsnorm/last-dim/v1",
         "rope/rotate-half/v1",
         "swiglu/mlp/v1",

@@ -24,7 +24,12 @@ QUANTIZATION_FEATURES = frozenset(
     f"quantization/{scheme}/{granularity}"
     for scheme in AFFINE_SCHEMES
     for granularity in ("per_tensor", "per_axis", "per_group")
-) | {"quantization/nf4/v1/per_block"}
+) | {
+    "quantization/nf4/v1/per_block",
+    # Contract-level capability (freeze §1): an engine that declares it can run
+    # ``linear/w8a8-int32-accum/v1`` with the granularities it also declares.
+    "quantization/w8a8-int32-accum/v1",
+}
 
 
 def needs_quantization(requirements: Any) -> bool:
