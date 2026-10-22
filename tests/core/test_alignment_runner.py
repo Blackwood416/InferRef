@@ -11,9 +11,14 @@ import pytest
 from inferref.agent.protocol import EngineAdapter
 from inferref.alignment.hashing import (
     normalized_adapter_sha256,
+    sha256_file,
     trace_metadata_sha256,
 )
-from inferref.alignment.runner import AlignmentRunner, resolve_engine_identity
+from inferref.alignment.runner import (
+    AlignmentRunner,
+    PreparedCandidate,
+    resolve_engine_identity,
+)
 from inferref.alignment.store import AlignmentStore
 from inferref.ir.graph import Graph
 from inferref.ir.manifest import Manifest
@@ -501,6 +506,78 @@ def test_runner_external_testcase_cache_revalidates_and_recovers_if_corrupted(tm
     assert (cached_tc / "testcase.json").is_file()
     # Cache content is now restored and valid JSON
     assert "corrupted" not in (cached_tc / "testcase.json").read_text(encoding="utf-8")
+
+
+def test_prepare_then_finalize_from_output_matches_sequential_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The batch seam must reproduce a sequential run without launching an adapter."""
+    import inferref.alignment.runner as runner_module
+    from inferref.agent.executor import execute_adapter as execute_adapter_impl
+
+    pkg = _make_trace(tmp_path / "trace_prepare")
+    adapter_path = _make_adapter_file(tmp_path / "adapter_prepare.json")
+    adapter = EngineAdapter.load(adapter_path)
+
+    def _open_session(name: str) -> AlignmentStore:
+        return AlignmentStore.initialize(
+            tmp_path / name,
+            trace_path=tmp_path / "trace_prepare",
+            adapter_path=adapter_path,
+            trace_metadata_digest=trace_metadata_sha256(pkg.root),
+            adapter_digest=normalized_adapter_sha256(adapter.to_dict()),
+        )
+
+    sequential_store = _open_session("alignment_sequential")
+    sequential = AlignmentRunner(sequential_store, pkg, adapter).run(
+        limit=1, boundary_ids=["region:1"], engine_revision="rev-prepare"
+    )
+    assert len(sequential) == 1
+    sequential_result = sequential[0]
+    assert sequential_result.status == "pass"
+    assert sequential_result.evidence is not None
+
+    finalize_store = _open_session("alignment_finalize")
+    runner = AlignmentRunner(finalize_store, pkg, adapter)
+    prepared = runner._prepare_candidate("region:1", engine_revision="rev-prepare")
+    assert isinstance(prepared, PreparedCandidate)
+    assert prepared.unsupported == ()
+
+    # Produce the output outside the runner, the way a batch process would.
+    execution_result = execute_adapter_impl(
+        testcase=prepared.testcase_path,
+        adapter=adapter,
+        runs_root=prepared.output_dir.parent,
+    )
+
+    def _must_not_launch(*args: object, **kwargs: object) -> None:
+        raise AssertionError("run_candidate_from_output must not launch an adapter")
+
+    monkeypatch.setattr(runner_module, "execute_adapter", _must_not_launch)
+    finalized = runner.run_candidate_from_output(
+        prepared, execution_result, execution_result["output"]
+    )
+
+    assert finalized.status == sequential_result.status
+    assert finalized.boundary == sequential_result.boundary
+    assert finalized.evidence is not None
+    assert finalized.evidence.subject == sequential_result.evidence.subject
+    assert finalized.evidence.fixture == sequential_result.evidence.fixture
+    assert finalized.evidence.observations == sequential_result.evidence.observations
+
+    # The evidence is committed and its run record is a hash-linked artifact.
+    committed = finalize_store.evidence[finalized.evidence.id]
+    assert committed.result == "pass"
+    run_record_path = finalize_store.root / committed.provenance["run_record"]["path"]
+    assert run_record_path.is_file()
+    assert sha256_file(run_record_path) == committed.provenance["run_record"]["sha256"]
+    record = json.loads(run_record_path.read_text(encoding="utf-8"))
+    assert record["status"] == "pass"
+    assert Path(record["testcase"]) == prepared.testcase_path
+    assert "boundary_verified" in [event.event for event in finalize_store.events]
+
+    reloaded = AlignmentStore.load(finalize_store.root)
+    assert reloaded.snapshot.boundaries["region:1"]["state"] == "verified"
 
 
 def test_runner_engine_revision_stale_boundary_persisted_and_reloaded_and_planned(tmp_path: Path) -> None:

@@ -51,6 +51,27 @@ class RunResult:
         return self.status == "pass"
 
 
+@dataclass(frozen=True)
+class PreparedCandidate:
+    """Pre-execution context for one boundary run.
+
+    Carries everything the runner resolves before an adapter process starts so
+    a caller can finalize the same boundary after a shared batch process
+    (InferRef 0.12 section 7.3).
+    """
+
+    boundary: Boundary
+    fixture_kind: str
+    fixture_tags: tuple[str, ...]
+    engine_identity: dict[str, Any]
+    testcase_path: Path
+    testcase_tree_sha256: str
+    testcase_rel_path: str
+    run_id: str
+    output_dir: Path
+    unsupported: tuple[str, ...] = ()
+
+
 def resolve_engine_identity(
     adapter: EngineAdapter,
     explicit_revision: str | None = None,
@@ -167,6 +188,63 @@ class AlignmentRunner:
         comparator_overrides: Mapping[str, Any] | None = None,
     ) -> RunResult:
         """Execute one boundary, record immutable Evidence, and update session."""
+        prepared = self._prepare_candidate(
+            boundary_or_id,
+            fixture_kind=fixture_kind,
+            fixture_tags=fixture_tags,
+            external_testcase=external_testcase,
+            engine_revision=engine_revision,
+        )
+        if isinstance(prepared, RunResult):
+            return prepared
+
+        # 3. Execute adapter
+        overrides = dict(comparator_overrides or {})
+        try:
+            exec_result = execute_adapter(
+                testcase=prepared.testcase_path,
+                adapter=self.adapter,
+                runs_root=prepared.output_dir.parent,
+                **overrides,
+            )
+        except Exception as exc:
+            self.store.commit_event(
+                {
+                    "event": "execution_error",
+                    "data": {
+                        "boundary": prepared.boundary.id,
+                        "name": prepared.boundary.name,
+                        "message": str(exc),
+                    },
+                }
+            )
+            return RunResult(
+                status="error",
+                boundary=prepared.boundary.id,
+                error_message=str(exc),
+            )
+
+        return self.run_candidate_from_output(
+            prepared,
+            exec_result,
+            exec_result["output"],
+        )
+
+    def _prepare_candidate(
+        self,
+        boundary_or_id: str | Boundary,
+        *,
+        fixture_kind: str = "reference_derived",
+        fixture_tags: Sequence[str] = (),
+        external_testcase: Path | None = None,
+        engine_revision: str | None = None,
+    ) -> PreparedCandidate | RunResult:
+        """Resolve, cache, and capability-check one boundary before execution.
+
+        Returns a :class:`PreparedCandidate` ready for an adapter launch, or an
+        already-finalized ``unsupported`` result when the adapter cannot run
+        the testcase at all.
+        """
         # A long-lived API runner must not reuse testcases after source code or
         # scale bytes changed since construction. CLI calls normally recreate
         # the runner, but both entry points share this freshness check.
@@ -221,93 +299,65 @@ class AlignmentRunner:
 
         # 2. Capability assessment
         requirements = boundary_requirements(self.package, boundary)
+        incompatible: list[str] = []
         if self.adapter.capabilities is not None:
             incompatible = list(self.adapter.capabilities.incompatibilities(requirements))
-            if incompatible:
-                exec_result = {
-                    "run_id": fresh_run_id,
-                    "adapter": self.adapter.to_dict(),
-                    "testcase": str(tc_path),
-                    "output": str(output_dir),
-                    "status": "unsupported",
-                    "execution": None,
-                    "comparison": None,
-                    "unsupported": incompatible,
-                }
-                write_run_record(output_dir, exec_result)
-                run_record_path = output_dir / "inferref-run.json"
-                run_record_sha = sha256_file(run_record_path)
-                try:
-                    rel_rr = str(run_record_path.relative_to(self.store.root)).replace("\\", "/")
-                except ValueError:
-                    rel_rr = str(run_record_path).replace("\\", "/")
 
-                evidence = build_comparison_evidence(
-                    subject={"boundary": boundary.id, "name": boundary.name},
-                    fixture={"kind": fixture_kind, "tags": list(fixture_tags)},
-                    provenance={
-                        "trace_metadata_sha256": self.store.snapshot.source["trace"]["metadata_sha256"],
-                        "testcase": {"path": rel_tc, "tree_sha256": tc_tree_sha},
-                        "run_record": {"path": rel_rr, "sha256": run_record_sha},
-                        "adapter_normalized_sha256": self.store.snapshot.target["adapter"]["normalized_sha256"],
-                        "engine_identity": engine_identity,
-                        "effective_comparison_sha256": "0" * 64,
-                    },
-                    execution_result=exec_result,
-                    provided_inputs_valid=True,
-                )
-                from inferref.alignment.matrix import build_fixture_matrix
+        prepared = PreparedCandidate(
+            boundary=boundary,
+            fixture_kind=fixture_kind,
+            fixture_tags=tuple(fixture_tags),
+            engine_identity=engine_identity,
+            testcase_path=tc_path,
+            testcase_tree_sha256=tc_tree_sha,
+            testcase_rel_path=rel_tc,
+            run_id=fresh_run_id,
+            output_dir=output_dir,
+            unsupported=tuple(incompatible),
+        )
+        if not incompatible:
+            return prepared
 
-                matrix = build_fixture_matrix(
-                    list(self.store.evidence.values()),
-                    self.store.snapshot,
-                    known_boundaries=list(self.store.snapshot.boundaries.keys()),
-                    active_engine_identity=engine_identity,
-                    events=self.store.events,
-                    prospective_evidence=evidence,
-                )
+        # The adapter cannot run this testcase, so there is nothing to execute;
+        # record the same unsupported result the sequential path always emitted.
+        unsupported_result = {
+            "run_id": fresh_run_id,
+            "adapter": self.adapter.to_dict(),
+            "testcase": str(tc_path),
+            "output": str(output_dir),
+            "status": "unsupported",
+            "execution": None,
+            "comparison": None,
+            "unsupported": incompatible,
+        }
+        return self._finalize_candidate(prepared, unsupported_result, output_dir)
 
-                event_data = {
-                    "boundary": boundary.id,
-                    "name": boundary.name,
-                    "reasons": incompatible,
-                    "boundary_states": dict(matrix.boundary_states),
-                }
+    def run_candidate_from_output(
+        self,
+        prepared: PreparedCandidate,
+        execution_result: Mapping[str, Any],
+        output_dir: str | Path,
+    ) -> RunResult:
+        """Finalize a prepared candidate whose adapter output already exists.
 
-                self.store.commit_evidence(
-                    evidence,
-                    event_name="boundary_unsupported",
-                    event_data=event_data,
-                )
-                self._refresh_diagnostics(active_engine=engine_identity)
-                return RunResult(status="unsupported", boundary=boundary.id, evidence=evidence)
+        This is the batch seam (InferRef 0.12 section 7.3): a caller launches one
+        adapter process for several testcases, then finalizes each prepared
+        candidate from its own execution result and per-item output directory.
+        It never launches an adapter.
+        """
+        return self._finalize_candidate(prepared, execution_result, output_dir)
 
-        # 3. Execute adapter
-        overrides = dict(comparator_overrides or {})
-        try:
-            exec_result = execute_adapter(
-                testcase=tc_path,
-                adapter=self.adapter,
-                runs_root=runs_dir,
-                **overrides,
-            )
-        except Exception as exc:
-            self.store.commit_event(
-                {
-                    "event": "execution_error",
-                    "data": {"boundary": boundary.id, "name": boundary.name, "message": str(exc)},
-                }
-            )
-            return RunResult(
-                status="error",
-                boundary=boundary.id,
-                error_message=str(exc),
-            )
-
-        # Write run record
-        output_dir = Path(exec_result["output"])
-        write_run_record(output_dir, exec_result)
-        run_record_path = output_dir / "inferref-run.json"
+    def _finalize_candidate(
+        self,
+        prepared: PreparedCandidate,
+        execution_result: Mapping[str, Any],
+        output_dir: str | Path,
+    ) -> RunResult:
+        """Write the run record and Evidence for one prepared candidate."""
+        boundary = prepared.boundary
+        output_path = Path(output_dir)
+        write_run_record(output_path, dict(execution_result))
+        run_record_path = output_path / "inferref-run.json"
         run_record_sha = sha256_file(run_record_path)
 
         try:
@@ -315,34 +365,30 @@ class AlignmentRunner:
         except ValueError:
             rel_rr = str(run_record_path).replace("\\", "/")
 
-        comp_dict = exec_result.get("effective_comparison") or {}
-        comp_sha = canonical_json_sha256(comp_dict)
+        if prepared.unsupported:
+            comp_sha = "0" * 64
+        else:
+            comp_dict = execution_result.get("effective_comparison") or {}
+            comp_sha = canonical_json_sha256(comp_dict)
 
         evidence = build_comparison_evidence(
             subject={"boundary": boundary.id, "name": boundary.name},
-            fixture={"kind": fixture_kind, "tags": list(fixture_tags)},
+            fixture={"kind": prepared.fixture_kind, "tags": list(prepared.fixture_tags)},
             provenance={
                 "trace_metadata_sha256": self.store.snapshot.source["trace"]["metadata_sha256"],
-                "testcase": {"path": rel_tc, "tree_sha256": tc_tree_sha},
+                "testcase": {
+                    "path": prepared.testcase_rel_path,
+                    "tree_sha256": prepared.testcase_tree_sha256,
+                },
                 "run_record": {"path": rel_rr, "sha256": run_record_sha},
                 "adapter_normalized_sha256": self.store.snapshot.target["adapter"]["normalized_sha256"],
-                "engine_identity": engine_identity,
+                "engine_identity": prepared.engine_identity,
                 "effective_comparison_sha256": comp_sha,
             },
-            comparison_report=exec_result.get("comparison"),
-            execution_result=exec_result,
+            comparison_report=execution_result.get("comparison"),
+            execution_result=execution_result,
             provided_inputs_valid=True,
         )
-
-        # Event determination
-        if evidence.result == "pass":
-            event_name = "boundary_verified"
-        elif evidence.result == "fail":
-            event_name = "boundary_failed"
-        elif evidence.result == "unsupported":
-            event_name = "boundary_unsupported"
-        else:
-            event_name = "execution_error"
 
         # Build fixture matrix with prospective evidence to compute updated boundary states
         from inferref.alignment.matrix import build_fixture_matrix
@@ -351,16 +397,34 @@ class AlignmentRunner:
             list(self.store.evidence.values()),
             self.store.snapshot,
             known_boundaries=list(self.store.snapshot.boundaries.keys()),
-            active_engine_identity=engine_identity,
+            active_engine_identity=prepared.engine_identity,
             events=self.store.events,
             prospective_evidence=evidence,
         )
 
-        event_data = {
-            "boundary": boundary.id,
-            "name": boundary.name,
-            "boundary_states": dict(matrix.boundary_states),
-        }
+        if prepared.unsupported:
+            event_name = "boundary_unsupported"
+            event_data = {
+                "boundary": boundary.id,
+                "name": boundary.name,
+                "reasons": list(prepared.unsupported),
+                "boundary_states": dict(matrix.boundary_states),
+            }
+        else:
+            # Event determination
+            if evidence.result == "pass":
+                event_name = "boundary_verified"
+            elif evidence.result == "fail":
+                event_name = "boundary_failed"
+            elif evidence.result == "unsupported":
+                event_name = "boundary_unsupported"
+            else:
+                event_name = "execution_error"
+            event_data = {
+                "boundary": boundary.id,
+                "name": boundary.name,
+                "boundary_states": dict(matrix.boundary_states),
+            }
 
         self.store.commit_evidence(
             evidence,
@@ -369,13 +433,13 @@ class AlignmentRunner:
         )
 
         # Refresh narrowing and failure domain in snapshot
-        self._refresh_diagnostics(active_engine=engine_identity)
+        self._refresh_diagnostics(active_engine=prepared.engine_identity)
 
         return RunResult(
             status=evidence.result,
             boundary=boundary.id,
             evidence=evidence,
-            execution=exec_result.get("execution"),
+            execution=execution_result.get("execution"),
         )
 
     def _refresh_diagnostics(self, active_engine: dict[str, Any] | None = None) -> None:
