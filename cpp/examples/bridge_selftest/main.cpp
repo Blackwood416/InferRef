@@ -2,12 +2,18 @@
 //
 // Covers end-to-end dispatch with a KV-append stub engine, missing-region
 // failure, missing-output-role failure, and output-directory redirection.
+// With one argument it also loads the committed 0.4 quantization goldens
+// directory and checks that the Testcase-aware callback can read the
+// descriptor, parameters, and dequantized values, that the legacy callback
+// refuses a quantized testcase with kBridgeUnsupportedQuantization, and that
+// an unquantized testcase still dispatches on both paths.
 // With two arguments it loads the given testcase directory and writes engine
 // outputs to the given output directory, which is how the fixture
 // cross-language comparison is exercised in development.
 
 #include <inferref/bridge.hpp>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -57,6 +63,26 @@ inferref::IRTensor MakeFloat32(const std::vector<std::int64_t> &shape,
 std::vector<float> FloatValues(const inferref::IRTensor &tensor)
 {
     return tensor.AsFloat32();
+}
+
+std::uint32_t FloatBits(float value)
+{
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+bool FloatBitsEqual(const std::vector<float> &left,
+                    const std::vector<float> &right)
+{
+    if (left.size() != right.size())
+        return false;
+    for (std::size_t i = 0; i < left.size(); ++i)
+    {
+        if (FloatBits(left[i]) != FloatBits(right[i]))
+            return false;
+    }
+    return true;
 }
 
 void WriteFile(const std::string &path, const std::string &text)
@@ -344,6 +370,133 @@ void TestExtraOutputRole(const std::string &base)
           "no partial outputs written for undeclared role");
 }
 
+void TestUnquantizedTestcaseAwareDispatch(const std::string &base)
+{
+    std::printf("testcase-aware dispatch of an unquantized testcase\n");
+    const std::string testcase_dir = base + "/unquantized-ex";
+    const std::string output_dir = base + "/unquantized-ex-out";
+    std::filesystem::create_directories(testcase_dir);
+    WriteKvTestcase(testcase_dir);
+
+    bool saw_unquantized = false;
+    int calls = 0;
+    const inferref::DebugInvokeEx invoke =
+        [&](const inferref::Testcase &testcase, const std::string &region_name,
+            const std::map<std::string, inferref::IRTensor> &inputs)
+        -> std::map<std::string, inferref::IRTensor>
+    {
+        ++calls;
+        saw_unquantized =
+            testcase.FormatVersion() == "0.2" &&
+            !testcase.HasInputQuantization("cache") &&
+            !testcase.HasInputQuantization("update") &&
+            !testcase.HasInputQuantization("scale");
+        return KVInvoke(region_name, inputs);
+    };
+    const int code =
+        inferref::RunBridge(testcase_dir, output_dir, invoke);
+    Check(code == inferref::kBridgeOk,
+          "DebugInvokeEx returns 0 for an unquantized testcase");
+    Check(calls == 1, "DebugInvokeEx is called once");
+    Check(saw_unquantized,
+          "DebugInvokeEx sees no quantization on a 0.2 testcase");
+    Check(std::filesystem::exists(output_dir + "/manifest.json"),
+          "testcase-aware dispatch publishes manifest.json");
+}
+
+// The committed 0.4 fixture from tests/fixtures/cpp_quantization_goldens: the
+// per_group case exercises a non-trivial axis, group size, scale, and zero
+// point, so the descriptor query is not a per_tensor special case.
+void TestQuantizedDispatch(const std::string &goldens_dir)
+{
+    std::printf("quantized 0.4 dispatch through RunBridge\n");
+    const std::string testcase_dir = goldens_dir + "/cases/int8-per-group";
+    Check(std::filesystem::exists(testcase_dir + "/testcase.json"),
+          "committed int8-per-group 0.4 fixture is present");
+
+    const std::string legacy_output = "inferref_bridge_selftest_legacy_out";
+    std::filesystem::remove_all(legacy_output);
+    const int legacy_code =
+        inferref::RunBridge(testcase_dir, legacy_output, KVInvoke);
+    Check(legacy_code == inferref::kBridgeUnsupportedQuantization,
+          "legacy DebugInvoke returns kBridgeUnsupportedQuantization (4)");
+    Check(!std::filesystem::exists(legacy_output + "/manifest.json"),
+          "legacy path does not dispatch or write outputs");
+
+    const std::string output_dir = "inferref_bridge_selftest_quantized_out";
+    std::filesystem::remove_all(output_dir);
+    int calls = 0;
+    bool saw_testcase = false;
+    bool saw_quantization = false;
+    bool descriptor_matches = false;
+    bool parameters_match = false;
+    bool inputs_match = false;
+    bool region_matches = false;
+    std::vector<float> dequantized;
+    const inferref::DebugInvokeEx invoke =
+        [&](const inferref::Testcase &testcase, const std::string &region_name,
+            const std::map<std::string, inferref::IRTensor> &inputs)
+        -> std::map<std::string, inferref::IRTensor>
+    {
+        ++calls;
+        saw_testcase = testcase.FormatVersion() == "0.4";
+        saw_quantization = testcase.HasInputQuantization("weight");
+        const inferref::QuantizationSpec &spec =
+            testcase.InputQuantization("weight");
+        descriptor_matches =
+            spec.scheme == "affine-int8/v1" &&
+            spec.granularity == "per_group" && spec.has_axis && spec.axis == 1 &&
+            spec.has_group_size && spec.group_size == 3;
+        const std::map<std::int64_t, inferref::IRTensor> parameters =
+            testcase.QuantizationParameters();
+        const inferref::IRTensor scale =
+            testcase.QuantizationParameter(spec.scale_value_id);
+        const inferref::IRTensor zero_point =
+            testcase.QuantizationParameter(spec.zero_point_value_id);
+        parameters_match =
+            testcase.QuantizationParameterIds() ==
+                std::vector<std::int64_t>({10, 11}) &&
+            parameters.size() == 2 &&
+            scale.dtype == inferref::DataType::kFloat32 &&
+            scale.shape == std::vector<std::int64_t>({4, 4}) &&
+            zero_point.dtype == inferref::DataType::kInt8;
+        const auto weight = inputs.find("weight");
+        inputs_match = weight != inputs.end() &&
+                       weight->second.dtype == inferref::DataType::kInt8 &&
+                       weight->second.shape ==
+                           std::vector<std::int64_t>({4, 10});
+        region_matches = region_name == "quantization/reference/v1";
+        dequantized = testcase.DequantizeInputToFloat32("weight");
+        return {{"y", MakeFloat32(spec.logical_shape, dequantized)}};
+    };
+
+    const int code = inferref::RunBridge(testcase_dir, output_dir, invoke);
+    Check(code == inferref::kBridgeOk,
+          "DebugInvokeEx dispatch of a 0.4 testcase returns 0");
+    Check(calls == 1, "DebugInvokeEx receives the loaded Testcase once");
+    Check(saw_testcase, "callback sees format_version 0.4");
+    Check(saw_quantization, "HasInputQuantization(\"weight\") is true");
+    Check(descriptor_matches,
+          "InputQuantization returns the per_group descriptor");
+    Check(parameters_match,
+          "QuantizationParameters returns scale and zero point");
+    Check(inputs_match, "named inputs still carry the raw int8 codes");
+    Check(region_matches, "region name is passed through");
+
+    const inferref::IRTensor reference =
+        inferref::ReadIRTensor(testcase_dir + "/reference/y.irtensor");
+    Check(FloatBitsEqual(dequantized, reference.AsFloat32()),
+          "dequantized input matches the committed float32 reference");
+    const inferref::IRTensor written =
+        inferref::ReadIRTensor(output_dir + "/y.irtensor");
+    Check(FloatBitsEqual(written.AsFloat32(), dequantized),
+          "written output matches the dequantized input bits");
+    Check(std::filesystem::exists(output_dir + "/manifest.json"),
+          "quantized dispatch publishes manifest.json");
+    std::filesystem::remove_all(legacy_output);
+    std::filesystem::remove_all(output_dir);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -359,6 +512,7 @@ int main(int argc, char **argv)
         return inferref::RunBridge(argv[1], argv[2], KVInvoke);
     }
 
+    const std::string goldens_dir = argc > 1 ? argv[1] : std::string();
     const std::string base = "inferref_bridge_selftest_tmp";
     std::filesystem::remove_all(base);
     try
@@ -367,6 +521,11 @@ int main(int argc, char **argv)
         TestMissingRegion(base);
         TestMissingOutputRole(base);
         TestExtraOutputRole(base);
+        TestUnquantizedTestcaseAwareDispatch(base);
+        if (goldens_dir.empty())
+            std::printf("quantization fixtures not provided; skipping\n");
+        else
+            TestQuantizedDispatch(goldens_dir);
     }
     catch (const std::exception &error)
     {

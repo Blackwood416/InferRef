@@ -16,6 +16,16 @@ from inferref.cli.main import EXIT_OK, main
 from inferref.tensor import codec
 from inferref.testcase.requirements import derive_requirements
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+QUANTIZED_CASE = (
+    REPO_ROOT
+    / "tests"
+    / "fixtures"
+    / "cpp_quantization_goldens"
+    / "cases"
+    / "int8-per-group"
+)
+
 
 def _case(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -223,24 +233,16 @@ def test_scaffold_cli_rejects_unsupported_language(tmp_path: Path) -> None:
         main(["adapter", "scaffold", str(case), "--language", "rust"])
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize("bridge_mode", [False, True])
-def test_scaffolded_project_compiles_with_cmake(
-    tmp_path: Path, bridge_mode: bool
-) -> None:
-    """Acceptance F2: end-to-end CMake configure and build of scaffolded project."""
+def _build_scaffolded_project(proj_dir: Path) -> Path:
+    """Configure and build one scaffolded project; skips without a toolchain."""
+
     cmake_exe = shutil.which("cmake")
     if not cmake_exe:
         pytest.skip("CMake is not available on PATH")
 
-    repo_root = Path(__file__).resolve().parents[2]
-    cpp_include = repo_root / "cpp" / "include"
+    cpp_include = REPO_ROOT / "cpp" / "include"
     if not (cpp_include / "inferref" / "testcase.hpp").is_file():
         pytest.skip(f"InferRef C++ include directory not found: {cpp_include}")
-
-    case = _case(tmp_path / "case")
-    proj_dir = tmp_path / ("bridge_proj" if bridge_mode else "standard_proj")
-    scaffold_adapter(case, proj_dir, runtime_bridge=bridge_mode)
 
     build_dir = proj_dir / "build"
     configure_cmd = [
@@ -297,6 +299,21 @@ def test_scaffolded_project_compiles_with_cmake(
             f"CMake build failed with returncode {build_res.returncode}:\n"
             f"STDOUT:\n{build_res.stdout}\nSTDERR:\n{build_res.stderr}"
         )
+    return build_dir
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("bridge_mode", [False, True])
+def test_scaffolded_project_compiles_with_cmake(
+    tmp_path: Path, bridge_mode: bool
+) -> None:
+    """Acceptance F2: end-to-end CMake configure and build of scaffolded project."""
+
+    case = _case(tmp_path / "case")
+    proj_dir = tmp_path / ("bridge_proj" if bridge_mode else "standard_proj")
+    scaffold_adapter(case, proj_dir, runtime_bridge=bridge_mode)
+
+    build_dir = _build_scaffolded_project(proj_dir)
 
     target_name = "inferref_bridge" if bridge_mode else "inferref_adapter"
     matches = list(build_dir.glob(f"**/{target_name}*"))
@@ -309,3 +326,70 @@ def test_scaffolded_project_compiles_with_cmake(
     assert len(executable_matches) > 0, (
         f"No compiled executable found for {target_name} in {build_dir}"
     )
+
+
+@pytest.mark.parametrize("bridge_mode", [False, True])
+def test_quantized_scaffold_compiles_with_cmake(
+    tmp_path: Path, bridge_mode: bool
+) -> None:
+    """The generated 0.4 quantization queries are compilable in both modes."""
+
+    assert QUANTIZED_CASE.is_dir(), f"missing fixture: {QUANTIZED_CASE}"
+    proj_dir = tmp_path / ("bridge_proj" if bridge_mode else "standard_proj")
+    scaffold_adapter(QUANTIZED_CASE, proj_dir, runtime_bridge=bridge_mode)
+
+    build_dir = _build_scaffolded_project(proj_dir)
+    target_name = "inferref_bridge" if bridge_mode else "inferref_adapter"
+    assert list(build_dir.glob(f"**/{target_name}*")), (
+        f"No compiled artifact found for {target_name} in {build_dir}"
+    )
+
+
+def test_scaffold_quantized_testcase_emits_quantization_queries(
+    tmp_path: Path,
+) -> None:
+    manifest = json.loads(
+        (QUANTIZED_CASE / "testcase.json").read_text(encoding="utf-8")
+    )
+    requirements = derive_requirements(manifest)
+    out = tmp_path / "adapter"
+    result = scaffold_adapter(QUANTIZED_CASE, out)
+
+    assert result.capabilities["features"] == requirements["features"]
+    assert "quantization/affine-int8/v1/per_group" in requirements["features"]
+    adapter = EngineAdapter.load(out / "adapter.json")
+    assert adapter.capabilities is not None
+    assert (
+        "quantization/affine-int8/v1/per_group"
+        in adapter.capabilities.features
+    )
+    assert adapter.capabilities.features == tuple(requirements["features"])
+
+    main_cpp = (out / "main.cpp").read_text(encoding="utf-8")
+    for needle in (
+        "#include <vector>",
+        'testcase.HasInputQuantization("weight")',
+        'testcase.InputQuantization("weight")',
+        "testcase.QuantizationParameters()",
+        "testcase.QuantizationParameter(spec.scale_value_id)",
+        'testcase.DequantizeInputToFloat32("weight")',
+    ):
+        assert needle in main_cpp, needle
+    assert "DebugInvokeEx" not in main_cpp
+
+
+def test_scaffold_quantized_bridge_uses_testcase_aware_callback(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "bridge"
+    scaffold_adapter(QUANTIZED_CASE, out, runtime_bridge=True)
+
+    main_cpp = (out / "main.cpp").read_text(encoding="utf-8")
+    assert "inferref::DebugInvokeEx invoke" in main_cpp
+    assert "inferref::DebugInvoke invoke" not in main_cpp
+    assert 'testcase.HasInputQuantization("weight")' in main_cpp
+    assert 'testcase.DequantizeInputToFloat32("weight")' in main_cpp
+    assert 'RunBridge(testcase_dir, output_dir, invoke' in main_cpp
+
+    readme = (out / "README.md").read_text(encoding="utf-8")
+    assert "DebugInvokeEx" in readme

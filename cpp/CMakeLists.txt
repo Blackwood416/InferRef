@@ -73,4 +73,5 @@ get_filename_component(INFERREF_QUANTIZATION_GOLDENS_DIR
 add_test(NAME quantization_selftest
     COMMAND inferref_quantization_selftest
             ${INFERREF_QUANTIZATION_GOLDENS_DIR})
-add_test(NAME bridge_selftest COMMAND inferref_bridge_selftest)
+add_test(NAME bridge_selftest
+    COMMAND inferref_bridge_selftest ${INFERREF_QUANTIZATION_GOLDENS_DIR})

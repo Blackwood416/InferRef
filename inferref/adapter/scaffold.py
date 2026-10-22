@@ -13,14 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from inferref.agent.protocol import AgentProtocolError, EngineAdapter
+from inferref.agent.protocol import ADAPTER_FEATURES, AgentProtocolError, EngineAdapter
 from inferref.testcase.requirements import derive_requirements, is_contract_id
 from inferref.testcase.validate import require_valid_testcase
 
-#: Feature vocabulary the generated adapter may declare (section 6.3).
-FEATURE_WHITELIST = frozenset(
-    {"multiple_outputs", "strided_inputs", "alias_effects", "mutation_effects"}
-)
+#: Feature vocabulary the generated adapter may declare (section 6.3): the
+#: structural features plus the quantization scheme/granularity tokens that
+#: ``derive_requirements()`` emits for testcase 0.4.
+FEATURE_WHITELIST = ADAPTER_FEATURES
 
 SUPPORTED_LANGUAGES = ("cpp",)
 
@@ -54,6 +54,7 @@ _MAIN_CPP = """\
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 // The only user edit: implement engine dispatch for this region.
 // Inputs and outputs are keyed by role name, matching the testcase manifest.
@@ -89,6 +90,7 @@ int main(int argc, char **argv)
     {
         auto testcase = inferref::Testcase::Load(testcase_dir);
         testcase.SetOutputDir(output_dir);
+        // __INFERREF_QUANTIZATION_QUERY__
         auto inputs = testcase.Inputs();
         auto outputs = RunYourEngine(testcase.RegionName(), inputs);
 
@@ -137,6 +139,7 @@ _MAIN_CPP_BRIDGE = """\
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 int main(int argc, char **argv)
 {
@@ -174,6 +177,54 @@ int main(int argc, char **argv)
 }
 """
 
+_MAIN_CPP_BRIDGE_QUANTIZED = """\
+#include <inferref/bridge.hpp>
+
+#include <iostream>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+int main(int argc, char **argv)
+{
+    std::string testcase_dir;
+    std::string output_dir;
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string arg = argv[i];
+        if (arg == "--testcase" && i + 1 < argc)
+            testcase_dir = argv[++i];
+        else if (arg == "--output" && i + 1 < argc)
+            output_dir = argv[++i];
+    }
+    if (testcase_dir.empty() || output_dir.empty())
+    {
+        std::cerr << "usage: inferref_bridge --testcase DIR --output DIR\\n";
+        return inferref::kBridgeUsage;
+    }
+
+    // The only user edit: implement engine dispatch in this callback.  A 0.4
+    // testcase carries quantization descriptors and parameter tensors, so this
+    // project registers the Testcase-aware DebugInvokeEx callback.
+    inferref::DebugInvokeEx invoke =
+        [](const inferref::Testcase &testcase,
+           const std::string &region_name,
+           const std::map<std::string, inferref::IRTensor> &inputs)
+            -> std::map<std::string, inferref::IRTensor>
+    {
+        // __INFERREF_QUANTIZATION_QUERY__
+        // TODO: implement engine dispatch.
+        (void)region_name;
+        (void)inputs;
+        throw std::runtime_error("DebugInvokeEx is not implemented");
+    };
+
+    return inferref::RunBridge(testcase_dir, output_dir, invoke,
+                               "inferref_bridge");
+}
+"""
+
 _CMAKE_BRIDGE = """\
 cmake_minimum_required(VERSION 3.16)
 project(inferref_bridge LANGUAGES CXX)
@@ -196,20 +247,87 @@ target_include_directories(inferref_bridge PRIVATE ${INFERREF_CPP_INCLUDE})
 """
 
 
-def _generate_readme(testcase_name: str, *, bridge_mode: bool) -> str:
+def _quantized_input_roles(manifest: dict[str, Any]) -> list[str]:
+    """Input role names that carry a testcase 0.4 quantization descriptor."""
+
+    roles: list[str] = []
+    for item in manifest.get("inputs", []):
+        if not isinstance(item, dict) or not isinstance(item.get("quantization"), dict):
+            continue
+        name = item.get("name")
+        if isinstance(name, str) and name:
+            roles.append(name)
+    return roles
+
+
+_QUANTIZATION_QUERY_MARKER = "        // __INFERREF_QUANTIZATION_QUERY__"
+
+
+def _quantization_query_block(roles: list[str]) -> str:
+    """Compilable testcase 0.4 quantization queries for each quantized input."""
+
+    blocks = []
+    for role in roles:
+        blocks.append(
+            f'        // Testcase 0.4: input role "{role}" carries an explicit\n'
+            "        // quantization descriptor and immutable parameter tensors.\n"
+            f'        if (testcase.HasInputQuantization("{role}"))\n'
+            "        {\n"
+            "            const inferref::QuantizationSpec &spec =\n"
+            f'                testcase.InputQuantization("{role}");\n'
+            "            const auto parameters =\n"
+            "                testcase.QuantizationParameters();\n"
+            "            const inferref::IRTensor scale =\n"
+            "                testcase.QuantizationParameter(spec.scale_value_id);\n"
+            "            const std::vector<float> logical =\n"
+            f'                testcase.DequantizeInputToFloat32("{role}");\n'
+            "            (void)parameters;\n"
+            "            (void)scale;\n"
+            "            (void)logical;\n"
+            "        }"
+        )
+    return "\n".join(blocks)
+
+
+def _render_main_cpp(*, bridge_mode: bool, quantized_roles: list[str]) -> str:
+    """Render main.cpp with quantization queries when the testcase is 0.4."""
+
+    if bridge_mode:
+        template = _MAIN_CPP_BRIDGE_QUANTIZED if quantized_roles else _MAIN_CPP_BRIDGE
+    else:
+        template = _MAIN_CPP
+    return template.replace(
+        _QUANTIZATION_QUERY_MARKER, _quantization_query_block(quantized_roles)
+    )
+
+
+def _generate_readme(
+    testcase_name: str, *, bridge_mode: bool, quantized: bool
+) -> str:
+    callback = "DebugInvokeEx" if quantized else "DebugInvoke"
+    quantization_note = (
+        "\nThis testcase is format 0.4 with quantized inputs. The generated\n"
+        "`main.cpp` queries `testcase.HasInputQuantization(...)`,\n"
+        "`InputQuantization(...)`, `QuantizationParameters()`,\n"
+        "`QuantizationParameter(...)`, and `DequantizeInputToFloat32(...)` as a\n"
+        "starting point; `adapter.json` declares the matching\n"
+        "`quantization/...` capability tokens.\n"
+        if quantized
+        else ""
+    )
     if bridge_mode:
         return f"""\
 # Scaffolded InferRef runtime bridge
 
 Generated from the standalone testcase `{testcase_name}` in bridge mode. The
 output handling is already wired through `inferref::RunBridge`: it loads the
-testcase, resolves the region dispatch key, calls your `DebugInvoke` callback
+testcase, resolves the region dispatch key, calls your `{callback}` callback
 with named inputs, writes every declared output by role name, and publishes
 `manifest.json`.
-
+{quantization_note}
 ## What to edit
 
-1. `main.cpp` - implement engine dispatch inside the `DebugInvoke` callback.
+1. `main.cpp` - implement engine dispatch inside the `{callback}` callback.
    It receives the region key (`origin.region`, `origin.contract`, or
    `contracts[0]`) and a role-name -> tensor map, and must return a
    role-name -> tensor map with every declared output.  The bridge handles
@@ -247,7 +365,7 @@ Generated from the standalone testcase `{testcase_name}`. The engine loop is
 already wired: `main.cpp` loads the testcase, reads the named inputs, calls
 `RunYourEngine`, writes every declared output by role name, and publishes
 `manifest.json`.
-
+{quantization_note}
 ## What to edit
 
 1. `main.cpp` - replace the `RunYourEngine` stub with your engine dispatch.
@@ -353,6 +471,7 @@ def scaffold_adapter(
     manifest = validation.manifest
 
     adapter = _adapter_payload(manifest, bridge_mode=runtime_bridge)
+    quantized_roles = _quantized_input_roles(manifest)
     output_path = Path(output)
     if output_path.exists():
         raise ScaffoldError(
@@ -362,10 +481,13 @@ def scaffold_adapter(
     files = {
         "CMakeLists.txt": _CMAKE_BRIDGE if runtime_bridge else _CMAKE,
         "adapter.json": json.dumps(adapter, indent=2, ensure_ascii=False) + "\n",
-        "main.cpp": _MAIN_CPP_BRIDGE if runtime_bridge else _MAIN_CPP,
+        "main.cpp": _render_main_cpp(
+            bridge_mode=runtime_bridge, quantized_roles=quantized_roles
+        ),
         "README.md": _generate_readme(
             str(manifest.get("name") or testcase_path.name),
             bridge_mode=runtime_bridge,
+            quantized=bool(quantized_roles),
         ),
     }
     for name, content in files.items():
