@@ -929,6 +929,7 @@ def cmd_agent_evaluate(args: argparse.Namespace) -> int:
         claude_settings=args.claude_settings,
         claude_model=args.claude_model,
         public_attestation=args.public_attestation,
+        diagnostic_mode=args.diagnostic_mode,
     )
     summary = (
         f"agent evaluation: {report['status']} "
@@ -1701,6 +1702,15 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument(
         "--claude-model",
         help="Claude Code model override, useful with a custom provider settings file",
+    )
+    q.add_argument(
+        "--diagnostic-mode",
+        choices=("full", "status_only"),
+        default="full",
+        help=(
+            "full returns tensor metrics and first-failure coordinates; "
+            "status_only returns PASS/FAIL status without element-level diagnostics"
+        ),
     )
     q.add_argument(
         "--public-attestation",

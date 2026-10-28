@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-10-28 | [0.12.x M4 progress](2026-10-28-v012x-m4.md) | M4 local implementation; 2 new benchmarks; status_only mode; 1267 tests; not in v0.12.0 tag |
 | 2026-10-22 | [0.12.0 M1–M3 progress](2026-10-22-v0120-m3.md) | 0.12.0 released; 1259 tests; A770 13/13; dist 0.12.0; CircleCI 16/16 branch + 7/7 tag; v0.12.0 GitHub Release assets; M4 P1 deferred; no PyPI |
 | 2026-10-22 | [v0.11.0 release audit and 0.12 readiness](2026-10-22-v0110-release-audit.md) | 0.11.0 evidence audit; Windows 1088 tests and C++ 5/5 green; Linux/remote unverified; 3 evidence/docs defects assigned; 0.12 prerequisites |
 | 2026-09-03 | [v0.10.0 Alignment Orchestrator](2026-09-03-v0100-alignment-orchestrator.md) | Persistent alignment planning, execution, evidence, narrowing, classification, CLI/Agent/MCP integration; 814 tests |

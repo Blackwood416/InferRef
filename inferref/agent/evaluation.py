@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +50,12 @@ REQUIRED_TOOLS = (
     "inferref_context",
     "inferref_run_engine",
 )
+BENCHMARK_KINDS = frozenset(
+    {"rope", "nf4_block_scale_offset", "kv_cache_index_stride"}
+)
+DEFAULT_BENCHMARK_KIND = "rope"
+DIAGNOSTIC_MODES = frozenset({"full", "status_only"})
+DEFAULT_DIAGNOSTIC_MODE = "full"
 
 
 @dataclass(frozen=True)
@@ -102,12 +108,17 @@ class AuditLog(Sequence[dict[str, Any]]):
 class EvaluationCase:
     id: str
     seed: int
-    shape: tuple[int, int, int, int]
+    shape: tuple[int, ...]
+    params: Mapping[str, int] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: Any, *, where: str) -> EvaluationCase:
+    def from_dict(
+        cls, data: Any, *, where: str, kind: str = DEFAULT_BENCHMARK_KIND
+    ) -> EvaluationCase:
         if not isinstance(data, dict):
             raise AgentProtocolError(f"{where} must be an object")
+        if kind not in BENCHMARK_KINDS:
+            raise AgentProtocolError(f"unsupported benchmark kind {kind!r}")
         identifier = data.get("id")
         if not isinstance(identifier, str) or not identifier:
             raise AgentProtocolError(f"{where}.id must be a non-empty string")
@@ -117,22 +128,39 @@ class EvaluationCase:
         raw_shape = data.get("shape")
         if (
             not isinstance(raw_shape, list)
-            or len(raw_shape) != 4
+            or not raw_shape
             or not all(
                 isinstance(item, int) and not isinstance(item, bool) and item > 0
                 for item in raw_shape
             )
         ):
             raise AgentProtocolError(
-                f"{where}.shape must contain four positive integers"
+                f"{where}.shape must contain positive integers"
             )
         shape = tuple(raw_shape)
-        if shape[-1] % 2:
-            raise AgentProtocolError(f"{where}.shape[-1] must be even")
-        return cls(id=identifier, seed=seed, shape=shape)  # type: ignore[arg-type]
+        raw_params = data.get("params", {})
+        if not isinstance(raw_params, dict) or not all(
+            isinstance(key, str)
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+            for key, value in raw_params.items()
+        ):
+            raise AgentProtocolError(
+                f"{where}.params must be an object of integer values"
+            )
+        params = dict(raw_params)
+        _validate_case(kind, shape, params, where=where)
+        return cls(id=identifier, seed=seed, shape=shape, params=params)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "seed": self.seed, "shape": list(self.shape)}
+        result: dict[str, Any] = {
+            "id": self.id,
+            "seed": self.seed,
+            "shape": list(self.shape),
+        }
+        if self.params:
+            result["params"] = dict(self.params)
+        return result
 
 
 @dataclass(frozen=True)
@@ -185,6 +213,7 @@ class EvaluationSuccessPolicy:
 class EvaluationBenchmark:
     source: Path
     source_sha256: str
+    kind: str
     id: str
     title: str
     task: str
@@ -211,6 +240,11 @@ class EvaluationBenchmark:
             raise AgentProtocolError(
                 f"unsupported evaluation format_version {data.get('format_version')!r}; "
                 f"expected {EVALUATION_VERSION!r}"
+            )
+        kind = data.get("kind", DEFAULT_BENCHMARK_KIND)
+        if not isinstance(kind, str) or kind not in BENCHMARK_KINDS:
+            raise AgentProtocolError(
+                "evaluation kind must be one of: " + ", ".join(sorted(BENCHMARK_KINDS))
             )
         identifier = _required_string(data, "id")
         title = _required_string(data, "title")
@@ -242,12 +276,16 @@ class EvaluationBenchmark:
         cases = data.get("cases")
         if not isinstance(cases, dict):
             raise AgentProtocolError("cases must be an object")
-        visible = EvaluationCase.from_dict(cases.get("visible"), where="cases.visible")
+        visible = EvaluationCase.from_dict(
+            cases.get("visible"), where="cases.visible", kind=kind
+        )
         raw_holdouts = cases.get("holdouts")
         if not isinstance(raw_holdouts, list) or not raw_holdouts:
             raise AgentProtocolError("cases.holdouts must be a non-empty array")
         holdouts = tuple(
-            EvaluationCase.from_dict(item, where=f"cases.holdouts[{index}]")
+            EvaluationCase.from_dict(
+                item, where=f"cases.holdouts[{index}]", kind=kind
+            )
             for index, item in enumerate(raw_holdouts)
         )
         all_ids = [visible.id, *(item.id for item in holdouts)]
@@ -270,6 +308,7 @@ class EvaluationBenchmark:
         return cls(
             source=source,
             source_sha256=hashlib.sha256(source_bytes).hexdigest(),
+            kind=kind,
             id=identifier,
             title=title,
             task=task,
@@ -295,6 +334,7 @@ class EvaluationSession:
     workspace: Path
     root: Path
     audit_path: Path
+    diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE
     engine_runs: int = 0
     call_counts: dict[str, int] = field(default_factory=dict)
     successful_tools: set[str] = field(default_factory=set)
@@ -305,6 +345,11 @@ class EvaluationSession:
     _audit_finalized: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.diagnostic_mode not in DIAGNOSTIC_MODES:
+            raise ValueError(
+                "diagnostic_mode must be one of: "
+                + ", ".join(sorted(DIAGNOSTIC_MODES))
+            )
         self.workspace = self.workspace.resolve()
         self.root = self.root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -390,10 +435,12 @@ class EvaluationSession:
             "format": EVALUATION_FORMAT,
             "version": EVALUATION_VERSION,
             "benchmark": self.benchmark.id,
+            "kind": self.benchmark.kind,
             "visible_testcase": VISIBLE_URI,
             "candidate_adapter": CANDIDATE_URI,
             "runs_root": RUNS_URI,
             "max_engine_runs": self.benchmark.max_engine_runs,
+            "diagnostic_mode": self.diagnostic_mode,
             "oracle_isolation": "reference_payloads_not_materialized",
         }
         return AgentResponse(
@@ -417,7 +464,8 @@ class EvaluationSession:
                 f"evaluation artifact must be {VISIBLE_URI!r}",
                 code="path_not_allowed",
             )
-        inputs, references = rope_arrays(self.benchmark.visible_case)
+        inputs, references = case_arrays(self.benchmark.kind, self.benchmark.visible_case)
+        provenance = case_provenance(self.benchmark.kind)
         return AgentResponse(
             operation="context",
             status="ok",
@@ -436,7 +484,7 @@ class EvaluationSession:
                 "origin": {
                     "kind": "agent_evaluation",
                     "benchmark": self.benchmark.id,
-                    "region": "RoPE@agent-eval",
+                    "region": provenance["region"],
                 },
             },
             next_actions=(
@@ -481,6 +529,7 @@ class EvaluationSession:
             self.benchmark.visible_case,
             engine=self.workspace / self.benchmark.editable_paths[0],
             runs_root=self.root / "visible-runs",
+            kind=self.benchmark.kind,
         )
         result["testcase"] = VISIBLE_URI
         result["adapter"] = CANDIDATE_URI
@@ -531,15 +580,108 @@ def rope_arrays(
     return inputs, references
 
 
+def nf4_block_scale_offset_arrays(
+    case: EvaluationCase,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Build flat-block NF4 inputs whose scales cross row boundaries."""
+
+    from inferref.quantization.nf4 import NF4_CODEBOOK
+
+    rng = np.random.default_rng(case.seed)
+    rows, columns = case.shape
+    group_size = case.params["group_size"]
+    blocks_per_row = (columns + group_size - 1) // group_size
+    codes = rng.integers(0, 16, size=(rows, columns), dtype=np.uint8)
+    scales = rng.uniform(0.01, 0.25, size=(rows, blocks_per_row)).astype(np.float32)
+    codebook = np.asarray(NF4_CODEBOOK, dtype=np.float32)
+    groups = np.arange(rows * columns, dtype=np.int64) // group_size
+    weight = (
+        codebook[codes.reshape(-1)] * scales.reshape(-1)[groups]
+    ).reshape(rows, columns).astype(np.float32)
+    inputs = {
+        "codes": codes,
+        "scales": scales,
+        "codebook": codebook,
+        "group_size": np.asarray([group_size], dtype=np.int32),
+    }
+    return inputs, {"weight": weight}
+
+
+def kv_cache_index_stride_arrays(
+    case: EvaluationCase,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Build an indexed KV-cache update at one explicit decode position."""
+
+    rng = np.random.default_rng(case.seed)
+    batch, heads, capacity, dimension = case.shape
+    index = case.params["index"]
+    cache = rng.normal(size=(batch, heads, capacity, dimension)).astype(np.float32)
+    update = rng.normal(size=(batch, heads, 1, dimension)).astype(np.float32)
+    cache_out = cache.copy()
+    cache_out[:, :, index : index + 1, :] = update
+    inputs = {
+        "cache": cache,
+        "update": update,
+        "index": np.asarray([index], dtype=np.int32),
+    }
+    return inputs, {"cache_out": cache_out}
+
+
+def case_arrays(
+    kind: str, case: EvaluationCase
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Return input-only arrays and in-memory references for one case."""
+
+    if kind == "rope":
+        return rope_arrays(case)
+    if kind == "nf4_block_scale_offset":
+        return nf4_block_scale_offset_arrays(case)
+    if kind == "kv_cache_index_stride":
+        return kv_cache_index_stride_arrays(case)
+    raise ValueError(f"unsupported benchmark kind {kind!r}")
+
+
+def case_provenance(kind: str) -> dict[str, str]:
+    """Stable comparison provenance for the benchmark's failing boundary."""
+
+    provenance = {
+        "rope": {
+            "operator": "aten.add.Tensor",
+            "module_path": "layers.0.self_attn",
+            "source": "reference_model.py:42 in apply_rotary_pos_emb",
+            "region": "RoPE@agent-eval",
+        },
+        "nf4_block_scale_offset": {
+            "operator": "aten.mul.Tensor",
+            "module_path": "layers.0.mlp.down_proj",
+            "source": "quantization/nf4.py:46 in dequantize_nf4",
+            "region": "NF4Dequant@agent-eval",
+        },
+        "kv_cache_index_stride": {
+            "operator": "aten.copy_.default",
+            "module_path": "layers.0.self_attn",
+            "source": "kv_cache.py:63 in update_kv_cache",
+            "region": "KVCacheUpdate@agent-eval",
+        },
+    }
+    try:
+        return provenance[kind]
+    except KeyError:
+        raise ValueError(f"unsupported benchmark kind {kind!r}") from None
+
+
 def execute_case(
     case: EvaluationCase,
     *,
     engine: Path,
     runs_root: Path,
     timeout_seconds: float = 30.0,
+    kind: str = DEFAULT_BENCHMARK_KIND,
 ) -> dict[str, Any]:
     """Execute one candidate against input-only files and in-memory references."""
 
+    if kind not in BENCHMARK_KINDS:
+        raise ValueError(f"unsupported benchmark kind {kind!r}")
     engine = engine.resolve()
     runs_root = runs_root.resolve()
     runs_root.mkdir(parents=True, exist_ok=True)
@@ -549,7 +691,7 @@ def execute_case(
     output_root = run_root / "output"
     input_root.mkdir(parents=True)
     output_root.mkdir()
-    inputs, references = rope_arrays(case)
+    inputs, references = case_arrays(kind, case)
     _write_input_view(input_root, case, inputs, references)
     initial_input_hashes = workspace_hashes(input_root)
 
@@ -623,6 +765,7 @@ def execute_case(
     )
     result: dict[str, Any] = {
         "run_id": run_id,
+        "kind": kind,
         "case": case.to_dict(),
         "execution": execution,
         "comparison": None,
@@ -646,7 +789,7 @@ def execute_case(
     elif execution["exit_code"] != 0:
         result["status"] = "execution_error"
     else:
-        report = _compare_memory_references(output_root, references)
+        report = _compare_memory_references(output_root, references, kind=kind)
         result["comparison"] = report.to_dict()
         result["status"] = "pass" if report.status == "pass" else "mismatch"
     (run_root / "evaluation-run.json").write_text(
@@ -969,8 +1112,12 @@ def _write_input_view(
 
 
 def _compare_memory_references(
-    output_root: Path, references: dict[str, np.ndarray]
+    output_root: Path,
+    references: dict[str, np.ndarray],
+    *,
+    kind: str = DEFAULT_BENCHMARK_KIND,
 ) -> ComparisonReport:
+    provenance = case_provenance(kind)
     report = ComparisonReport(reference="host-memory", actual=str(output_root))
     output_map: dict[str, str] = {}
     manifest_path = output_root / "manifest.json"
@@ -1025,10 +1172,10 @@ def _compare_memory_references(
                     comparison = TensorComparison(
                         name=name, status=STATUS_ERROR, message=str(exc)
                     )
-        comparison.operator = "aten.add.Tensor"
-        comparison.module_path = "layers.0.self_attn"
-        comparison.source = "reference_model.py:42 in apply_rotary_pos_emb"
-        comparison.region = "RoPE@agent-eval"
+        comparison.operator = provenance["operator"]
+        comparison.module_path = provenance["module_path"]
+        comparison.source = provenance["source"]
+        comparison.region = provenance["region"]
         report.comparisons.append(comparison)
         if not comparison.passed:
             report.stopped_early = True
@@ -1058,6 +1205,174 @@ def _array_metadata(value: np.ndarray) -> dict[str, Any]:
 
 def _array_summary(name: str, value: np.ndarray) -> dict[str, Any]:
     return {"name": name, **_array_metadata(value), "payload": None}
+
+
+def _validate_case(
+    kind: str,
+    shape: tuple[int, ...],
+    params: Mapping[str, int],
+    *,
+    where: str,
+) -> None:
+    if kind == "rope":
+        if len(shape) != 4 or shape[-1] % 2:
+            raise AgentProtocolError(
+                f"{where}.shape must be four positive integers with an even last dimension"
+            )
+        if params:
+            raise AgentProtocolError(f"{where}.params are not supported for rope")
+        return
+    if kind == "nf4_block_scale_offset":
+        if len(shape) != 2:
+            raise AgentProtocolError(f"{where}.shape must be [rows, columns]")
+        if set(params) != {"group_size"}:
+            raise AgentProtocolError(
+                f"{where}.params must contain exactly group_size"
+            )
+        group_size = params["group_size"]
+        rows, columns = shape
+        if rows < 2:
+            raise AgentProtocolError(
+                f"{where}.shape requires at least two rows to cross block boundaries"
+            )
+        if group_size <= 0 or columns <= group_size or columns % group_size == 0:
+            raise AgentProtocolError(
+                f"{where} requires columns > group_size and a non-zero tail"
+            )
+        return
+    if kind == "kv_cache_index_stride":
+        if len(shape) != 4:
+            raise AgentProtocolError(
+                f"{where}.shape must be [batch, heads, capacity, dimension]"
+            )
+        if set(params) != {"index"}:
+            raise AgentProtocolError(f"{where}.params must contain exactly index")
+        index = params["index"]
+        if index < 0 or index >= shape[2]:
+            raise AgentProtocolError(f"{where}.params.index must be inside the cache")
+        return
+    raise AgentProtocolError(f"unsupported benchmark kind {kind!r}")
+
+
+def sanitize_evaluation_response(
+    response: AgentResponse, mode: str
+) -> AgentResponse:
+    """Reduce an MCP evaluation response for the status-only ablation."""
+
+    if mode not in DIAGNOSTIC_MODES:
+        raise ValueError(
+            "diagnostic_mode must be one of: " + ", ".join(sorted(DIAGNOSTIC_MODES))
+        )
+    if mode == DEFAULT_DIAGNOSTIC_MODE:
+        return response
+    data = _status_only_data(response.operation, response.data)
+    diagnostics = tuple(
+        {
+            "severity": str(item.get("severity", "error")),
+            "code": str(item.get("code", "evaluation_error")),
+            "message": "diagnostic details suppressed by status_only mode",
+        }
+        for item in response.diagnostics
+    )
+    next_actions = tuple(
+        {
+            "operation": item.get("operation"),
+            **(
+                {"reason": item["reason"]}
+                if isinstance(item.get("reason"), str)
+                else {}
+            ),
+        }
+        for item in response.next_actions
+        if isinstance(item.get("operation"), str)
+    )
+    return AgentResponse(
+        operation=response.operation,
+        status=response.status,
+        data=data,
+        diagnostics=diagnostics,
+        next_actions=next_actions,
+    )
+
+
+def _status_only_data(operation: str, data: Mapping[str, Any]) -> dict[str, Any]:
+    if operation == "capabilities":
+        evaluation = data.get("evaluation")
+        reduced_evaluation = (
+            {
+                key: evaluation[key]
+                for key in (
+                    "format",
+                    "version",
+                    "benchmark",
+                    "kind",
+                    "visible_testcase",
+                    "candidate_adapter",
+                    "runs_root",
+                    "max_engine_runs",
+                    "diagnostic_mode",
+                )
+                if key in evaluation
+            }
+            if isinstance(evaluation, Mapping)
+            else None
+        )
+        operations = [
+            {"name": item["name"]}
+            for item in data.get("operations", [])
+            if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+        ]
+        return {
+            "evaluation": reduced_evaluation,
+            "mcp_tools": list(data.get("mcp_tools", [])),
+            "operations": operations,
+        }
+    if operation == "context":
+        return {
+            "artifact": data.get("artifact"),
+            "path": data.get("path"),
+            "name": data.get("name"),
+            "reproducible": data.get("reproducible"),
+            "oracle": data.get("oracle"),
+            "origin": {
+                key: data["origin"][key]
+                for key in ("kind", "benchmark")
+                if isinstance(data.get("origin"), Mapping) and key in data["origin"]
+            },
+            "inputs": _status_only_tensors(data.get("inputs")),
+            "outputs": _status_only_tensors(data.get("outputs")),
+        }
+    if operation == "run_engine":
+        case = data.get("case")
+        execution = data.get("execution")
+        return {
+            "run_id": data.get("run_id"),
+            "kind": data.get("kind"),
+            "case": {"id": case["id"]} if isinstance(case, Mapping) and "id" in case else None,
+            "status": data.get("status"),
+            "execution": (
+                {
+                    key: execution[key]
+                    for key in ("status", "exit_code")
+                    if key in execution
+                }
+                if isinstance(execution, Mapping)
+                else None
+            ),
+        }
+    return {}
+
+
+def _status_only_tensors(value: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            key: item[key]
+            for key in ("name", "dtype")
+            if key in item
+        }
+        for item in value
+        if isinstance(item, Mapping)
+    ] if isinstance(value, list) else []
 
 
 def _required_string(data: dict[str, Any], name: str) -> str:

@@ -291,6 +291,22 @@ required interaction. After the Agent exits, the host silently executes the fina
 candidate against the visible case and every holdout. All acceptance results must
 therefore describe one final `engine.py`.
 
+The optional `kind` field selects the case generator and defaults to `rope`.
+`nf4_block_scale_offset` uses a `[rows, columns]` shape with
+`params.group_size`; `kv_cache_index_stride` uses
+`[batch, heads, cache_capacity, head_dim]` with `params.index` naming the decode
+write position. The case `params` object is validated per kind, and the loaded
+manifest SHA-256 freezes it with the rest of the benchmark.
+
+`inferref agent evaluate --diagnostic-mode {full,status_only}` controls what the
+MCP server returns to the Agent. `full` is the default and preserves comparison
+metrics, first-failure coordinates, tensor shapes, and bounded execution logs.
+`status_only` returns PASS/FAIL plus artifact names and execution status, without
+element-level metrics, coordinates, shapes, `input_view`/`output` paths, or
+stdout/stderr. Audit records and the attestation state machine are computed from
+the original response and remain unchanged; the report and attestation record the
+selected mode.
+
 The evaluator snapshots the workspace, allows changes only to `editable_paths`,
 and distinguishes infrastructure, Agent, integrity, and overfit failures. The
 `success` object is required, parsed, validated, and controls the overall pass

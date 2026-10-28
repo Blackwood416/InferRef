@@ -92,7 +92,8 @@ for supported behavior, staged tasks, and acceptance criteria.
 consumption, hardware quantization contracts, hierarchical alignment with batch
 execution, and Intel Arc GPU execution (Level Zero / SYCL) are qualified. Vendor
 fused low-bit kernels and optional AVX512 repacking remain outside this scope.
-M4 Agent benchmarks and `--diagnostic-mode` are deferred to 0.12.x.
+M4 Agent benchmarks and `--diagnostic-mode` are implemented on main for 0.12.x;
+they are not part of the `v0.12.0` release.
 See [release notes](docs/releases/0.12.0.md).
 
 The development version provides a standalone, numpy-only affine INT8 reference
@@ -305,13 +306,27 @@ public benchmark, the processes share one OS user, and hashes detect final-state
 changes rather than reads or modify-then-restore behavior.
 
 The manual dual-Agent gate uses fresh Codex and Claude sessions and requires both
-to pass within four engine runs:
+to pass within four engine runs. The M4 suite has three deterministic benchmarks:
+`rope_sign`, `nf4_block_scale_offset`, and `kv_cache_index_stride`.
 
 ```bash
 inferref agent evaluate examples/agent_eval/rope_sign/benchmark.json \
   --agents codex,claude \
   --report-dir .scratch/agent-eval/rope-sign \
   --public-attestation docs/dev/attestations/rope-sign.json \
+  --json
+```
+
+For the controlled ablation, add `--diagnostic-mode status_only`. The MCP tools
+then return PASS/FAIL and artifact names without tensor metrics, first-failure
+coordinates, shapes, or execution logs; the sealed audit and attestation binding
+are unchanged. The default `full` mode retains the diagnostic payloads.
+
+```bash
+inferref agent evaluate examples/agent_eval/nf4_block_scale_offset/benchmark.json \
+  --agents codex,claude \
+  --report-dir .scratch/agent-eval/nf4-status-only \
+  --diagnostic-mode status_only \
   --json
 ```
 
@@ -353,12 +368,16 @@ It excludes reasoning, credentials, reference payloads, executable absolute
 paths, and local settings paths. Full model event streams remain untracked.
 Ordinary CI uses a deterministic fake Agent to test this evaluator and produces
 development evidence; it does not spend model tokens or claim autonomous repair.
-The machine-readable contract lives in
-[`benchmark.json`](examples/agent_eval/rope_sign/benchmark.json).
+The machine-readable contracts are
+[`rope_sign`](examples/agent_eval/rope_sign/benchmark.json),
+[`nf4_block_scale_offset`](examples/agent_eval/nf4_block_scale_offset/benchmark.json),
+and
+[`kv_cache_index_stride`](examples/agent_eval/kv_cache_index_stride/benchmark.json).
 
-This pilot proves protocol usability, not that InferRef diagnostics improve an
-Agent over ordinary tests. That claim requires a controlled full-diagnostics vs
-PASS/FAIL-only vs no-InferRef ablation using the same benchmark and models.
+The M4 `status_only` mode enables a controlled full-diagnostics vs PASS/FAIL-only
+ablation with identical holdouts. It does not by itself establish that InferRef
+diagnostics improve an Agent over ordinary tests; that still requires real
+model runs and a no-InferRef arm.
 
 ## Semantic analysis
 

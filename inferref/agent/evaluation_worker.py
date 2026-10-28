@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from inferref.agent.evaluation import (
+    DIAGNOSTIC_MODES,
     _canonical_json_sha256,
     _read_regular_file,
 )
@@ -90,9 +91,16 @@ def run_request(path: Path) -> dict[str, Any]:
         "public_attestation",
         "claude_settings",
         "claude_model",
+        "diagnostic_mode",
     }
     if set(request) != allowed:
         raise ValueError("formal worker request has missing or unexpected fields")
+    diagnostic_mode = request["diagnostic_mode"]
+    if diagnostic_mode not in DIAGNOSTIC_MODES:
+        raise ValueError(
+            "formal worker request diagnostic_mode must be one of: "
+            + ", ".join(sorted(DIAGNOSTIC_MODES))
+        )
     agents = request["agents"]
     if (
         not isinstance(agents, list)
@@ -108,6 +116,7 @@ def run_request(path: Path) -> dict[str, Any]:
         claude_model=_optional_string(request, "claude_model"),
         public_attestation=_required_string(request, "public_attestation"),
         formal_worker_evidence=worker_evidence,
+        diagnostic_mode=diagnostic_mode,
     )
 
 

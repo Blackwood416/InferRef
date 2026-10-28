@@ -6,7 +6,13 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from inferref.agent.evaluation import EvaluationBenchmark, EvaluationSession
+from inferref.agent.evaluation import (
+    DEFAULT_DIAGNOSTIC_MODE,
+    DIAGNOSTIC_MODES,
+    EvaluationBenchmark,
+    EvaluationSession,
+    sanitize_evaluation_response,
+)
 from inferref.ir.version import INFERREF_VERSION
 
 
@@ -36,7 +42,7 @@ def create_evaluation_server(session: EvaluationSession) -> Any:
 
         response = session.capabilities()
         session.audit("inferref_capabilities", response)
-        return response.to_dict()
+        return sanitize_evaluation_response(response, session.diagnostic_mode).to_dict()
 
     @server.tool()
     def inferref_context(path: str) -> dict[str, Any]:
@@ -44,7 +50,7 @@ def create_evaluation_server(session: EvaluationSession) -> Any:
 
         response = session.context(path)
         session.audit("inferref_context", response)
-        return response.to_dict()
+        return sanitize_evaluation_response(response, session.diagnostic_mode).to_dict()
 
     @server.tool()
     def inferref_run_engine(
@@ -62,7 +68,7 @@ def create_evaluation_server(session: EvaluationSession) -> Any:
         del atol, rtol, ignore_stride, strict_layout, first_failure
         response = session.run_visible(testcase, adapter, runs_root)
         session.audit("inferref_run_engine", response)
-        return response.to_dict()
+        return sanitize_evaluation_response(response, session.diagnostic_mode).to_dict()
 
     return server
 
@@ -73,6 +79,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--session-root", required=True)
     parser.add_argument("--audit", required=True)
+    parser.add_argument(
+        "--diagnostic-mode",
+        choices=sorted(DIAGNOSTIC_MODES),
+        default=DEFAULT_DIAGNOSTIC_MODE,
+    )
     args = parser.parse_args(argv)
     benchmark = EvaluationBenchmark.load(args.benchmark)
     session = EvaluationSession(
@@ -80,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         workspace=Path(args.workspace),
         root=Path(args.session_root),
         audit_path=Path(args.audit),
+        diagnostic_mode=args.diagnostic_mode,
     )
     try:
         create_evaluation_server(session).run(transport="stdio")

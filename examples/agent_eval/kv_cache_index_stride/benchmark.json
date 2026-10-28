@@ -1,0 +1,74 @@
+{
+  "format": "inferref-agent-evaluation",
+  "format_version": "0.2",
+  "kind": "kv_cache_index_stride",
+  "id": "kv-cache-index-stride",
+  "title": "Repair an indexed KV-cache sequence write",
+  "task": "TASK.md",
+  "workspace_template": [
+    "engine.py",
+    "TASK.md"
+  ],
+  "candidate": {
+    "editable_paths": [
+      "engine.py"
+    ],
+    "required_tools": [
+      "inferref_capabilities",
+      "inferref_context",
+      "inferref_run_engine"
+    ],
+    "max_engine_runs": 4,
+    "max_wall_seconds": 900
+  },
+  "cases": {
+    "visible": {
+      "id": "visible",
+      "seed": 20261101,
+      "shape": [1, 2, 8, 4],
+      "params": {
+        "index": 1
+      }
+    },
+    "holdouts": [
+      {
+        "id": "holdout-two-batch",
+        "seed": 20261102,
+        "shape": [2, 2, 6, 3],
+        "params": {
+          "index": 2
+        }
+      },
+      {
+        "id": "holdout-many-heads",
+        "seed": 20261103,
+        "shape": [1, 4, 5, 2],
+        "params": {
+          "index": 4
+        }
+      },
+      {
+        "id": "holdout-wide-head",
+        "seed": 20261104,
+        "shape": [2, 1, 7, 3],
+        "params": {
+          "index": 3
+        }
+      }
+    ]
+  },
+  "drivers": {
+    "codex": {
+      "model": "gpt-5.6-sol"
+    },
+    "claude": {
+      "model": "opus"
+    }
+  },
+  "success": {
+    "required_agent_passes": 2,
+    "visible_status": "pass",
+    "all_holdouts_pass": true,
+    "protected_paths_unchanged": true
+  }
+}

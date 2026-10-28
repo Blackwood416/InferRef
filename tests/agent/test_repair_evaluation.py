@@ -43,6 +43,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARK_PATH = REPO_ROOT / "examples" / "agent_eval" / "rope_sign" / "benchmark.json"
 WRONG = "return np.concatenate((second, -first), axis=-1)"
 FIXED = "return np.concatenate((-second, first), axis=-1)"
+M4_REPAIRS = (
+    (
+        "nf4_block_scale_offset",
+        "nf4_block_scale_offset",
+        "scale_index = row * blocks_per_row + column // int(group_size[0])",
+        "scale_index = (row * columns + column) // int(group_size[0])",
+    ),
+    (
+        "kv_cache_index_stride",
+        "kv_cache_index_stride",
+        "start = int(index[0]) - 1",
+        "start = int(index[0])",
+    ),
+)
 
 
 def _benchmark() -> EvaluationBenchmark:
@@ -568,6 +582,235 @@ def test_fake_dual_agent_evaluation_passes_visible_and_holdouts(tmp_path: Path) 
         assert all(case["status"] == "pass" for case in agent["holdouts"])
 
 
+@pytest.mark.parametrize(("relative", "kind", "wrong", "fixed"), M4_REPAIRS)
+def test_m4_benchmark_baseline_fails_and_fixed_engine_passes(
+    tmp_path: Path,
+    relative: str,
+    kind: str,
+    wrong: str,
+    fixed: str,
+) -> None:
+    benchmark = EvaluationBenchmark.load(
+        REPO_ROOT / "examples" / "agent_eval" / relative / "benchmark.json"
+    )
+    assert benchmark.kind == kind
+    workspace = prepare_workspace(benchmark, tmp_path / "workspace")
+    engine = workspace / "engine.py"
+    cases = (benchmark.visible_case, *benchmark.holdout_cases)
+
+    for case in cases:
+        outcome = execute_case(
+            case,
+            engine=engine,
+            runs_root=tmp_path / "baseline" / case.id,
+            kind=benchmark.kind,
+        )
+        assert outcome["status"] == "mismatch"
+
+    source = engine.read_text(encoding="utf-8")
+    assert wrong in source
+    engine.write_text(source.replace(wrong, fixed), encoding="utf-8")
+    for case in cases:
+        outcome = execute_case(
+            case,
+            engine=engine,
+            runs_root=tmp_path / "fixed" / case.id,
+            kind=benchmark.kind,
+        )
+        assert outcome["status"] == "pass"
+        assert outcome["comparison"]["status"] == "pass"
+
+
+def _fake_m4_repair_driver(
+    agent: str,
+    model: str,
+    benchmark: EvaluationBenchmark,
+    workspace: Path,
+    session_root: Path,
+    audit_path: Path,
+) -> AgentProcessResult:
+    del agent, model
+    repair = next(
+        (wrong, fixed)
+        for relative, kind, wrong, fixed in M4_REPAIRS
+        if kind == benchmark.kind
+    )
+    wrong, fixed = repair
+    session = EvaluationSession(benchmark, workspace, session_root, audit_path)
+    response = session.capabilities()
+    session.audit("inferref_capabilities", response)
+    response = session.context(VISIBLE_URI)
+    session.audit("inferref_context", response)
+    first = session.run_visible(VISIBLE_URI, CANDIDATE_URI, RUNS_URI)
+    session.audit("inferref_run_engine", first)
+    assert first.status == "fail"
+    engine = workspace / benchmark.editable_paths[0]
+    source = engine.read_text(encoding="utf-8")
+    assert wrong in source
+    engine.write_text(source.replace(wrong, fixed), encoding="utf-8")
+    second = session.run_visible(VISIBLE_URI, CANDIDATE_URI, RUNS_URI)
+    session.audit("inferref_run_engine", second)
+    assert second.status == "pass"
+    session.finalize_audit()
+    return _process(session_root.parent)
+
+
+@pytest.mark.parametrize(("relative", "kind", "wrong", "fixed"), M4_REPAIRS)
+def test_m4_fake_agent_repairs_visible_and_holdouts(
+    tmp_path: Path,
+    relative: str,
+    kind: str,
+    wrong: str,
+    fixed: str,
+) -> None:
+    del wrong, fixed
+    benchmark_path = (
+        REPO_ROOT / "examples" / "agent_eval" / relative / "benchmark.json"
+    )
+    report = evaluate_benchmark(
+        benchmark_path,
+        agents=("codex", "claude"),
+        report_dir=tmp_path / "report",
+        driver=_fake_m4_repair_driver,
+    )
+
+    assert report["status"] == "pass"
+    assert report["diagnostic_mode"] == "full"
+    assert report["benchmark_kind"] == kind
+    assert report["acceptance"]["passed"] == 2
+    for agent in report["agents"]:
+        assert agent["classification"] == "pass"
+        assert agent["visible"]["final"]["status"] == "pass"
+        assert len(agent["holdouts"]) == 3
+        assert all(case["status"] == "pass" for case in agent["holdouts"])
+
+
+def test_status_only_mcp_strips_element_level_diagnostics(tmp_path: Path) -> None:
+    benchmark = _benchmark()
+    workspace = prepare_workspace(benchmark, tmp_path / "workspace")
+    session = EvaluationSession(
+        benchmark,
+        workspace,
+        tmp_path / "session",
+        tmp_path / "audit.jsonl",
+        diagnostic_mode="status_only",
+    )
+
+    async def exercise() -> None:
+        async with Client(create_evaluation_server(session)) as client:
+            capabilities = await client.call_tool("inferref_capabilities", {})
+            assert (
+                capabilities.structured_content["data"]["evaluation"][
+                    "diagnostic_mode"
+                ]
+                == "status_only"
+            )
+            assert (
+                capabilities.structured_content["data"]["evaluation"]["kind"]
+                == "rope"
+            )
+            context = await client.call_tool(
+                "inferref_context", {"path": VISIBLE_URI}
+            )
+            for item in (
+                context.structured_content["data"]["inputs"]
+                + context.structured_content["data"]["outputs"]
+            ):
+                assert set(item) <= {"name", "dtype"}
+            run = await client.call_tool(
+                "inferref_run_engine",
+                {
+                    "testcase": VISIBLE_URI,
+                    "adapter": CANDIDATE_URI,
+                    "runs_root": RUNS_URI,
+                },
+            )
+            assert run.structured_content["status"] == "fail"
+            data = run.structured_content["data"]
+            assert data["case"] == {"id": "visible"}
+            assert data["execution"]["status"] == "completed"
+            encoded = json.dumps(data)
+            for forbidden in (
+                "metrics",
+                "first_failure",
+                "comparisons",
+                "shape",
+                "input_view",
+                "output",
+                "stdout",
+                "stderr",
+            ):
+                assert forbidden not in encoded
+
+    asyncio.run(exercise())
+    session.finalize_audit()
+    assert load_audit(tmp_path / "audit.jsonl").valid
+
+
+def test_diagnostic_mode_is_recorded_in_report_and_attestation(
+    tmp_path: Path,
+) -> None:
+    report_root = tmp_path / "report"
+    report = evaluate_benchmark(
+        BENCHMARK_PATH,
+        agents=("codex",),
+        report_dir=report_root,
+        driver=_fake_repair_driver,
+        diagnostic_mode="status_only",
+    )
+    assert report["diagnostic_mode"] == "status_only"
+    attestation = json.loads(
+        (report_root / "attestation.json").read_text(encoding="utf-8")
+    )
+    assert attestation["diagnostic_mode"] == "status_only"
+
+    with pytest.raises(ValueError, match="diagnostic_mode"):
+        evaluate_benchmark(
+            BENCHMARK_PATH,
+            agents=("codex",),
+            report_dir=tmp_path / "invalid",
+            driver=_fake_repair_driver,
+            diagnostic_mode="bogus",
+        )
+
+
+def test_agent_command_passes_diagnostic_mode_to_mcp(tmp_path: Path) -> None:
+    command = evaluation_host._agent_command(
+        "codex",
+        "model",
+        _benchmark(),
+        tmp_path / "workspace",
+        tmp_path / "session",
+        tmp_path / "audit.jsonl",
+        executable=("codex",),
+        diagnostic_mode="status_only",
+    )
+    encoded = next(
+        item
+        for item in command
+        if item.startswith("mcp_servers.inferref.args=")
+    )
+    server_args = json.loads(encoded.split("=", 1)[1])
+    assert server_args[-2:] == ["--diagnostic-mode", "status_only"]
+
+
+def test_cli_agent_evaluate_accepts_diagnostic_mode() -> None:
+    from inferref.cli.main import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "agent",
+            "evaluate",
+            "benchmark.json",
+            "--report-dir",
+            "report",
+            "--diagnostic-mode",
+            "status_only",
+        ]
+    )
+    assert args.diagnostic_mode == "status_only"
+
+
 def test_final_engine_is_revalidated_after_historical_visible_pass(
     tmp_path: Path,
 ) -> None:
@@ -859,10 +1102,13 @@ def test_formal_worker_launches_isolated_python(
         report_root.mkdir()
         request_path = Path(command[command.index("--request") + 1])
         request_sha256 = hashlib.sha256(request_path.read_bytes()).hexdigest()
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        captured["request"] = request
         (report_root / "report.json").write_text(
             json.dumps(
                 {
                     "status": "pass",
+                    "diagnostic_mode": request["diagnostic_mode"],
                     "worker_evidence": evaluation_worker._worker_evidence(
                         request_sha256
                     ),
@@ -881,11 +1127,13 @@ def test_formal_worker_launches_isolated_python(
         claude_settings=None,
         claude_model=None,
         public_attestation=tmp_path / "public.json",
+        diagnostic_mode="status_only",
     )
 
     command = captured["command"]
     assert isinstance(command, list)
     assert command[1:4] == ["-I", "-m", "inferref.agent.evaluation_worker"]
+    assert captured["request"]["diagnostic_mode"] == "status_only"
     assert report["status"] == "pass"
     assert report["worker_evidence"]["launch_policy"]["request_sha256"]
     assert report["worker_evidence"]["python_executable"]["sha256"]

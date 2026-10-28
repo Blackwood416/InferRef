@@ -29,6 +29,8 @@ from inferref.agent.adapter import (
 )
 from inferref.agent.evaluation import (
     CANDIDATE_URI,
+    DEFAULT_DIAGNOSTIC_MODE,
+    DIAGNOSTIC_MODES,
     RUNS_URI,
     VISIBLE_URI,
     AuditLog,
@@ -82,9 +84,14 @@ def _run_formal_worker(
     claude_settings: str | Path | None,
     claude_model: str | None,
     public_attestation: str | Path,
+    diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
 ) -> dict[str, Any]:
     """Execute formal evaluation in a fresh isolated Python interpreter."""
 
+    if diagnostic_mode not in DIAGNOSTIC_MODES:
+        raise ValueError(
+            "diagnostic_mode must be one of: " + ", ".join(sorted(DIAGNOSTIC_MODES))
+        )
     benchmark = EvaluationBenchmark.load(benchmark_path)
     request = {
         "benchmark": str(benchmark.source),
@@ -97,6 +104,7 @@ def _run_formal_worker(
             else None
         ),
         "claude_model": claude_model,
+        "diagnostic_mode": diagnostic_mode,
     }
     timeout = benchmark.max_wall_seconds * max(1, len(set(agents))) + 180
     with tempfile.TemporaryDirectory(prefix="inferref-formal-worker-") as temporary:
@@ -146,6 +154,10 @@ def _run_formal_worker(
         raise RuntimeError(
             "formal worker evidence does not match the parent request bytes"
         )
+    if report.get("diagnostic_mode") != diagnostic_mode:
+        raise RuntimeError(
+            "formal worker report diagnostic_mode does not match the parent request"
+        )
     return report
 
 
@@ -158,9 +170,14 @@ def evaluate_benchmark(
     claude_settings: str | Path | None = None,
     claude_model: str | None = None,
     public_attestation: str | Path | None = None,
+    diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
 ) -> dict[str, Any]:
     """Run a development evaluation or delegate formal publication to a worker."""
 
+    if diagnostic_mode not in DIAGNOSTIC_MODES:
+        raise ValueError(
+            "diagnostic_mode must be one of: " + ", ".join(sorted(DIAGNOSTIC_MODES))
+        )
     if public_attestation is not None:
         if driver is not None:
             raise ValueError(
@@ -173,6 +190,7 @@ def evaluate_benchmark(
             claude_settings=claude_settings,
             claude_model=claude_model,
             public_attestation=public_attestation,
+            diagnostic_mode=diagnostic_mode,
         )
     return _evaluate_benchmark_core(
         benchmark_path,
@@ -181,6 +199,7 @@ def evaluate_benchmark(
         driver=driver,
         claude_settings=claude_settings,
         claude_model=claude_model,
+        diagnostic_mode=diagnostic_mode,
     )
 
 
@@ -194,7 +213,12 @@ def _evaluate_benchmark_core(
     claude_model: str | None = None,
     public_attestation: str | Path | None = None,
     formal_worker_evidence: dict[str, Any] | None = None,
+    diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
 ) -> dict[str, Any]:
+    if diagnostic_mode not in DIAGNOSTIC_MODES:
+        raise ValueError(
+            "diagnostic_mode must be one of: " + ", ".join(sorted(DIAGNOSTIC_MODES))
+        )
     benchmark = EvaluationBenchmark.load(benchmark_path)
     selected = tuple(dict.fromkeys(agents))
     if not selected or any(name not in benchmark.drivers for name in selected):
@@ -272,6 +296,7 @@ def _evaluate_benchmark_core(
                     audit_path,
                     claude_settings=claude_settings,
                     claude_model_override=claude_model,
+                    diagnostic_mode=diagnostic_mode,
                 )
             else:
                 process = driver(
@@ -363,7 +388,9 @@ def _evaluate_benchmark_core(
         "format": "inferref-agent-evaluation-report",
         "format_version": "0.2",
         "benchmark": benchmark.id,
+        "benchmark_kind": benchmark.kind,
         "runner_mode": runner_mode,
+        "diagnostic_mode": diagnostic_mode,
         "status": "pass" if passed else "fail",
         "acceptance": {
             "configured_agents": list(benchmark.drivers),
@@ -534,6 +561,7 @@ def build_public_attestation(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "attestation_level": "formal" if formal else "development",
         "runner_mode": runner_mode,
+        "diagnostic_mode": report.get("diagnostic_mode", DEFAULT_DIAGNOSTIC_MODE),
         "worker": formal_worker_evidence,
         "repository": {
             "before": repository_before,
@@ -542,6 +570,7 @@ def build_public_attestation(
         },
         "benchmark": {
             "id": benchmark.id,
+            "kind": benchmark.kind,
             "format": "inferref-agent-evaluation",
             "format_version": "0.2",
             "loaded_source_sha256": benchmark.source_sha256,
@@ -685,6 +714,7 @@ def assess_candidate(
                 engine_bytes=final_engine,
                 validation_root=agent_root / "final-validation",
                 slot="visible",
+                benchmark_kind=benchmark.kind,
             )
             final_visible = _public_case_result(final_visible_outcome)
             for index, case in enumerate(benchmark.holdout_cases):
@@ -693,6 +723,7 @@ def assess_candidate(
                     engine_bytes=final_engine,
                     validation_root=agent_root / "final-validation",
                     slot=f"holdout-{index}",
+                    benchmark_kind=benchmark.kind,
                 )
                 holdouts.append(_public_case_result(outcome))
             final_results = [final_visible, *holdouts]
@@ -785,6 +816,7 @@ def run_agent_cli(
     *,
     claude_settings: str | Path | None = None,
     claude_model_override: str | None = None,
+    diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
 ) -> AgentProcessResult:
     session_root.mkdir(parents=True, exist_ok=True)
     resolved = _normalize_agent_command(_agent_executable(agent))
@@ -802,6 +834,7 @@ def run_agent_cli(
         executable=resolved_executable,
         claude_settings=claude_settings,
         claude_model_override=claude_model_override,
+        diagnostic_mode=diagnostic_mode,
     )
     settings_before = (
         _capture_external_file(claude_settings) if agent == "claude" else None
@@ -889,6 +922,7 @@ def _agent_command(
     executable: Sequence[str] | None = None,
     claude_settings: str | Path | None = None,
     claude_model_override: str | None = None,
+    diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
 ) -> list[str]:
     resolved = _normalize_agent_command(executable or _agent_executable(agent))
     executable = tuple(resolved.prefix)
@@ -903,6 +937,8 @@ def _agent_command(
         str(session_root),
         "--audit",
         str(audit_path),
+        "--diagnostic-mode",
+        diagnostic_mode,
     ]
     prompt = _candidate_prompt(benchmark)
     if agent == "codex":
@@ -1651,6 +1687,7 @@ def _execute_captured_case(
     engine_bytes: bytes,
     validation_root: Path,
     slot: str,
+    benchmark_kind: str,
 ) -> dict[str, Any]:
     candidate_root = validation_root / "candidates" / slot
     candidate_root.mkdir(parents=True, exist_ok=False)
@@ -1660,6 +1697,7 @@ def _execute_captured_case(
         case,
         engine=engine,
         runs_root=validation_root / "runs" / slot,
+        kind=benchmark_kind,
     )
 
 

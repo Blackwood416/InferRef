@@ -250,6 +250,9 @@ Currently `examples/agent_eval/` contains a single benchmark (`rope_sign`). To s
 
 Add `--diagnostic-mode {full,status_only}` to `inferref agent evaluate` so the MCP evaluation server can run controlled ablations with identical holdouts and attestation guarantees.
 
+Implementation status: completed on local main for 0.12.x. The `v0.12.0` tag and
+release remain M1–M3; M4 did not ship in that release.
+
 ## 9. Compatibility & Wire Versioning
 
 | Artifact / Protocol | 0.11.0 Version | 0.12.0 Version | Compatibility Rule |
@@ -280,8 +283,8 @@ Add `--diagnostic-mode {full,status_only}` to `inferref agent evaluate` so the M
 - [ ] C++ Runtime Bridge `--batch-manifest` executes multiple testcases in a single process invocation and matches single-testcase execution results.
 
 ### 10.4 Multi-Bug Agent Evaluation (M4)
-- [ ] `nf4_block_scale_offset` and `kv_cache_index_stride` benchmarks pass deterministic fake-agent CI checks (both repair and holdout verification).
-- [ ] `--diagnostic-mode status_only` strips element-level coordinates and metrics from MCP responses while preserving audit/attestation state machine invariants.
+- [x] `nf4_block_scale_offset` and `kv_cache_index_stride` benchmarks pass deterministic fake-agent CI checks (both repair and holdout verification).
+- [x] `--diagnostic-mode status_only` strips element-level coordinates and metrics from MCP responses while preserving audit/attestation state machine invariants.
 
 ## 11. Implementation Tasks & File Mapping
 
