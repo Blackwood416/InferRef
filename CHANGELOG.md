@@ -101,11 +101,10 @@ benchmark and `--diagnostic-mode`) is P1 and is deferred to 0.12.x.
 - **M4 deferred to 0.12.x.** The multi-bug Agent benchmark cases
   (`nf4_block_scale_offset`, `kv_cache_index_stride`) and
   `inferref agent evaluate --diagnostic-mode` are not part of 0.12.0.
-- Linux and remote CI passed for the 0.12.0 branch commit `c909ef5`: CircleCI
-  **16/16** jobs, including Linux core 3.10/3.12/3.13, agent, C++, frontend and
-  bitsandbytes, plus the GitHub Actions Ubuntu package build. Tag qualification
-  and publishing were not run. See the
-  [0.12.0 release notes](docs/releases/0.12.0.md).
+- Linux and remote CI passed for 0.12.0: CircleCI **16/16** branch jobs and
+  **7/7** `v0.12.0` tag-qualification jobs, plus the GitHub Actions Ubuntu
+  package build. The tag and GitHub Release carry the wheel/sdist; PyPI was not
+  published. See the [0.12.0 release notes](docs/releases/0.12.0.md).
 
 ## 0.11.0 — 2026-09-21
 
