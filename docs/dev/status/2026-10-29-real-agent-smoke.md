@@ -4,8 +4,8 @@
   the local `magpie` model gateway.
 - Release status: development evidence only; **not** a formal public attestation
   and **not** part of the `v0.12.0` release.
-- Evaluator base: `c3930d9` plus the local `--codex-config`/`--codex-model`
-  change; the smoke ran before that change was committed.
+- Evaluator base: `ae5d64d` (the smoke ran with the same change set before it was
+  committed)
 
 ## 1. Environment
 
@@ -75,7 +75,16 @@ Result: **report pass**, duration about 1.6 minutes.
 
 `agent_model_request_satisfied=true` and host integrity checks passed.
 
-## 3. Observations
+## 3. Branch CI
+
+The gateway-support change set was committed as `ae5d64d` and pushed to `main`
+with no tag:
+
+- CircleCI workflow `7014dfbf-17d4-40e9-99b3-eb258e74b853`: **16/16 success**
+- GitHub Actions `Package distributions` run `40902247581`: **success**
+  (`release-assets` skipped for a push event)
+
+## 4. Observations
 
 - The local gateway, both Agent CLIs, the MCP tool bridge, sealed audit, model
   request checks, and host-integrity checks work end to end with real models.
@@ -93,11 +102,10 @@ Result: **report pass**, duration about 1.6 minutes.
   benchmark/mode, no repeat, no no-InferRef arm, no public attestation, and no
   statistical claim about diagnostic benefit.
 
-## 4. Next steps
+## 5. Next steps
 
-1. Commit and run branch CI for the `--codex-config`/`--codex-model` support.
-2. Run the controlled matrix with matched prompts, models, budgets and fresh
+1. Run the controlled matrix with matched prompts, models, budgets, and fresh
    sessions for both `full` and `status_only`.
-3. Decide whether the KV benchmark needs a harder seeded bug or whether the
+2. Decide whether the KV benchmark needs a harder seeded bug or whether the
    primary ablation should use `nf4_block_scale_offset` and `rope_sign`.
-4. Define the separate no-InferRef arm before comparing diagnostic modes.
+3. Define the separate no-InferRef arm before comparing diagnostic modes.
