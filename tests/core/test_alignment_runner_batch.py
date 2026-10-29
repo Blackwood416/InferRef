@@ -368,6 +368,25 @@ def _batch_adapter(
     return EngineAdapter.load(path)
 
 
+def _no_capability_adapter(tmp_path: Path, *, log: Path) -> EngineAdapter:
+    document = {
+        "format": "inferref-engine-adapter",
+        "format_version": "0.1",
+        "name": "fake-no-capabilities-engine",
+        "target_device": "cpu",
+        "command": [
+            "{python}",
+            str(_bridge_script(tmp_path)),
+            "{testcase}",
+            "{output}",
+        ],
+        "environment": {"FAKE_LAUNCH_LOG": str(log)},
+    }
+    path = tmp_path / "adapter_no_capabilities.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return EngineAdapter.load(path)
+
+
 def _sequential_adapter(tmp_path: Path, *, log: Path) -> EngineAdapter:
     document = {
         "format": "inferref-engine-adapter",
@@ -821,6 +840,26 @@ def test_duplicate_boundary_ids_use_distinct_batch_items(tmp_path: Path) -> None
         batch_item_id(0, "region:1"),
         batch_item_id(1, "region:1"),
     ]
+
+
+def test_quantized_boundary_without_capabilities_returns_unsupported(
+    tmp_path: Path,
+) -> None:
+    pkg = _make_quantized_trace(tmp_path / "trace")
+    log = tmp_path / "launches.txt"
+    adapter = _no_capability_adapter(tmp_path, log=log)
+    store = _session(tmp_path, pkg, adapter, name="session")
+
+    results = AlignmentRunner(store, pkg, adapter).run(
+        limit=2,
+        boundary_ids=["region:1", "region:2"],
+        continue_on_fail=True,
+    )
+
+    assert [result.status for result in results] == ["unsupported", "unsupported"]
+    assert _launches(log) == []
+    assert store.snapshot.boundaries["region:1"]["state"] == "unsupported"
+    assert store.snapshot.boundaries["region:2"]["state"] == "unsupported"
 
 
 def test_quantized_output_with_per_output_comparator_aborts_before_launch(

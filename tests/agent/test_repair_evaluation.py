@@ -53,8 +53,8 @@ M4_REPAIRS = (
     (
         "kv_cache_index_stride",
         "kv_cache_index_stride",
-        "start = int(index[0]) - 1",
-        "start = int(index[0])",
+        "sequence_view[:, start : start + 1, :, :] = update.transpose(0, 2, 1, 3)",
+        "cache_out[:, :, start : start + 1, :] = update",
     ),
 )
 
@@ -621,6 +621,33 @@ def test_m4_benchmark_baseline_fails_and_fixed_engine_passes(
         assert outcome["comparison"]["status"] == "pass"
 
 
+@pytest.mark.parametrize(
+    ("relative", "expected"),
+    [
+        (
+            "nf4_block_scale_offset",
+            {"codes": "uint8", "group_size": "int32"},
+        ),
+        ("kv_cache_index_stride", {"index": "int32"}),
+    ],
+)
+def test_m4_context_reports_non_float_input_dtypes(
+    tmp_path: Path, relative: str, expected: dict[str, str]
+) -> None:
+    benchmark = EvaluationBenchmark.load(
+        REPO_ROOT / "examples" / "agent_eval" / relative / "benchmark.json"
+    )
+    workspace = prepare_workspace(benchmark, tmp_path / "workspace")
+    session = EvaluationSession(
+        benchmark, workspace, tmp_path / "session", tmp_path / "audit.jsonl"
+    )
+    session.audit("inferref_capabilities", session.capabilities())
+    response = session.context(VISIBLE_URI)
+    dtypes = {item["name"]: item["dtype"] for item in response.data["inputs"]}
+    for name, dtype in expected.items():
+        assert dtypes[name] == dtype
+
+
 def _fake_m4_repair_driver(
     agent: str,
     model: str,
@@ -728,6 +755,8 @@ def test_status_only_mcp_strips_element_level_diagnostics(tmp_path: Path) -> Non
             assert run.structured_content["status"] == "fail"
             data = run.structured_content["data"]
             assert data["case"] == {"id": "visible"}
+            assert data["outputs"]
+            assert set(data["outputs"]) <= {"q_embed", "k_embed"}
             assert data["execution"]["status"] == "completed"
             encoded = json.dumps(data)
             for forbidden in (
@@ -740,7 +769,8 @@ def test_status_only_mcp_strips_element_level_diagnostics(tmp_path: Path) -> Non
                 "stdout",
                 "stderr",
             ):
-                assert forbidden not in encoded
+                assert forbidden not in data
+                assert f'"{forbidden}"' not in encoded
 
     asyncio.run(exercise())
     session.finalize_audit()
@@ -809,6 +839,21 @@ def test_cli_agent_evaluate_accepts_diagnostic_mode() -> None:
         ]
     )
     assert args.diagnostic_mode == "status_only"
+
+
+def test_agent_argv_policy_binds_diagnostic_mode() -> None:
+    command = ("codex", "exec")
+    full = evaluation_host._agent_argv_policy(
+        "codex", command, diagnostic_mode="full"
+    )
+    status_only = evaluation_host._agent_argv_policy(
+        "codex", command, diagnostic_mode="status_only"
+    )
+    assert full["diagnostic_mode"] == "full"
+    assert status_only["diagnostic_mode"] == "status_only"
+    assert evaluation_host._canonical_json_sha256(
+        full
+    ) != evaluation_host._canonical_json_sha256(status_only)
 
 
 def test_final_engine_is_revalidated_after_historical_visible_pass(

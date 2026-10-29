@@ -29,6 +29,7 @@ from inferref.ir.region import RegionRecord
 from inferref.ir.tensor_value import CaptureInfo, TensorValueRecord
 from inferref.ir.values import TensorRef
 from inferref.tensor.codec import write_array
+from inferref.testcase.extract import extract_region
 
 
 def _make_trace(tmp_path: Path) -> TracePackage:
@@ -72,6 +73,74 @@ def _make_trace(tmp_path: Path) -> TracePackage:
         graph=graph,
         modules=[ModuleRecord(id=100, path="model")],
         regions=[RegionRecord(id=1, name="op_double", node_ids=(10,), inputs=(1,), outputs=(2,))],
+        root=tmp_path,
+    )
+    pkg.save(tmp_path)
+    return pkg
+
+
+def _make_rmsnorm_trace(tmp_path: Path) -> TracePackage:
+    payloads = tmp_path / "payloads"
+    payloads.mkdir(parents=True, exist_ok=True)
+    write_array(payloads / "x.irtensor", np.ones((1, 4), dtype=np.float32))
+    write_array(payloads / "weight.irtensor", np.ones(4, dtype=np.float32))
+    write_array(payloads / "epsilon.irtensor", np.asarray(1e-5, dtype=np.float32))
+    write_array(payloads / "y.irtensor", np.ones((1, 4), dtype=np.float32))
+    graph = Graph()
+    graph.values = [
+        TensorValueRecord(
+            id=1,
+            shape=(1, 4),
+            stride=(4, 1),
+            dtype="float32",
+            capture=CaptureInfo(mode="full", payload="payloads/x.irtensor"),
+        ),
+        TensorValueRecord(
+            id=2,
+            shape=(4,),
+            stride=(1,),
+            dtype="float32",
+            capture=CaptureInfo(mode="full", payload="payloads/weight.irtensor"),
+        ),
+        TensorValueRecord(
+            id=3,
+            shape=(),
+            dtype="float32",
+            capture=CaptureInfo(mode="full", payload="payloads/epsilon.irtensor"),
+        ),
+        TensorValueRecord(
+            id=4,
+            shape=(1, 4),
+            stride=(4, 1),
+            dtype="float32",
+            producer=10,
+            capture=CaptureInfo(mode="full", payload="payloads/y.irtensor"),
+        ),
+    ]
+    graph.operators = [
+        OperatorRecord(
+            id=10,
+            execution_index=0,
+            op="rmsnorm",
+            result=TensorRef(4),
+            positional_args=(TensorRef(1), TensorRef(2), TensorRef(3)),
+            module_stack=(100,),
+        )
+    ]
+    graph.reindex()
+    pkg = TracePackage(
+        manifest=Manifest(),
+        graph=graph,
+        modules=[ModuleRecord(id=100, path="model")],
+        regions=[
+            RegionRecord(
+                id=1,
+                name="rmsnorm",
+                node_ids=(10,),
+                inputs=(1, 2, 3),
+                outputs=(4,),
+            )
+        ],
         root=tmp_path,
     )
     pkg.save(tmp_path)
@@ -194,6 +263,114 @@ def test_runner_preflight_capability_check(tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0].status == "unsupported"
     assert store.snapshot.boundaries["region:1"]["state"] == "unsupported"
+
+
+def test_runner_contract_capability_preflight_returns_unsupported(
+    tmp_path: Path,
+) -> None:
+    pkg = _make_rmsnorm_trace(tmp_path / "trace")
+    testcase = tmp_path / "testcase"
+    extract_region(
+        pkg,
+        pkg.regions[0],
+        testcase,
+        input_names=("x", "weight", "epsilon"),
+        output_names=("y",),
+        contracts=("rmsnorm/last-dim/v1",),
+    )
+    adapter_path = _make_adapter_file(
+        tmp_path / "adapter_contract.json",
+        script="raise SystemExit('must not run')",
+        capabilities={
+            "device_types": ["cpu"],
+            "dtypes": ["float32", "float16"],
+            "max_rank": 4,
+            "contracts": ["rmsnorm/last-dim/v1"],
+            "contract_capabilities": {
+                "rmsnorm/last-dim/v1": {
+                    "dtypes": ["float16"],
+                    "max_rank": 4,
+                    "features": [],
+                }
+            },
+        },
+    )
+    adapter = EngineAdapter.load(adapter_path)
+    store = AlignmentStore.initialize(
+        tmp_path / "alignment_contract",
+        trace_path=pkg.root,
+        adapter_path=adapter_path,
+        trace_metadata_digest=trace_metadata_sha256(pkg.root),
+        adapter_digest=normalized_adapter_sha256(adapter.to_dict()),
+    )
+    runner = AlignmentRunner(store, pkg, adapter)
+
+    results = runner.run(
+        limit=1,
+        boundary_ids=["region:1"],
+        external_testcase=testcase,
+    )
+
+    assert len(results) == 1
+    assert results[0].status == "unsupported"
+    assert store.snapshot.boundaries["region:1"]["state"] == "unsupported"
+
+
+def test_execute_prepared_handles_unsupported_result_without_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import inferref.alignment.runner as runner_module
+
+    pkg = _make_trace(tmp_path / "trace")
+    adapter_path = _make_adapter_file(tmp_path / "adapter.json")
+    adapter = EngineAdapter.load(adapter_path)
+    store = AlignmentStore.initialize(
+        tmp_path / "alignment_unsupported",
+        trace_path=pkg.root,
+        adapter_path=adapter_path,
+        trace_metadata_digest=trace_metadata_sha256(pkg.root),
+        adapter_digest=normalized_adapter_sha256(adapter.to_dict()),
+    )
+    runner = AlignmentRunner(store, pkg, adapter)
+    prepared = runner._prepare_candidate("region:1")
+    assert isinstance(prepared, PreparedCandidate)
+
+    monkeypatch.setattr(
+        runner_module,
+        "execute_adapter",
+        lambda **kwargs: {
+            "status": "unsupported",
+            "unsupported": ["contract capability mismatch"],
+            "execution": None,
+            "comparison": None,
+        },
+    )
+    result = runner._execute_prepared(prepared)
+
+    assert result.status == "unsupported"
+    assert prepared.output_dir.is_dir()
+    assert (prepared.output_dir / "inferref-run.json").is_file()
+
+
+def test_runner_does_not_leave_empty_prepared_run_dirs(tmp_path: Path) -> None:
+    pkg = _make_trace(tmp_path / "trace")
+    adapter_path = _make_adapter_file(tmp_path / "adapter.json")
+    adapter = EngineAdapter.load(adapter_path)
+    store = AlignmentStore.initialize(
+        tmp_path / "alignment_runs",
+        trace_path=pkg.root,
+        adapter_path=adapter_path,
+        trace_metadata_digest=trace_metadata_sha256(pkg.root),
+        adapter_digest=normalized_adapter_sha256(adapter.to_dict()),
+    )
+    runner = AlignmentRunner(store, pkg, adapter)
+
+    results = runner.run(limit=1, boundary_ids=["region:1"])
+
+    assert [result.status for result in results] == ["pass"]
+    run_dirs = [path for path in (store.root / "runs").iterdir() if path.is_dir()]
+    assert run_dirs
+    assert all(any(path.iterdir()) for path in run_dirs)
 
 
 def test_cli_plan_and_run_choose_same_adapter_supported_boundary(tmp_path: Path, capsys) -> None:

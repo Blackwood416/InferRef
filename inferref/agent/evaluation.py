@@ -39,6 +39,7 @@ from inferref.compare.tolerance import TolerancePolicy
 from inferref.ir.paths import resolve_contained_path
 from inferref.tensor import codec
 from inferref.tensor.codec import TensorView
+from inferref.tensor.dtype_numpy import inferref_dtype_for_numpy
 
 EVALUATION_FORMAT = "inferref-agent-evaluation"
 EVALUATION_VERSION = "0.2"
@@ -1194,7 +1195,7 @@ def _apply_rope(value: np.ndarray, cos: np.ndarray, sin: np.ndarray) -> np.ndarr
 
 def _array_metadata(value: np.ndarray) -> dict[str, Any]:
     return {
-        "dtype": "float32",
+        "dtype": inferref_dtype_for_numpy(value.dtype),
         "shape": list(value.shape),
         "stride": list(codec.contiguous_stride(value.shape)),
         "storage_offset": 0,
@@ -1345,11 +1346,23 @@ def _status_only_data(operation: str, data: Mapping[str, Any]) -> dict[str, Any]
     if operation == "run_engine":
         case = data.get("case")
         execution = data.get("execution")
+        comparison = data.get("comparison")
+        outputs: list[str] = []
+        if isinstance(comparison, Mapping):
+            comparisons = comparison.get("comparisons")
+            if isinstance(comparisons, list):
+                outputs = [
+                    item["name"]
+                    for item in comparisons
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("name"), str)
+                ]
         return {
             "run_id": data.get("run_id"),
             "kind": data.get("kind"),
             "case": {"id": case["id"]} if isinstance(case, Mapping) and "id" in case else None,
             "status": data.get("status"),
+            "outputs": outputs,
             "execution": (
                 {
                     key: execution[key]

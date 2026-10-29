@@ -1,12 +1,8 @@
 # Agent task: repair NF4 block-scale dequantization
 
-The host-side visible testcase contains NF4 codes, one scale per flat block, a
-codebook, and the block size. The NumPy engine in `engine.py` completes
-successfully but does not numerically match the reference.
-
-The engine currently treats block scales as if they were laid out per row. The
-logical tensor is flattened before NF4 blocks are assigned, so a block can span a
-row boundary. Only the first row happens to use the correct scales.
+The host-side visible testcase contains NF4 codes, block scales, a codebook, and
+the block size. The NumPy engine in `engine.py` completes successfully but does
+not numerically match the reference.
 
 Use InferRef's structured Agent tools to locate and repair the mismatch.
 

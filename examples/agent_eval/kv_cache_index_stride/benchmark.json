@@ -50,7 +50,7 @@
       {
         "id": "holdout-wide-head",
         "seed": 20261104,
-        "shape": [2, 1, 7, 3],
+        "shape": [2, 2, 7, 3],
         "params": {
           "index": 3
         }

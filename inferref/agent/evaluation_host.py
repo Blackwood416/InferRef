@@ -859,7 +859,9 @@ def run_agent_cli(
         if agent == "claude"
         else None
     )
-    argv_policy = _agent_argv_policy(agent, command)
+    argv_policy = _agent_argv_policy(
+        agent, command, diagnostic_mode=diagnostic_mode
+    )
     return replace(
         result,
         cli_version=cli_version,
@@ -1282,7 +1284,12 @@ def _argv_flag_pairs(command: Sequence[str]) -> list[tuple[str, str | None]]:
     return pairs
 
 
-def _agent_argv_policy(agent: str, command: Sequence[str]) -> dict[str, Any]:
+def _agent_argv_policy(
+    agent: str,
+    command: Sequence[str],
+    *,
+    diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
+) -> dict[str, Any]:
     """Path- and prompt-free normalized argv policy for public attestation."""
 
     pairs = _argv_flag_pairs(command)
@@ -1311,6 +1318,7 @@ def _agent_argv_policy(agent: str, command: Sequence[str]) -> dict[str, Any]:
             "skip_git_repo_check": "--skip-git-repo-check" in values,
             "sandbox": values.get("--sandbox"),
             "model": values.get("--model"),
+            "diagnostic_mode": diagnostic_mode,
             "config": config,
         }
     if agent == "claude":
@@ -1327,6 +1335,7 @@ def _agent_argv_policy(agent: str, command: Sequence[str]) -> dict[str, Any]:
             "permission_mode": values.get("--permission-mode"),
             "model": values.get("--model"),
             "settings_present": "--settings" in values,
+            "diagnostic_mode": diagnostic_mode,
             "tools": values.get("--tools"),
             "allowed_tools": values.get("--allowedTools"),
         }

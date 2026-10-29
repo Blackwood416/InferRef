@@ -144,6 +144,8 @@ def test_scaffold_bridge_mode_generates_bridge_project(tmp_path: Path) -> None:
     main_cpp = (out / "main.cpp").read_text(encoding="utf-8")
     assert "DebugInvoke" in main_cpp
     assert "RunBridge" in main_cpp
+    assert "--batch-manifest" in main_cpp
+    assert "RunBridgeBatch(batch_manifest, invoke" in main_cpp
     assert "inferref_bridge" in main_cpp
     assert 'RunBridge(testcase_dir, output_dir, invoke,\n                               "inferref_bridge")' in main_cpp
     assert "RunYourEngine" not in main_cpp
@@ -387,6 +389,8 @@ def test_scaffold_quantized_bridge_uses_testcase_aware_callback(
     main_cpp = (out / "main.cpp").read_text(encoding="utf-8")
     assert "inferref::DebugInvokeEx invoke" in main_cpp
     assert "inferref::DebugInvoke invoke" not in main_cpp
+    assert "--batch-manifest" in main_cpp
+    assert "RunBridgeBatch(batch_manifest, invoke" in main_cpp
     assert 'testcase.HasInputQuantization("weight")' in main_cpp
     assert 'testcase.DequantizeInputToFloat32("weight")' in main_cpp
     assert 'RunBridge(testcase_dir, output_dir, invoke' in main_cpp

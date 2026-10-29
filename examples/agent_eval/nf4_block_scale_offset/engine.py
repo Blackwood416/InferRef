@@ -17,7 +17,7 @@ def dequantize_nf4(
     codebook: np.ndarray,
     group_size: np.ndarray,
 ) -> np.ndarray:
-    """Dequantize NF4 codes with one scale per flat block."""
+    """Dequantize blockwise NF4 codes to float32."""
 
     rows, columns = codes.shape
     blocks_per_row = scales.shape[1]

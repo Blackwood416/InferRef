@@ -18,9 +18,11 @@ def update_cache(
 ) -> np.ndarray:
     """Overwrite one sequence position in a static KV cache."""
 
+    batch, heads, capacity, dimension = cache.shape
     cache_out = cache.copy()
-    start = int(index[0]) - 1
-    cache_out[:, :, start : start + 1, :] = update
+    start = int(index[0])
+    sequence_view = cache_out.reshape(batch, capacity, heads, dimension)
+    sequence_view[:, start : start + 1, :, :] = update.transpose(0, 2, 1, 3)
     return cache_out
 
 

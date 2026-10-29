@@ -41,8 +41,9 @@ from inferref.comparison.resolution import (
     EffectiveComparison,
     resolve_comparison_policy,
 )
+from inferref.contracts import contract_requirements
 from inferref.ir.package import TracePackage
-from inferref.quantization.artifacts import validate_comparison
+from inferref.quantization.artifacts import needs_quantization, validate_comparison
 from inferref.testcase.requirements import testcase_requirements
 from inferref.testcase.validate import TestcaseValidationResult, require_valid_testcase
 
@@ -301,7 +302,7 @@ class AlignmentRunner:
         return self.run_candidate_from_output(
             prepared,
             exec_result,
-            exec_result["output"],
+            exec_result.get("output") or prepared.output_dir,
         )
 
     def _prepare_candidate(
@@ -364,15 +365,15 @@ class AlignmentRunner:
         import uuid
         fresh_run_id = f"{stamp}-{uuid.uuid4().hex[:8]}"
         output_dir = runs_dir / fresh_run_id
-        output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             rel_tc = str(tc_path.relative_to(self.store.root)).replace("\\", "/")
         except ValueError:
             rel_tc = str(tc_path).replace("\\", "/")
 
-        # 2. Capability assessment
-        incompatible = list(self._capability_incompatibilities(boundary))
+        # 2. Capability assessment against the actual extracted/imported
+        # testcase, including quantized and per-contract requirements.
+        incompatible = list(self._capability_incompatibilities(boundary, tc_path))
 
         prepared = PreparedCandidate(
             boundary=boundary,
@@ -403,12 +404,30 @@ class AlignmentRunner:
         }
         return self._finalize_candidate(prepared, unsupported_result, output_dir)
 
-    def _capability_incompatibilities(self, boundary: Boundary) -> tuple[str, ...]:
+    def _capability_incompatibilities(
+        self, boundary: Boundary, testcase_path: Path | None = None
+    ) -> tuple[str, ...]:
         """Reasons the declared adapter capabilities cannot run this boundary."""
+        manifest: Mapping[str, Any] | None = None
+        if testcase_path is not None:
+            manifest = require_valid_testcase(testcase_path).manifest
+            requirements = testcase_requirements(manifest)
+        else:
+            requirements = boundary_requirements(self.package, boundary)
         if self.adapter.capabilities is None:
+            if needs_quantization(requirements):
+                return ("quantized testcases require explicit adapter capabilities",)
             return ()
-        requirements = boundary_requirements(self.package, boundary)
-        return tuple(self.adapter.capabilities.incompatibilities(requirements))
+        incompatible = list(self.adapter.capabilities.incompatibilities(requirements))
+        if manifest is not None:
+            for contract in requirements.get("contracts", ()):
+                per_contract = contract_requirements(manifest, contract)
+                incompatible.extend(
+                    self.adapter.capabilities.contract_incompatibilities(
+                        contract, per_contract
+                    )
+                )
+        return tuple(incompatible)
 
     def _boundary_runnable(self, boundary_id: str) -> bool:
         """Whether the adapter can execute this boundary at all."""
@@ -439,6 +458,7 @@ class AlignmentRunner:
         """Write the run record and Evidence for one prepared candidate."""
         boundary = prepared.boundary
         output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
         write_run_record(output_path, dict(execution_result))
         run_record_path = output_path / "inferref-run.json"
         run_record_sha = sha256_file(run_record_path)
@@ -722,6 +742,16 @@ class AlignmentRunner:
                 if isinstance(item, PreparedCandidate)
             ]
             if len(batch_candidates) < 2:
+                return self._finalize_prepared_sequence(
+                    prepared, overrides=overrides, continue_on_fail=continue_on_fail
+                )
+
+            if not continue_on_fail and any(
+                isinstance(item, RunResult) for _, item in prepared
+            ):
+                # A boundary became unsupported after per-testcase preflight.
+                # Batch execution would run later boundaries before the
+                # sequential contract could stop, so replay in order.
                 return self._finalize_prepared_sequence(
                     prepared, overrides=overrides, continue_on_fail=continue_on_fail
                 )

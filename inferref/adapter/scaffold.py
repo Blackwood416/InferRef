@@ -145,6 +145,7 @@ int main(int argc, char **argv)
 {
     std::string testcase_dir;
     std::string output_dir;
+    std::string batch_manifest;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
@@ -152,10 +153,22 @@ int main(int argc, char **argv)
             testcase_dir = argv[++i];
         else if (arg == "--output" && i + 1 < argc)
             output_dir = argv[++i];
+        else if (arg == "--batch-manifest" && i + 1 < argc)
+            batch_manifest = argv[++i];
     }
-    if (testcase_dir.empty() || output_dir.empty())
+    if (!batch_manifest.empty())
     {
-        std::cerr << "usage: inferref_bridge --testcase DIR --output DIR\\n";
+        if (!testcase_dir.empty() || !output_dir.empty())
+        {
+            std::cerr << "inferref_bridge: --batch-manifest cannot be combined "
+                         "with --testcase/--output\\n";
+            return inferref::kBridgeUsage;
+        }
+    }
+    else if (testcase_dir.empty() || output_dir.empty())
+    {
+        std::cerr << "usage: inferref_bridge --testcase DIR --output DIR\\n"
+                     "       inferref_bridge --batch-manifest FILE\\n";
         return inferref::kBridgeUsage;
     }
 
@@ -172,6 +185,9 @@ int main(int argc, char **argv)
         throw std::runtime_error("DebugInvoke is not implemented");
     };
 
+    if (!batch_manifest.empty())
+        return inferref::RunBridgeBatch(batch_manifest, invoke,
+                                        "inferref_bridge");
     return inferref::RunBridge(testcase_dir, output_dir, invoke,
                                "inferref_bridge");
 }
@@ -190,6 +206,7 @@ int main(int argc, char **argv)
 {
     std::string testcase_dir;
     std::string output_dir;
+    std::string batch_manifest;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
@@ -197,10 +214,22 @@ int main(int argc, char **argv)
             testcase_dir = argv[++i];
         else if (arg == "--output" && i + 1 < argc)
             output_dir = argv[++i];
+        else if (arg == "--batch-manifest" && i + 1 < argc)
+            batch_manifest = argv[++i];
     }
-    if (testcase_dir.empty() || output_dir.empty())
+    if (!batch_manifest.empty())
     {
-        std::cerr << "usage: inferref_bridge --testcase DIR --output DIR\\n";
+        if (!testcase_dir.empty() || !output_dir.empty())
+        {
+            std::cerr << "inferref_bridge: --batch-manifest cannot be combined "
+                         "with --testcase/--output\\n";
+            return inferref::kBridgeUsage;
+        }
+    }
+    else if (testcase_dir.empty() || output_dir.empty())
+    {
+        std::cerr << "usage: inferref_bridge --testcase DIR --output DIR\\n"
+                     "       inferref_bridge --batch-manifest FILE\\n";
         return inferref::kBridgeUsage;
     }
 
@@ -220,6 +249,9 @@ int main(int argc, char **argv)
         throw std::runtime_error("DebugInvokeEx is not implemented");
     };
 
+    if (!batch_manifest.empty())
+        return inferref::RunBridgeBatch(batch_manifest, invoke,
+                                        "inferref_bridge");
     return inferref::RunBridge(testcase_dir, output_dir, invoke,
                                "inferref_bridge");
 }

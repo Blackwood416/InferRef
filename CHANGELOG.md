@@ -12,9 +12,27 @@ User-facing changes belong here. Historical implementation evidence remains in
   at the wrong decode position), each with visible and hidden holdout cases and
   deterministic fake-Agent repair coverage.
 - `inferref agent evaluate --diagnostic-mode {full,status_only}`. `status_only`
-  reduces MCP context/execution responses to PASS/FAIL and artifact names without
-  tensor metrics, element coordinates, shapes, or execution logs while preserving
-  the sealed audit state machine and attestation binding.
+  reduces MCP context/execution responses to PASS/FAIL, artifact names, output
+  role names, and execution status without tensor metrics, element coordinates,
+  shapes, or execution logs while preserving the sealed audit state machine and
+  attestation binding.
+
+### Fixed
+
+- `inferref_context` reports actual input dtypes for non-float tensors (uint8
+  NF4 codes, int32 group size and KV index) instead of hard-coding float32.
+- The new Agent benchmark tasks no longer reveal their root cause. The KV
+  benchmark uses a cache-layout ambiguity, with a two-head holdout that fails
+  the baseline and passes the repaired engine.
+- `status_only` includes output role names without exposing metrics or
+  coordinates.
+- Agent `argv_policy` binds the selected `diagnostic_mode`, so full and
+  status-only runs have distinct public policy digests.
+- `AlignmentRunner` preflights quantized and per-contract requirements against
+  the extracted testcase, handles executor `unsupported` results without an
+  `output` key, and no longer leaves empty prepared run directories.
+- Scaffolded runtime-bridge projects parse `--batch-manifest` and call
+  `RunBridgeBatch`; the skill CLI reference includes `--diagnostic-mode`.
 
 ## 0.12.0 — 2026-10-22
 
