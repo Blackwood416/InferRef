@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,6 +85,8 @@ def _run_formal_worker(
     claude_model: str | None,
     public_attestation: str | Path,
     diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
+    codex_config: Mapping[str, Any] | None = None,
+    codex_model: str | None = None,
 ) -> dict[str, Any]:
     """Execute formal evaluation in a fresh isolated Python interpreter."""
 
@@ -92,6 +94,7 @@ def _run_formal_worker(
         raise ValueError(
             "diagnostic_mode must be one of: " + ", ".join(sorted(DIAGNOSTIC_MODES))
         )
+    _codex_config_arguments(codex_config)
     benchmark = EvaluationBenchmark.load(benchmark_path)
     request = {
         "benchmark": str(benchmark.source),
@@ -104,6 +107,8 @@ def _run_formal_worker(
             else None
         ),
         "claude_model": claude_model,
+        "codex_model": codex_model,
+        "codex_config": dict(codex_config) if codex_config is not None else None,
         "diagnostic_mode": diagnostic_mode,
     }
     timeout = benchmark.max_wall_seconds * max(1, len(set(agents))) + 180
@@ -171,6 +176,8 @@ def evaluate_benchmark(
     claude_model: str | None = None,
     public_attestation: str | Path | None = None,
     diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
+    codex_config: Mapping[str, Any] | None = None,
+    codex_model: str | None = None,
 ) -> dict[str, Any]:
     """Run a development evaluation or delegate formal publication to a worker."""
 
@@ -178,6 +185,7 @@ def evaluate_benchmark(
         raise ValueError(
             "diagnostic_mode must be one of: " + ", ".join(sorted(DIAGNOSTIC_MODES))
         )
+    _codex_config_arguments(codex_config)
     if public_attestation is not None:
         if driver is not None:
             raise ValueError(
@@ -191,6 +199,8 @@ def evaluate_benchmark(
             claude_model=claude_model,
             public_attestation=public_attestation,
             diagnostic_mode=diagnostic_mode,
+            codex_config=codex_config,
+            codex_model=codex_model,
         )
     return _evaluate_benchmark_core(
         benchmark_path,
@@ -200,6 +210,8 @@ def evaluate_benchmark(
         claude_settings=claude_settings,
         claude_model=claude_model,
         diagnostic_mode=diagnostic_mode,
+        codex_config=codex_config,
+        codex_model=codex_model,
     )
 
 
@@ -214,11 +226,14 @@ def _evaluate_benchmark_core(
     public_attestation: str | Path | None = None,
     formal_worker_evidence: dict[str, Any] | None = None,
     diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
+    codex_config: Mapping[str, Any] | None = None,
+    codex_model: str | None = None,
 ) -> dict[str, Any]:
     if diagnostic_mode not in DIAGNOSTIC_MODES:
         raise ValueError(
             "diagnostic_mode must be one of: " + ", ".join(sorted(DIAGNOSTIC_MODES))
         )
+    _codex_config_arguments(codex_config)
     benchmark = EvaluationBenchmark.load(benchmark_path)
     selected = tuple(dict.fromkeys(agents))
     if not selected or any(name not in benchmark.drivers for name in selected):
@@ -274,7 +289,11 @@ def _evaluate_benchmark_core(
         model = (
             claude_model
             if name == "claude" and claude_model is not None
-            else benchmark.drivers[name].model
+            else (
+                codex_model
+                if name == "codex" and codex_model is not None
+                else benchmark.drivers[name].model
+            )
         )
         agent_root = report_root / name
         agent_root.mkdir(parents=True)
@@ -297,6 +316,7 @@ def _evaluate_benchmark_core(
                     claude_settings=claude_settings,
                     claude_model_override=claude_model,
                     diagnostic_mode=diagnostic_mode,
+                    codex_config=codex_config,
                 )
             else:
                 process = driver(
@@ -817,6 +837,7 @@ def run_agent_cli(
     claude_settings: str | Path | None = None,
     claude_model_override: str | None = None,
     diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
+    codex_config: Mapping[str, Any] | None = None,
 ) -> AgentProcessResult:
     session_root.mkdir(parents=True, exist_ok=True)
     resolved = _normalize_agent_command(_agent_executable(agent))
@@ -835,6 +856,7 @@ def run_agent_cli(
         claude_settings=claude_settings,
         claude_model_override=claude_model_override,
         diagnostic_mode=diagnostic_mode,
+        codex_config=codex_config,
     )
     settings_before = (
         _capture_external_file(claude_settings) if agent == "claude" else None
@@ -860,7 +882,10 @@ def run_agent_cli(
         else None
     )
     argv_policy = _agent_argv_policy(
-        agent, command, diagnostic_mode=diagnostic_mode
+        agent,
+        command,
+        diagnostic_mode=diagnostic_mode,
+        codex_config_keys=tuple(codex_config or ()),
     )
     return replace(
         result,
@@ -925,9 +950,11 @@ def _agent_command(
     claude_settings: str | Path | None = None,
     claude_model_override: str | None = None,
     diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
+    codex_config: Mapping[str, Any] | None = None,
 ) -> list[str]:
     resolved = _normalize_agent_command(executable or _agent_executable(agent))
     executable = tuple(resolved.prefix)
+    codex_config_args = _codex_config_arguments(codex_config)
     server_args = [
         "-m",
         "inferref.agent.evaluation_mcp",
@@ -969,6 +996,7 @@ def _agent_command(
             'windows.sandbox="elevated"',
             "-c",
             'web_search="disabled"',
+            *codex_config_args,
             prompt,
         ]
     if agent == "claude":
@@ -1284,11 +1312,44 @@ def _argv_flag_pairs(command: Sequence[str]) -> list[tuple[str, str | None]]:
     return pairs
 
 
+def _codex_config_arguments(
+    config: Mapping[str, Any] | None,
+) -> list[str]:
+    """Validate and serialize isolated Codex -c overrides."""
+
+    if config is None:
+        return []
+    if not isinstance(config, Mapping):
+        raise ValueError("codex_config must be an object of scalar values")
+    arguments: list[str] = []
+    for key, value in config.items():
+        if (
+            not isinstance(key, str)
+            or not key.strip()
+            or key.startswith("-")
+            or "=" in key
+        ):
+            raise ValueError(f"invalid codex_config key: {key!r}")
+        if isinstance(value, bool):
+            encoded = "true" if value else "false"
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            encoded = json.dumps(value)
+        elif isinstance(value, str):
+            encoded = json.dumps(value, ensure_ascii=False)
+        else:
+            raise ValueError(
+                f"codex_config[{key!r}] must be a string, boolean, or number"
+            )
+        arguments.extend(("-c", f"{key}={encoded}"))
+    return arguments
+
+
 def _agent_argv_policy(
     agent: str,
     command: Sequence[str],
     *,
     diagnostic_mode: str = DEFAULT_DIAGNOSTIC_MODE,
+    codex_config_keys: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Path- and prompt-free normalized argv policy for public attestation."""
 
@@ -1319,6 +1380,7 @@ def _agent_argv_policy(
             "sandbox": values.get("--sandbox"),
             "model": values.get("--model"),
             "diagnostic_mode": diagnostic_mode,
+            "codex_config_keys": sorted(codex_config_keys),
             "config": config,
         }
     if agent == "claude":

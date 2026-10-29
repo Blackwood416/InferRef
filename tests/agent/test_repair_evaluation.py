@@ -836,9 +836,59 @@ def test_cli_agent_evaluate_accepts_diagnostic_mode() -> None:
             "report",
             "--diagnostic-mode",
             "status_only",
+            "--codex-model",
+            "opencode-go/deepseek-v4.1-flash",
+            "--codex-config",
+            "codex.json",
         ]
     )
     assert args.diagnostic_mode == "status_only"
+    assert args.codex_model == "opencode-go/deepseek-v4.1-flash"
+    assert args.codex_config == "codex.json"
+
+
+def test_codex_config_arguments_are_serialized_safely() -> None:
+    arguments = evaluation_host._codex_config_arguments(
+        {
+            "model_provider": "magpie",
+            "model_providers.magpie.base_url": "http://127.0.0.1:3425/v1",
+            "model_providers.magpie.wire_api": "responses",
+            "model_providers.magpie.experimental_bearer_token": "magpie",
+        }
+    )
+    assert arguments == [
+        "-c",
+        'model_provider="magpie"',
+        "-c",
+        'model_providers.magpie.base_url="http://127.0.0.1:3425/v1"',
+        "-c",
+        'model_providers.magpie.wire_api="responses"',
+        "-c",
+        'model_providers.magpie.experimental_bearer_token="magpie"',
+    ]
+    with pytest.raises(ValueError, match="codex_config"):
+        evaluation_host._codex_config_arguments({"bad-key": [1]})
+
+
+def test_agent_command_includes_isolated_codex_config(tmp_path: Path) -> None:
+    command = evaluation_host._agent_command(
+        "codex",
+        "opencode-go/deepseek-v4.1-flash",
+        _benchmark(),
+        tmp_path / "workspace",
+        tmp_path / "session",
+        tmp_path / "audit.jsonl",
+        executable=("codex",),
+        codex_config={
+            "model_provider": "magpie",
+            "model_providers.magpie.base_url": "http://127.0.0.1:3425/v1",
+        },
+    )
+    assert 'model_provider="magpie"' in command
+    assert (
+        'model_providers.magpie.base_url="http://127.0.0.1:3425/v1"'
+        in command
+    )
 
 
 def test_agent_argv_policy_binds_diagnostic_mode() -> None:

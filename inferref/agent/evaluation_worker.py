@@ -76,6 +76,19 @@ def _required_string(request: dict[str, Any], key: str) -> str:
     return value
 
 
+def _optional_mapping(
+    request: dict[str, Any], key: str
+) -> dict[str, Any] | None:
+    value = request.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"formal worker request {key!r} must be an object or null"
+        )
+    return value
+
+
 def run_request(path: Path) -> dict[str, Any]:
     if not bool(sys.flags.isolated):
         raise RuntimeError("formal evaluation worker requires Python isolated mode")
@@ -91,6 +104,8 @@ def run_request(path: Path) -> dict[str, Any]:
         "public_attestation",
         "claude_settings",
         "claude_model",
+        "codex_model",
+        "codex_config",
         "diagnostic_mode",
     }
     if set(request) != allowed:
@@ -114,6 +129,8 @@ def run_request(path: Path) -> dict[str, Any]:
         report_dir=_required_string(request, "report_dir"),
         claude_settings=_optional_string(request, "claude_settings"),
         claude_model=_optional_string(request, "claude_model"),
+        codex_model=_optional_string(request, "codex_model"),
+        codex_config=_optional_mapping(request, "codex_config"),
         public_attestation=_required_string(request, "public_attestation"),
         formal_worker_evidence=worker_evidence,
         diagnostic_mode=diagnostic_mode,

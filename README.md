@@ -292,7 +292,10 @@ holdouts, so a historical PASS from an earlier patch cannot be combined with a
 different final patch.
 
 The Codex driver uses `--ignore-user-config` so user plugins and unrelated MCP
-servers cannot enter the evaluation session; authentication remains available.
+servers cannot enter the evaluation session. A local gateway therefore has to be
+passed explicitly at run time with `--codex-config <json>` (a JSON object of
+Codex `-c` overrides) and `--codex-model <model>`; values are passed without a
+shell, and only the override keys, not their values, enter the public argv policy.
 The audit file is atomically checkpointed with a valid terminal footer after
 every tool call, because some Agent CLIs terminate MCP children without a graceful
 stdio shutdown. Its validator also enforces the evaluation tool/operation/status
@@ -330,9 +333,23 @@ inferref agent evaluate examples/agent_eval/nf4_block_scale_offset/benchmark.jso
   --json
 ```
 
+For an isolated local gateway, the same command adds Codex and Claude overrides:
+
+```bash
+inferref agent evaluate examples/agent_eval/nf4_block_scale_offset/benchmark.json \
+  --agents codex,claude \
+  --report-dir .scratch/agent-eval/nf4-local \
+  --codex-config /path/to/codex-gateway.json \
+  --codex-model provider/model \
+  --claude-settings /path/to/claude-settings.json \
+  --claude-model provider/model \
+  --json
+```
+
 When Claude Code must use a local provider configuration, pass it only at run
 time with `--claude-settings /path/to/settings.json`. A custom provider can also
-select its concrete model with `--claude-model MODEL`. The evaluator records model
+select its concrete model with `--claude-model MODEL`; Codex uses
+`--codex-config` plus `--codex-model`. The evaluator records model
 identity as `requested_only` or `cli_self_reported`, including the evidence source
 and whether a reported value matches the request. This is not provider-signed
 model identity. The settings path and contents are never copied into the report

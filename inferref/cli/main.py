@@ -922,6 +922,19 @@ def cmd_agent_evaluate(args: argparse.Namespace) -> int:
     from inferref.agent.evaluation_host import evaluate_benchmark
 
     agents = tuple(item.strip() for item in args.agents.split(",") if item.strip())
+    codex_config = None
+    if args.codex_config:
+        try:
+            payload = json.loads(
+                Path(args.codex_config).read_text(encoding="utf-8-sig")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"error: cannot read --codex-config: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        if not isinstance(payload, dict):
+            print("error: --codex-config must contain a JSON object", file=sys.stderr)
+            return EXIT_USAGE
+        codex_config = payload
     report = evaluate_benchmark(
         args.benchmark,
         agents=agents,
@@ -930,6 +943,8 @@ def cmd_agent_evaluate(args: argparse.Namespace) -> int:
         claude_model=args.claude_model,
         public_attestation=args.public_attestation,
         diagnostic_mode=args.diagnostic_mode,
+        codex_config=codex_config,
+        codex_model=args.codex_model,
     )
     summary = (
         f"agent evaluation: {report['status']} "
@@ -1702,6 +1717,17 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument(
         "--claude-model",
         help="Claude Code model override, useful with a custom provider settings file",
+    )
+    q.add_argument(
+        "--codex-model",
+        help="Codex model override",
+    )
+    q.add_argument(
+        "--codex-config",
+        help=(
+            "JSON object of Codex -c key/value overrides for an isolated model gateway; "
+            "values are passed without a shell"
+        ),
     )
     q.add_argument(
         "--diagnostic-mode",

@@ -16,6 +16,10 @@ User-facing changes belong here. Historical implementation evidence remains in
   role names, and execution status without tensor metrics, element coordinates,
   shapes, or execution logs while preserving the sealed audit state machine and
   attestation binding.
+- `inferref agent evaluate --codex-config <json>` and `--codex-model <model>` for
+  an isolated Codex gateway. The JSON object is converted to Codex `-c`
+  overrides without a shell, so `--ignore-user-config` can remain in force; the
+  public argv policy records override keys, not their values.
 
 ### Fixed
 
