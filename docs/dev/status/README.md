@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-10-30 | [NF4 full vs status_only repeats](2026-10-30-nf4-repeats.md) | 3 paired NF4 repeats; full 3/3, status_only 1/3; Codex failed twice, Claude stable; n=3, development only |
 | 2026-10-30 | [Real-Agent matrix](2026-10-30-agent-matrix.md) | 3 benchmarks × full/status_only × Codex/Claude; all pass; NF4 only non-trivial cell; KV saturated; one replicate |
 | 2026-10-29 | [Real-Agent smoke](2026-10-29-real-agent-smoke.md) | Codex + Claude through local gateway; NF4 full and KV status_only pass; development evidence only |
 | 2026-10-28 | [0.12.x M4 progress](2026-10-28-v012x-m4.md) | M4 implementation + review fixes; 2 new benchmarks; status_only mode; 1274 tests; not in v0.12.0 tag |
