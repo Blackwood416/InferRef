@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-10-30 | [Real-Agent matrix](2026-10-30-agent-matrix.md) | 3 benchmarks × full/status_only × Codex/Claude; all pass; NF4 only non-trivial cell; KV saturated; one replicate |
 | 2026-10-29 | [Real-Agent smoke](2026-10-29-real-agent-smoke.md) | Codex + Claude through local gateway; NF4 full and KV status_only pass; development evidence only |
 | 2026-10-28 | [0.12.x M4 progress](2026-10-28-v012x-m4.md) | M4 implementation + review fixes; 2 new benchmarks; status_only mode; 1274 tests; not in v0.12.0 tag |
 | 2026-10-22 | [0.12.0 M1–M3 progress](2026-10-22-v0120-m3.md) | 0.12.0 released; 1259 tests; A770 13/13; dist 0.12.0; CircleCI 16/16 branch + 7/7 tag; v0.12.0 GitHub Release assets; M4 P1 deferred; no PyPI |
