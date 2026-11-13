@@ -47,7 +47,9 @@ python scripts/check_distributions.py .scratch/testpypi-0.12.1 --install
 Set the TestPyPI API token only in the current shell. Do not write it into the
 repository, `pyproject.toml`, workflow files, or a committed `.pypirc`. The
 test token is `UV_TEST_PUBLISH_TOKEN`; `UV_PUBLISH_TOKEN` is reserved for the
-production PyPI upload:
+production PyPI upload. `uv publish` falls back to `UV_PUBLISH_TOKEN` when
+`--token` is omitted, so always pass the TestPyPI token explicitly and never
+put a TestPyPI token in `UV_PUBLISH_TOKEN`:
 
 ```powershell
 $env:UV_TEST_PUBLISH_TOKEN = '<set in this shell only>'
