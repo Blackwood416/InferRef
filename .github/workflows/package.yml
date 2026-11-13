@@ -23,6 +23,8 @@ jobs:
       - run: python -m build --outdir dist
       - run: python -m twine check dist/*
       - run: python scripts/check_distributions.py dist --install
+      - name: Build non-Python release assets
+        run: python scripts/build_release_assets.py --output release-assets
       - uses: actions/upload-artifact@v4
         with:
           name: distributions
@@ -75,8 +77,18 @@ jobs:
           passed = {item["context"] for item in status["statuses"] if item["state"] == "success"}
           if status["state"] != "success" or not required <= passed:
               raise SystemExit("Branch and release-tag qualification must finish green before asset upload")
+      - name: Build C++ and skill release assets
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          python scripts/build_release_assets.py \
+            --version "$version" \
+            --output release-assets \
+            --extra-artifact "dist/inferref-${version}-py3-none-any.whl" \
+            --extra-artifact "dist/inferref-${version}.tar.gz"
       - name: Attach distributions without overwriting existing assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/*.whl dist/*.tar.gz
+        run: gh release upload "$RELEASE_TAG" dist/*.whl dist/*.tar.gz release-assets/*.tar.gz release-assets/SHA256SUMS

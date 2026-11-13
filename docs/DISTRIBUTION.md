@@ -1,17 +1,17 @@
 # Package distribution
 
-InferRef is not currently published to PyPI (checked 2026-09-17). Until a
-maintainer establishes ownership and a publishing policy, install from a tag
-without cloning manually:
+InferRef is not currently published to PyPI. As of 2026-11-13 the TestPyPI and
+PyPI project names are unregistered; 0.12.1 is being prepared for a TestPyPI
+smoke test. Until publication, install from a tag without cloning manually:
 
 ```bash
-python -m pip install "inferref @ git+https://github.com/Blackwood416/InferRef.git@v0.10.0"
+python -m pip install "inferref @ git+https://github.com/Blackwood416/InferRef.git@v0.12.0"
 ```
 
-This requires Git. The v0.10.0 source tag is immutable and does **not** include
-later Unreleased fixes. For those fixes, use the reviewed working tree or a
-subsequently released version. Do not rebuild changed code as a replacement
-v0.10.0 release asset.
+This requires Git. The v0.12.0 source tag is immutable and does **not** include
+later 0.12.1 changes. For those changes, use the reviewed working tree or the
+published 0.12.1 artifacts after release. Do not rebuild changed code as a
+replacement for an existing tag.
 
 ## Build and verify locally
 
@@ -30,13 +30,89 @@ fresh environment and run `inferref --version` from outside the repository to
 avoid accidentally importing the source checkout. Repeat installation with the
 sdist. Building alone does not publish a package.
 
+## TestPyPI release test
+
+The 0.12.1 candidate uses TestPyPI as a staging check before any PyPI or GitHub
+Release action. Build into a fresh directory and verify the artifacts locally:
+
+```powershell
+uv build --out-dir .scratch/testpypi-0.12.1
+uvx twine check .scratch/testpypi-0.12.1/*
+python scripts/check_distributions.py .scratch/testpypi-0.12.1 --install
+```
+
+Set the TestPyPI API token only in the current shell. Do not write it into the
+repository, `pyproject.toml`, workflow files, or a committed `.pypirc`:
+
+```powershell
+$env:UV_PUBLISH_TOKEN = '<set in this shell only>'
+uv publish --publish-url https://test.pypi.org/legacy/ `
+  --token $env:UV_PUBLISH_TOKEN `
+  .scratch/testpypi-0.12.1/*
+```
+
+Run a dry run first when validating credentials:
+
+```powershell
+uv publish --publish-url https://test.pypi.org/legacy/ `
+  --token $env:UV_PUBLISH_TOKEN --dry-run `
+  .scratch/testpypi-0.12.1/*
+```
+
+TestPyPI versions are immutable. If the candidate needs changes after upload,
+do not overwrite it; use a new version or TestPyPI pre-release version and record
+why. Verify the uploaded package in a fresh environment outside the checkout:
+
+```powershell
+python -m venv .scratch/testpypi-venv
+. .scratch/testpypi-venv/Scripts/Activate.ps1
+python -m pip install `
+  --index-url https://test.pypi.org/simple/ `
+  --extra-index-url https://pypi.org/simple `
+  inferref==0.12.1
+inferref --version
+python -c "import inferref; print(inferref.__version__)"
+```
+
+TestPyPI may lag behind PyPI and may not mirror every dependency. The
+`--extra-index-url` allows normal dependencies such as numpy to resolve from
+PyPI while installing InferRef from TestPyPI. The TestPyPI upload is not a
+PyPI publication and does not create a GitHub Release.
+
 ## GitHub release assets
 
 The package workflow builds/tests distributions on main pushes, pull requests,
 manual dispatch, and new published releases. CI artifacts contain the wheel and
 sdist. For a published release, a separate write-scoped job checks that the tag
 matches the embedded version and the tagged commit's required CircleCI checks
-are green before attaching the pair. Existing assets are not overwritten.
+are green before attaching the assets. Existing assets are not overwritten.
+
+A release carries four assets plus checksums:
+
+- `inferref-<version>-py3-none-any.whl` — Python package, CLI and MCP server
+- `inferref-<version>.tar.gz` — minimal Python source distribution
+- `inferref-cpp-<version>.tar.gz` — header-only C++ SDK, CMake project and
+  quantization goldens
+- `inferref-skill-<version>.tar.gz` — Agent skill files
+- `SHA256SUMS` — SHA-256 for all four artifacts
+
+The PyPI/TestPyPI distribution is intentionally Python-only. C++ headers are
+not installed by `pip install inferref`; use the C++ archive or the source
+repository. The skill archive extracts as `inferref/` for a skills directory.
+
+The local asset builder is:
+
+```powershell
+python scripts/build_release_assets.py --output .scratch/release-assets-0.12.1
+```
+
+To include wheel/sdist hashes in `SHA256SUMS`, pass them explicitly:
+
+```powershell
+python scripts/build_release_assets.py --output .scratch/release-assets-0.12.1 `
+  --extra-artifact .scratch/testpypi-0.12.1/inferref-0.12.1-py3-none-any.whl `
+  --extra-artifact .scratch/testpypi-0.12.1/inferref-0.12.1.tar.gz
+```
 
 Before releasing: update both source version declarations, move Unreleased
 changes to the new changelog entry, run core/frontend/slow and C++ gates, push
@@ -45,11 +121,11 @@ and publish the GitHub Release. Releasing a new version is a separate operation
 from merging these QA fixes. The workflow is not retroactively triggered for
 the already published v0.10.0 release.
 
-For `0.12.0`, use tag `v0.12.0` and publish the GitHub Release as the latest
-release. Qualification includes native C++ testcase `0.4` and quantization ABI,
-hardware contracts (bias/bf16/SwiGLU/SDPA/W8A8), hierarchical alignment and batch
-execution, the pinned bitsandbytes CPU job, native FP8/packed codecs, and Intel
-Arc GPU execution. See [release notes](releases/0.12.0.md).
+For the current 0.12.1 preparation, use tag `v0.12.1` only after the TestPyPI
+smoke test, branch CI, and the release decision are complete. Qualification for
+0.12.1 includes the Agent evaluation surface, alignment preflight hardening,
+and the 0.12.0 native quantization, contracts, hierarchical alignment and Intel
+Arc GPU coverage. See [release notes](releases/0.12.1.md).
 
 ## PyPI remains an explicit maintainer step
 

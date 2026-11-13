@@ -88,13 +88,12 @@ accumulation or automatic capture of framework quantized tensors.
 See the [quantization implementation plan and FP8 API](docs/spec/InferRef_Quantization.md)
 for supported behavior, staged tasks, and acceptance criteria.
 
-**0.12.0 scope:** CPU artifact/reference workflows, native C++ testcase `0.4`
+**0.12.x scope:** CPU artifact/reference workflows, native C++ testcase `0.4`
 consumption, hardware quantization contracts, hierarchical alignment with batch
 execution, and Intel Arc GPU execution (Level Zero / SYCL) are qualified. Vendor
 fused low-bit kernels and optional AVX512 repacking remain outside this scope.
-M4 Agent benchmarks and `--diagnostic-mode` are implemented on main for 0.12.x;
-they are not part of the `v0.12.0` release.
-See [release notes](docs/releases/0.12.0.md).
+0.12.1 adds the Agent repair benchmarks and `--diagnostic-mode`; they are not
+part of the `v0.12.0` release. See the [0.12.1 release notes](docs/releases/0.12.1.md).
 
 The development version provides a standalone, numpy-only affine INT8 reference
 API (`inferref.quantization`) for per-tensor/per-axis/per-group quantization,
@@ -279,7 +278,13 @@ Copy-Item -Recurse skills/inferref "$HOME\.codex\skills\inferref"
 
 The skill is discovered through the normal Codex skill mechanism and links to
 the workflow guide plus the protocol, adapter, and CLI references instead of
-duplicating their content.
+duplicating their content. Release builds also attach
+`inferref-skill-<version>.tar.gz`; extract it into the skills directory when
+working outside a source checkout:
+
+```powershell
+tar -xzf inferref-skill-0.12.1.tar.gz -C "$HOME\.codex\skills"
+```
 
 ### Blind Agent repair evaluation
 

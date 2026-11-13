@@ -3,10 +3,17 @@
 User-facing changes belong here. Historical implementation evidence remains in
 [development status](docs/dev/status/README.md).
 
-## Unreleased — 0.12.x M4
+## Unreleased — 0.12.1
+
+0.12.1 adds the Agent repair evaluation surface and hardens alignment preflight
+and batch execution. It is prepared as a TestPyPI release candidate; no PyPI or
+GitHub release is created by the packaging checks in this repository.
 
 ### Added
 
+- PyPI/TestPyPI distribution is Python-only; the header-only C++ SDK and Agent
+  skill are separate GitHub Release assets with checksums. The source
+  distribution now contains only the Python package and build metadata.
 - Agent evaluation benchmarks `nf4_block_scale_offset` (flat NF4 block scales
   crossing row boundaries) and `kv_cache_index_stride` (indexed KV-cache write
   at the wrong decode position), each with visible and hidden holdout cases and
