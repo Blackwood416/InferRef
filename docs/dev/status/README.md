@@ -27,6 +27,7 @@ planning.
 
 | Date | Report | State |
 | --- | --- | --- |
+| 2026-11-13 | [TestPyPI 0.12.1 extended validation](2026-11-13-testpypi-0.12.1-validation.md) | Docker 3.10/3.12/3.13 wheel+sdist and WSL agent extra pass; WSL proxy fixed; tokens separated; no PyPI/tag |
 | 2026-11-13 | [TestPyPI 0.12.1 release verification](2026-11-13-testpypi-0.12.1.md) | 0.12.1 uploaded to TestPyPI; online wheel verified in Windows venv, WSL and Docker; sdist and agent extra verified; no PyPI/tag |
 | 2026-10-31 | [NF4 full vs status_only — n=6](2026-10-31-nf4-repeats-n6.md) | 6 clean status-only pairs; Codex 4/6, Claude 6/6; full n=3 all pass; pair 4 network-excluded |
 | 2026-10-30 | [NF4 full vs status_only repeats](2026-10-30-nf4-repeats.md) | n=3 superseded; full 3/3, status_only 1/3; network exclusions documented |

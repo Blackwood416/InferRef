@@ -45,12 +45,14 @@ python scripts/check_distributions.py .scratch/testpypi-0.12.1 --install
 ```
 
 Set the TestPyPI API token only in the current shell. Do not write it into the
-repository, `pyproject.toml`, workflow files, or a committed `.pypirc`:
+repository, `pyproject.toml`, workflow files, or a committed `.pypirc`. The
+test token is `UV_TEST_PUBLISH_TOKEN`; `UV_PUBLISH_TOKEN` is reserved for the
+production PyPI upload:
 
 ```powershell
-$env:UV_PUBLISH_TOKEN = '<set in this shell only>'
+$env:UV_TEST_PUBLISH_TOKEN = '<set in this shell only>'
 uv publish --publish-url https://test.pypi.org/legacy/ `
-  --token $env:UV_PUBLISH_TOKEN `
+  --token $env:UV_TEST_PUBLISH_TOKEN `
   .scratch/testpypi-0.12.1/inferref-0.12.1-py3-none-any.whl `
   .scratch/testpypi-0.12.1/inferref-0.12.1.tar.gz
 ```
@@ -59,7 +61,7 @@ Run a dry run first when validating credentials:
 
 ```powershell
 uv publish --publish-url https://test.pypi.org/legacy/ `
-  --token $env:UV_PUBLISH_TOKEN --dry-run `
+  --token $env:UV_TEST_PUBLISH_TOKEN --dry-run `
   .scratch/testpypi-0.12.1/inferref-0.12.1-py3-none-any.whl `
   .scratch/testpypi-0.12.1/inferref-0.12.1.tar.gz
 ```
@@ -134,7 +136,18 @@ Arc GPU coverage. See [release notes](releases/0.12.1.md).
 
 ## PyPI remains an explicit maintainer step
 
+Production PyPI uses `UV_PUBLISH_TOKEN`; never use it for TestPyPI. Production
+upload is a separate, explicitly approved operation:
+
+```powershell
+# Only after final approval and tag-qualification review.
+uv publish --publish-url https://upload.pypi.org/legacy/ `
+  --token $env:UV_PUBLISH_TOKEN `
+  .scratch/testpypi-0.12.1/inferref-0.12.1-py3-none-any.whl `
+  .scratch/testpypi-0.12.1/inferref-0.12.1.tar.gz
+```
+
 Verify PyPI project-name ownership, configure credentials or a trusted publisher
-and protected release environment, test on TestPyPI, and approve a new version
-before enabling publication. This repository does not automatically upload to
-PyPI. Never store publishing credentials in source or re-upload a used version.
+and protected release environment, and approve a new version before enabling
+publication. This repository does not automatically upload to PyPI. Never store
+publishing credentials in source or re-upload a used version.
