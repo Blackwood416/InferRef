@@ -1083,12 +1083,11 @@ class AlignmentStore:
         elif event.event == "first_divergence_changed":
             if isinstance(data.get("narrowing"), dict):
                 result.narrowing = copy.deepcopy(data["narrowing"])
-        elif event.event == "note_recorded":
+        elif event.event == "note_recorded" and isinstance(data.get("metrics"), dict):
             # Notes are evidence of workflow activity; they do not imply a
-            # numerical status.  Metrics/classification aggregates, when
-            # supplied by a higher-level worker, are copied verbatim.
-            if isinstance(data.get("metrics"), dict):
-                result.metrics = copy.deepcopy(data["metrics"])
+            # numerical status. Metrics supplied by a higher-level worker are
+            # copied verbatim.
+            result.metrics = copy.deepcopy(data["metrics"])
         if isinstance(data.get("boundary_states"), Mapping):
             for b_name, b_st in data["boundary_states"].items():
                 if isinstance(b_st, str) and b_st in BOUNDARY_STATES:
