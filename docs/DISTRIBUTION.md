@@ -37,7 +37,9 @@ Release action. Build into a fresh directory and verify the artifacts locally:
 
 ```powershell
 uv build --out-dir .scratch/testpypi-0.12.1
-uvx twine check .scratch/testpypi-0.12.1/*
+uvx twine check `
+  .scratch/testpypi-0.12.1/inferref-0.12.1-py3-none-any.whl `
+  .scratch/testpypi-0.12.1/inferref-0.12.1.tar.gz
 python scripts/check_distributions.py .scratch/testpypi-0.12.1 --install
 ```
 
@@ -48,7 +50,8 @@ repository, `pyproject.toml`, workflow files, or a committed `.pypirc`:
 $env:UV_PUBLISH_TOKEN = '<set in this shell only>'
 uv publish --publish-url https://test.pypi.org/legacy/ `
   --token $env:UV_PUBLISH_TOKEN `
-  .scratch/testpypi-0.12.1/*
+  .scratch/testpypi-0.12.1/inferref-0.12.1-py3-none-any.whl `
+  .scratch/testpypi-0.12.1/inferref-0.12.1.tar.gz
 ```
 
 Run a dry run first when validating credentials:
@@ -56,7 +59,8 @@ Run a dry run first when validating credentials:
 ```powershell
 uv publish --publish-url https://test.pypi.org/legacy/ `
   --token $env:UV_PUBLISH_TOKEN --dry-run `
-  .scratch/testpypi-0.12.1/*
+  .scratch/testpypi-0.12.1/inferref-0.12.1-py3-none-any.whl `
+  .scratch/testpypi-0.12.1/inferref-0.12.1.tar.gz
 ```
 
 TestPyPI versions are immutable. If the candidate needs changes after upload,
