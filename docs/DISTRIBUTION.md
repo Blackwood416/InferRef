@@ -1,8 +1,8 @@
 # Package distribution
 
-InferRef is not currently published to PyPI. As of 2026-11-13 the TestPyPI and
-PyPI project names are unregistered; 0.12.1 is being prepared for a TestPyPI
-smoke test. Until publication, install from a tag without cloning manually:
+InferRef is not currently published to PyPI. As of 2026-11-13 the PyPI project
+name is unregistered; 0.12.1 is available on TestPyPI for release verification.
+Until PyPI publication, install from a tag without cloning manually:
 
 ```bash
 python -m pip install "inferref @ git+https://github.com/Blackwood416/InferRef.git@v0.12.0"
@@ -32,8 +32,9 @@ sdist. Building alone does not publish a package.
 
 ## TestPyPI release test
 
-The 0.12.1 candidate uses TestPyPI as a staging check before any PyPI or GitHub
-Release action. Build into a fresh directory and verify the artifacts locally:
+The 0.12.1 candidate has been uploaded to TestPyPI for a staging check before
+any PyPI or GitHub Release action. Build into a fresh directory and verify the
+artifacts locally:
 
 ```powershell
 uv build --out-dir .scratch/testpypi-0.12.1
