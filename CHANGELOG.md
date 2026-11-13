@@ -3,11 +3,11 @@
 User-facing changes belong here. Historical implementation evidence remains in
 [development status](docs/dev/status/README.md).
 
-## Unreleased — 0.12.1
+## 0.12.1 — 2026-11-13
 
 0.12.1 adds the Agent repair evaluation surface and hardens alignment preflight
-and batch execution. It is prepared as a TestPyPI release candidate; no PyPI or
-GitHub release is created by the packaging checks in this repository.
+and batch execution. It is published to PyPI and as a GitHub Release with the
+C++ SDK, Agent skill and checksums.
 
 ### Added
 

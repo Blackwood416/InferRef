@@ -92,8 +92,9 @@ for supported behavior, staged tasks, and acceptance criteria.
 consumption, hardware quantization contracts, hierarchical alignment with batch
 execution, and Intel Arc GPU execution (Level Zero / SYCL) are qualified. Vendor
 fused low-bit kernels and optional AVX512 repacking remain outside this scope.
-0.12.1 adds the Agent repair benchmarks and `--diagnostic-mode`; they are not
-part of the `v0.12.0` release. See the [0.12.1 release notes](docs/releases/0.12.1.md).
+0.12.1 is the current release and adds the Agent repair benchmarks and
+`--diagnostic-mode`; they are not part of the `v0.12.0` release. See the
+[0.12.1 release notes](docs/releases/0.12.1.md).
 
 The development version provides a standalone, numpy-only affine INT8 reference
 API (`inferref.quantization`) for per-tensor/per-axis/per-group quantization,

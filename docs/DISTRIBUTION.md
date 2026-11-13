@@ -1,17 +1,17 @@
 # Package distribution
 
-InferRef is not currently published to PyPI. As of 2026-11-13 the PyPI project
-name is unregistered; 0.12.1 is available on TestPyPI for release verification.
-Until PyPI publication, install from a tag without cloning manually:
+InferRef 0.12.1 is published to PyPI. Install it with:
 
 ```bash
-python -m pip install "inferref @ git+https://github.com/Blackwood416/InferRef.git@v0.12.0"
+python -m pip install inferref==0.12.1
 ```
 
-This requires Git. The v0.12.0 source tag is immutable and does **not** include
-later 0.12.1 changes. For those changes, use the reviewed working tree or the
-published 0.12.1 artifacts after release. Do not rebuild changed code as a
-replacement for an existing tag.
+The immutable `v0.12.1` source tag can also be installed directly without a
+manual clone:
+
+```bash
+python -m pip install "inferref @ git+https://github.com/Blackwood416/InferRef.git@v0.12.1"
+```
 
 ## Build and verify locally
 
@@ -32,9 +32,9 @@ sdist. Building alone does not publish a package.
 
 ## TestPyPI release test
 
-The 0.12.1 candidate has been uploaded to TestPyPI for a staging check before
-any PyPI or GitHub Release action. Build into a fresh directory and verify the
-artifacts locally:
+The 0.12.1 candidate was uploaded to TestPyPI for a staging check before
+publication. The commands below remain useful for a future pre-release check;
+do not use TestPyPI as the production install source.
 
 ```powershell
 uv build --out-dir .scratch/testpypi-0.12.1
@@ -119,8 +119,8 @@ To include wheel/sdist hashes in `SHA256SUMS`, pass them explicitly:
 
 ```powershell
 python scripts/build_release_assets.py --output .scratch/release-assets-0.12.1 `
-  --extra-artifact .scratch/testpypi-0.12.1/inferref-0.12.1-py3-none-any.whl `
-  --extra-artifact .scratch/testpypi-0.12.1/inferref-0.12.1.tar.gz
+  --extra-artifact .scratch/release-0.12.1/inferref-0.12.1-py3-none-any.whl `
+  --extra-artifact .scratch/release-0.12.1/inferref-0.12.1.tar.gz
 ```
 
 Before releasing: update both source version declarations, move Unreleased
@@ -130,23 +130,22 @@ and publish the GitHub Release. Releasing a new version is a separate operation
 from merging these QA fixes. The workflow is not retroactively triggered for
 the already published v0.10.0 release.
 
-For the current 0.12.1 preparation, use tag `v0.12.1` only after the TestPyPI
-smoke test, branch CI, and the release decision are complete. Qualification for
+For the published 0.12.1 release, tag `v0.12.1` was created only after the
+TestPyPI smoke test, branch CI and the release decision. Qualification for
 0.12.1 includes the Agent evaluation surface, alignment preflight hardening,
 and the 0.12.0 native quantization, contracts, hierarchical alignment and Intel
 Arc GPU coverage. See [release notes](releases/0.12.1.md).
 
-## PyPI remains an explicit maintainer step
+## PyPI publication
 
-Production PyPI uses `UV_PUBLISH_TOKEN`; never use it for TestPyPI. Production
-upload is a separate, explicitly approved operation:
+Production PyPI uses `UV_PUBLISH_TOKEN`; never use it for TestPyPI. Upload the
+exact wheel and sdist built from the release tag, after tag qualification:
 
 ```powershell
-# Only after final approval and tag-qualification review.
 uv publish --publish-url https://upload.pypi.org/legacy/ `
   --token $env:UV_PUBLISH_TOKEN `
-  .scratch/testpypi-0.12.1/inferref-0.12.1-py3-none-any.whl `
-  .scratch/testpypi-0.12.1/inferref-0.12.1.tar.gz
+  .scratch/release-0.12.1/inferref-0.12.1-py3-none-any.whl `
+  .scratch/release-0.12.1/inferref-0.12.1.tar.gz
 ```
 
 Verify PyPI project-name ownership, configure credentials or a trusted publisher
