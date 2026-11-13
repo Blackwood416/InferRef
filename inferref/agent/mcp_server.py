@@ -40,7 +40,7 @@ def create_server(
         from mcp.server import MCPServer
     except ImportError as exc:  # pragma: no cover - exercised by subprocess test
         raise RuntimeError(
-            "MCP support is not installed; run: pip install 'inferref[agent]'"
+            "MCP support is not installed; run: pip install \"inferref[agent]\""
         ) from exc
 
     policy = MCPPathPolicy.create(read_roots=read_roots, write_roots=write_roots)

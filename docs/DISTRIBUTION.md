@@ -1,16 +1,16 @@
 # Package distribution
 
-InferRef 0.12.1 is published to PyPI. Install it with:
+InferRef 0.12.2 is published to PyPI. Install it with:
 
 ```bash
-python -m pip install inferref==0.12.1
+python -m pip install inferref==0.12.2
 ```
 
-The immutable `v0.12.1` source tag can also be installed directly without a
+The immutable `v0.12.2` source tag can also be installed directly without a
 manual clone:
 
 ```bash
-python -m pip install "inferref @ git+https://github.com/Blackwood416/InferRef.git@v0.12.1"
+python -m pip install "inferref @ git+https://github.com/Blackwood416/InferRef.git@v0.12.2"
 ```
 
 ## Build and verify locally
@@ -112,15 +112,15 @@ repository. The skill archive extracts as `inferref/` for a skills directory.
 The local asset builder is:
 
 ```powershell
-python scripts/build_release_assets.py --output .scratch/release-assets-0.12.1
+python scripts/build_release_assets.py --output .scratch/release-assets-0.12.2
 ```
 
 To include wheel/sdist hashes in `SHA256SUMS`, pass them explicitly:
 
 ```powershell
-python scripts/build_release_assets.py --output .scratch/release-assets-0.12.1 `
-  --extra-artifact .scratch/release-0.12.1/inferref-0.12.1-py3-none-any.whl `
-  --extra-artifact .scratch/release-0.12.1/inferref-0.12.1.tar.gz
+python scripts/build_release_assets.py --output .scratch/release-assets-0.12.2 `
+  --extra-artifact .scratch/release-0.12.2/inferref-0.12.2-py3-none-any.whl `
+  --extra-artifact .scratch/release-0.12.2/inferref-0.12.2.tar.gz
 ```
 
 Before releasing: update both source version declarations, move Unreleased
@@ -130,11 +130,10 @@ and publish the GitHub Release. Releasing a new version is a separate operation
 from merging these QA fixes. The workflow is not retroactively triggered for
 the already published v0.10.0 release.
 
-For the published 0.12.1 release, tag `v0.12.1` was created only after the
-TestPyPI smoke test, branch CI and the release decision. Qualification for
-0.12.1 includes the Agent evaluation surface, alignment preflight hardening,
-and the 0.12.0 native quantization, contracts, hierarchical alignment and Intel
-Arc GPU coverage. See [release notes](releases/0.12.1.md).
+For the published 0.12.2 release, tag `v0.12.2` was created only after branch
+CI and the release decision. Qualification for 0.12.2 includes the PyPI README
+refresh, package metadata, install diagnostics and the existing 0.12.1
+qualification surface. See [release notes](releases/0.12.2.md).
 
 ## PyPI publication
 
@@ -144,8 +143,8 @@ exact wheel and sdist built from the release tag, after tag qualification:
 ```powershell
 uv publish --publish-url https://upload.pypi.org/legacy/ `
   --token $env:UV_PUBLISH_TOKEN `
-  .scratch/release-0.12.1/inferref-0.12.1-py3-none-any.whl `
-  .scratch/release-0.12.1/inferref-0.12.1.tar.gz
+  .scratch/release-0.12.2/inferref-0.12.2-py3-none-any.whl `
+  .scratch/release-0.12.2/inferref-0.12.2.tar.gz
 ```
 
 Verify PyPI project-name ownership, configure credentials or a trusted publisher

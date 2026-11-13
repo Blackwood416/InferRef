@@ -3,6 +3,24 @@
 User-facing changes belong here. Historical implementation evidence remains in
 [development status](docs/dev/status/README.md).
 
+## 0.12.2 — 2026-11-13
+
+Patch release that refreshes the PyPI project page and install metadata. There
+are no wire-format, artifact-format or runtime behavior changes.
+
+### Changed
+
+- README links are absolute GitHub URLs, so documentation, changelog, examples
+  and release links work from the PyPI project page instead of resolving under
+  `pypi.org`.
+- Added PyPI classifiers and project URLs for Python versions, license,
+  documentation, repository and issue tracking.
+- Install hints use cross-platform double quotes (`pip install "inferref[torch]"`,
+  `pip install "inferref[agent]"`); `inferref doctor` now points to the `torch`
+  extra when PyTorch is absent.
+- The distribution install check runs `inferref doctor --json` after installing
+  each artifact, covering CLI startup and runtime discovery.
+
 ## 0.12.1 — 2026-11-13
 
 0.12.1 adds the Agent repair evaluation surface and hardens alignment preflight

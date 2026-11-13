@@ -76,7 +76,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
     except ImportError as exc:
         print(
             f"error: tracing requires PyTorch ({exc}).\n"
-            "Install it with:  pip install 'inferref[torch]'",
+            "Install it with:  pip install \"inferref[torch]\"",
             file=sys.stderr,
         )
         return EXIT_USAGE

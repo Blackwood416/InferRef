@@ -7,7 +7,7 @@
 Reference execution tracing, testcase extraction, and numerical comparison for inference engine
 development.
 
-[Documentation](docs/index.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+[Documentation](https://github.com/Blackwood416/InferRef/blob/main/docs/index.md) · [Changelog](https://github.com/Blackwood416/InferRef/blob/main/CHANGELOG.md) · [Contributing](https://github.com/Blackwood416/InferRef/blob/main/CONTRIBUTING.md)
 
 InferRef turns a PyTorch model execution into a **stable, machine-readable reference specification**
 that a custom inference engine (CUDA / SYCL / ROCm / CPU) can be validated against — without the
@@ -40,14 +40,14 @@ adapters and testcases remain readable.
 
 InferRef 0.5 also includes an optional native C++/SYCL engine and a deterministic
 XPU corpus. It reads `.irtensor` directly and has no Python/PyTorch engine-side
-dependency. See [the Windows XPU/SYCL gate](docs/xpu-sycl.md).
+dependency. See [the Windows XPU/SYCL gate](https://github.com/Blackwood416/InferRef/blob/main/docs/xpu-sycl.md).
 
 ```text
 Model → Reference Trace → Trace IR → Testcase → Engine → Compare → First Divergence
 ```
 
-Implements [InferRef_SPEC.md](docs/spec/InferRef_SPEC.md) §62 (MVP scope) and
-[InferRef_Trace_IR_v0.1.md](docs/spec/InferRef_Trace_IR_v0.1.md).
+Implements [InferRef_SPEC.md](https://github.com/Blackwood416/InferRef/blob/main/docs/spec/InferRef_SPEC.md) §62 (MVP scope) and
+[InferRef_Trace_IR_v0.1.md](https://github.com/Blackwood416/InferRef/blob/main/docs/spec/InferRef_Trace_IR_v0.1.md).
 
 ## Install
 
@@ -85,7 +85,9 @@ as separate archives with `SHA256SUMS`.
 ## Quick start
 
 For source tags, local wheel/sdist builds, and the C++/skill release assets, see
-[distribution](docs/DISTRIBUTION.md).
+[distribution](https://github.com/Blackwood416/InferRef/blob/main/docs/DISTRIBUTION.md).
+The `examples/` scripts referenced below are in the source repository, not in
+the PyPI wheel or sdist.
 
 ### Current dtype and quantization limits
 
@@ -103,28 +105,29 @@ flat host importer, a pinned bitsandbytes 0.50.1 `QuantState` bridge accepts one
 level of double-quantized scales and float16/bfloat16/float32 source weights.
 It expands scales into ordinary float32 parameters and keeps source output
 rounding explicit. Unknown profiles and deeper nesting are rejected. See the
-[real-checkpoint audit](examples/quantization/README.md#real-bitsandbytes-quantstate-and-double-quantization).
+[real-checkpoint audit](https://github.com/Blackwood416/InferRef/blob/main/examples/quantization/README.md#real-bitsandbytes-quantstate-and-double-quantization).
 Explicit affine INT8 descriptors now carry scale/zero-point semantics through
 trace extraction, adapter preflight, comparison, Agent, Suite and Alignment.
 This is float32 computation with dequantized INT8 weights, **not** W8A8 integer
 accumulation or automatic capture of framework quantized tensors.
-See the [quantization implementation plan and FP8 API](docs/spec/InferRef_Quantization.md)
+See the [quantization implementation plan and FP8 API](https://github.com/Blackwood416/InferRef/blob/main/docs/spec/InferRef_Quantization.md)
 for supported behavior, staged tasks, and acceptance criteria.
 
 **0.12.x scope:** CPU artifact/reference workflows, native C++ testcase `0.4`
 consumption, hardware quantization contracts, hierarchical alignment with batch
 execution, and Intel Arc GPU execution (Level Zero / SYCL) are qualified. Vendor
 fused low-bit kernels and optional AVX512 repacking remain outside this scope.
-0.12.1 is the current release and adds the Agent repair benchmarks and
-`--diagnostic-mode`; they are not part of the `v0.12.0` release. See the
-[0.12.1 release notes](docs/releases/0.12.1.md).
+0.12.2 is the current patch release. It refreshes the PyPI README and package
+metadata while remaining wire-compatible with 0.12.1. The 0.12.1 release added
+the Agent repair benchmarks and `--diagnostic-mode`; they are not part of the
+`v0.12.0` release. See the [0.12.2 release notes](https://github.com/Blackwood416/InferRef/blob/main/docs/releases/0.12.2.md).
 
-The development version provides a standalone, numpy-only affine INT8 reference
+The 0.12.x package provides a standalone, numpy-only affine INT8 reference
 API (`inferref.quantization`) for per-tensor/per-axis/per-group quantization,
 dequantization and float32 Linear evaluation. Try
 `python examples/quantization/int8_reference.py`. For a complete torch-free
 trace → testcase → independent engine workflow, including injected-error
-debugging, see the [INT8 Linear example](examples/quantization/README.md).
+debugging, see the [INT8 Linear example](https://github.com/Blackwood416/InferRef/blob/main/examples/quantization/README.md).
 
 ### Trace and compare
 
@@ -170,8 +173,8 @@ inferref align report alignment/
 Alignment sessions keep an event log and distinguish current evidence from
 historical or stale results by trace, testcase, adapter, engine revision, and
 comparison policy. Every command also supports `--json` for automation. See
-[the Alignment Orchestrator specification](docs/spec/InferRef_0.10_Alignment_Orchestrator.md)
-and [the Agent workflow guide](docs/AGENT_WORKFLOW.md).
+[the Alignment Orchestrator specification](https://github.com/Blackwood416/InferRef/blob/main/docs/spec/InferRef_0.10_Alignment_Orchestrator.md)
+and [the Agent workflow guide](https://github.com/Blackwood416/InferRef/blob/main/docs/AGENT_WORKFLOW.md).
 
 `region detect` recognises Linear, RMSNorm, RoPE, Attention, SwiGLU and friends from the module
 hierarchy and source functions the trace already records — no operator ids, no static export:
@@ -245,7 +248,7 @@ execution record.
 The quick start's extracted RoPE region contains internal alias effects. The
 ready-to-run `rope_numpy.alias.adapter.json` declares support for those effects.
 The minimal `rope_numpy.adapter.json` intentionally omits that declaration for
-the capability-preflight demonstration in [the workflow guide](docs/AGENT_WORKFLOW.md).
+the capability-preflight demonstration in [the workflow guide](https://github.com/Blackwood416/InferRef/blob/main/docs/AGENT_WORKFLOW.md).
 Do not add capabilities to your own adapter unless the engine actually supports them.
 
 InferRef exposes two facades over the same core operations:
@@ -283,11 +286,11 @@ same-user process racing directory symlinks or Windows reparse points.
 Adapter JSON is executable configuration: InferRef uses an argv array and
 `shell=False`, but the configured process must still be trusted. The complete
 wire contract and threat boundary are in
-[InferRef Agent Protocol v0.1](docs/spec/InferRef_Agent_Protocol_v0.1.md).
+[InferRef Agent Protocol v0.1](https://github.com/Blackwood416/InferRef/blob/main/docs/spec/InferRef_Agent_Protocol_v0.1.md).
 
 ### Use with a coding agent
 
-The [Agent workflow guide](docs/AGENT_WORKFLOW.md) is the practical loop for a
+The [Agent workflow guide](https://github.com/Blackwood416/InferRef/blob/main/docs/AGENT_WORKFLOW.md) is the practical loop for a
 coding agent (or an engine developer) asked to validate or fix an engine:
 discover the protocol, inspect a trace, extract the smallest testcase, run a
 trusted adapter or a stateful scenario, and iterate from the first divergence
@@ -295,7 +298,7 @@ to a passing rerun. It is self-contained and assumes nothing beyond a clean
 checkout.
 
 The same loop ships as an installable Codex skill in
-[`skills/inferref/`](skills/inferref/). Install it into the local Codex skill
+[`skills/inferref/`](https://github.com/Blackwood416/InferRef/tree/main/skills/inferref/). Install it into the local Codex skill
 directory with:
 
 ```powershell
@@ -309,7 +312,7 @@ duplicating their content. Release builds also attach
 working outside a source checkout:
 
 ```powershell
-tar -xzf inferref-skill-0.12.1.tar.gz -C "$HOME\.codex\skills"
+tar -xzf inferref-skill-0.12.2.tar.gz -C "$HOME\.codex\skills"
 ```
 
 ### Blind Agent repair evaluation
@@ -417,10 +420,10 @@ paths, and local settings paths. Full model event streams remain untracked.
 Ordinary CI uses a deterministic fake Agent to test this evaluator and produces
 development evidence; it does not spend model tokens or claim autonomous repair.
 The machine-readable contracts are
-[`rope_sign`](examples/agent_eval/rope_sign/benchmark.json),
-[`nf4_block_scale_offset`](examples/agent_eval/nf4_block_scale_offset/benchmark.json),
+[`rope_sign`](https://github.com/Blackwood416/InferRef/blob/main/examples/agent_eval/rope_sign/benchmark.json),
+[`nf4_block_scale_offset`](https://github.com/Blackwood416/InferRef/blob/main/examples/agent_eval/nf4_block_scale_offset/benchmark.json),
 and
-[`kv_cache_index_stride`](examples/agent_eval/kv_cache_index_stride/benchmark.json).
+[`kv_cache_index_stride`](https://github.com/Blackwood416/InferRef/blob/main/examples/agent_eval/kv_cache_index_stride/benchmark.json).
 
 The M4 `status_only` mode enables a controlled full-diagnostics vs PASS/FAIL-only
 ablation with identical holdouts. It does not by itself establish that InferRef
@@ -505,7 +508,7 @@ select a plugin and its configuration on `compare`, `agent
 compare/run/run_scenario`, `scenario run`, and `suite run`. The default is
 `tensor/numeric/v1`. Third-party comparators register through the
 `inferref.comparators` entry-point group and are verified by `inferref doctor
---verify-plugins`; see [EXTENDING](docs/EXTENDING.md).
+--verify-plugins`; see [EXTENDING](https://github.com/Blackwood416/InferRef/blob/main/docs/EXTENDING.md).
 
 ## Tracing your own model
 
@@ -644,8 +647,8 @@ criterion 10 is enforced rather than assumed. All ten acceptance criteria are co
 The core/frontend CPU matrix runs on CircleCI — core with no torch installed at all, the
 frontend against torch 2.1 (the verified floor) and current, one leg against real `transformers`
 model code, and the C++ reader on Linux and Windows — see
-[.circleci/config.yml](.circleci/config.yml). GitHub Actions hosts the GPU, XPU, and nightly
-gates in [.github/workflows/](.github/workflows/).
+[.circleci/config.yml](https://github.com/Blackwood416/InferRef/blob/main/.circleci/config.yml). GitHub Actions hosts the GPU, XPU, and nightly
+gates in [.github/workflows/](https://github.com/Blackwood416/InferRef/tree/main/.github/workflows/).
 
 ## License
 

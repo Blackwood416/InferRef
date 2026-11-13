@@ -105,6 +105,14 @@ def install_check(artifacts: tuple[Path, Path], version: str) -> None:
             output = subprocess.check_output([str(cli), "--version"], text=True, cwd=root)
             if output.strip() != f"inferref {version}":
                 raise ValueError(f"unexpected installed CLI version: {output!r}")
+            doctor = json.loads(
+                subprocess.check_output([str(cli), "doctor", "--json"], text=True, cwd=root)
+            )
+            if (
+                doctor.get("format") != "inferref-doctor"
+                or doctor.get("runtime", {}).get("inferref") != version
+            ):
+                raise ValueError("installed doctor report does not match the package version")
 
 
 def main() -> None:

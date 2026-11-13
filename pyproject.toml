@@ -4,11 +4,22 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inferref"
-version = "0.12.1"
+version = "0.12.2"
 description = "Reference execution tracing, testcase extraction and numerical comparison for inference engine development"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+]
 
 # Core (IR / codec / compare / testcase / region / inspect / CLI) depends on numpy only.
 # PyTorch is NOT a core dependency: Trace IR v0.1 acceptance criterion #10 requires that a
@@ -28,6 +39,13 @@ hf = ["torch>=2.1", "transformers>=4.40"]
 qwen35 = ["torch>=2.1", "transformers>=5.14.1"]
 agent = ["mcp>=2,<3"]
 dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/Blackwood416/InferRef"
+Repository = "https://github.com/Blackwood416/InferRef"
+Documentation = "https://github.com/Blackwood416/InferRef/blob/main/docs/index.md"
+Changelog = "https://github.com/Blackwood416/InferRef/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Blackwood416/InferRef/issues"
 
 [project.scripts]
 inferref = "inferref.cli.main:main"

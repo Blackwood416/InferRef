@@ -74,7 +74,10 @@ def run_doctor(
                 "frontend.torch",
                 status,
                 f"PyTorch is unavailable: {exc}",
-                remediation="Install an InferRef-compatible PyTorch build.",
+                remediation=(
+                    'Install PyTorch for tracing with: pip install "inferref[torch]" '
+                    "(optional for trace/testcase reading)."
+                ),
             )
         )
     else:

@@ -21,7 +21,7 @@ def create_evaluation_server(session: EvaluationSession) -> Any:
         from mcp.server import MCPServer
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise RuntimeError(
-            "MCP support is not installed; run: pip install 'inferref[agent]'"
+            "MCP support is not installed; run: pip install \"inferref[agent]\""
         ) from exc
 
     server = MCPServer(
