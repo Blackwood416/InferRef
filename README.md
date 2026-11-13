@@ -1,6 +1,8 @@
 # InferRef
 
 [![CircleCI](https://dl.circleci.com/status-badge/img/circleci/PuMzCg2wMRTLmqJJN1tfGW/9g5ZmC1DWg3UfH9Eu8AKTb/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/circleci/PuMzCg2wMRTLmqJJN1tfGW/9g5ZmC1DWg3UfH9Eu8AKTb/tree/main)
+[![PyPI](https://img.shields.io/pypi/v/inferref.svg)](https://pypi.org/project/inferref/)
+[![Python](https://img.shields.io/pypi/pyversions/inferref.svg)](https://pypi.org/project/inferref/)
 
 Reference execution tracing, testcase extraction, and numerical comparison for inference engine
 development.
@@ -49,26 +51,47 @@ Implements [InferRef_SPEC.md](docs/spec/InferRef_SPEC.md) §62 (MVP scope) and
 
 ## Install
 
+InferRef is available on [PyPI](https://pypi.org/project/inferref/) for Python
+3.10 or newer:
+
 ```bash
-uv pip install -e ".[torch,dev]"
+pip install inferref
 ```
 
 The core package — Trace IR reader, `.irtensor` codec, comparator, testcase extraction, region
 tools, and the `inspect`/`analyze`/`compare`/`validate` CLI commands — depends on **numpy only**.
+Install the tracing frontend separately:
+
+```bash
+pip install "inferref[torch]"        # tracing frontend
+pip install "inferref[hf]"          # PyTorch + Hugging Face transformers
+pip install "inferref[agent]"       # MCP server for Agent integration
+```
+
 PyTorch is required solely for the tracing frontend. This is enforced by the test suite: a
 subprocess blocks `import torch` outright and then loads a trace, decodes payloads, extracts a
 testcase and runs a comparison (Trace IR §57 acceptance criterion 10).
 
+For development from a source checkout:
+
+```bash
+uv pip install -e ".[torch,dev]"
+```
+
+The PyPI package is Python-only. The header-only C++ SDK and Agent skill are
+attached to each [GitHub Release](https://github.com/Blackwood416/InferRef/releases)
+as separate archives with `SHA256SUMS`.
+
 ## Quick start
 
-For installation directly from a source tag (without a manual clone), local
-wheel/sdist builds, and release availability, see [distribution](docs/DISTRIBUTION.md).
+For source tags, local wheel/sdist builds, and the C++/skill release assets, see
+[distribution](docs/DISTRIBUTION.md).
 
 ### Current dtype and quantization limits
 
 The Trace IR represents `bool`, signed/unsigned 8/16/32/64-bit integers,
 `float16`, `bfloat16`, `float32`, `float64`, `complex64`, and `complex128`.
-The 0.12.0 release also supports native `float8_e4m3fn` and
+The 0.12.x line also supports native `float8_e4m3fn` and
 `float8_e5m2` payloads, with numpy-only and dependency-free C++ decoding.
 FP8 comparison uses decoded values with exact tolerances by default; adapters
 must explicitly declare the exact FP8 dtype. This does not imply FP8 kernel or
@@ -241,9 +264,11 @@ the stable, machine-readable protocol facade over the same core operations.
 Install and start the MCP transport with:
 
 ```bash
-pip install -e ".[agent]"
+pip install "inferref[agent]"
 inferref-mcp --read-root E:/trusted/workspace --write-root E:/trusted/runs
 ```
+
+From a source checkout, use `pip install -e ".[agent]"` instead.
 
 For a local MCP host, configure the `inferref-mcp` executable from this virtual
 environment as a stdio server. The tools are `inferref_capabilities`,
@@ -532,8 +557,10 @@ still emitting a full JSON report.
 
 ## Engine side (no PyTorch, no Python)
 
-`cpp/include/inferref/` is header-only and dependency-free — copy it into your engine tree, or
-build the bundled tools:
+A prebuilt `inferref-cpp-<version>.tar.gz` is attached to each
+[GitHub Release](https://github.com/Blackwood416/InferRef/releases). The source
+tree also contains the header-only, dependency-free `cpp/include/inferref/` —
+copy it into your engine tree, or build the bundled tools:
 
 ```bash
 # Windows (from a shell with the VS environment initialised)
